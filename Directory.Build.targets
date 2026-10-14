@@ -1,0 +1,31 @@
+<Project>
+
+  <!-- The test stack is xunit.v3 4.x on Microsoft Testing Platform v2. VSTest
+       packages and other test frameworks fail the build here rather than being
+       noticed later. Item identities match exactly, so xunit.v3 is not caught
+       by "xunit". -->
+  <ItemGroup>
+    <BannedPackage Include="Microsoft.NET.Test.Sdk" />
+    <BannedPackage Include="xunit.runner.visualstudio" />
+    <BannedPackage Include="xunit" />
+    <BannedPackage Include="xunit.core" />
+    <BannedPackage Include="xunit.assert" />
+    <BannedPackage Include="xunit.extensibility.core" />
+    <BannedPackage Include="NUnit" />
+    <BannedPackage Include="NUnit3TestAdapter" />
+    <BannedPackage Include="MSTest.TestFramework" />
+    <BannedPackage Include="MSTest.TestAdapter" />
+    <BannedPackage Include="coverlet.collector" />
+  </ItemGroup>
+
+  <Target Name="GuardBannedPackages" BeforeTargets="CollectPackageReferences;Build">
+    <ItemGroup>
+      <_AllowedPackage Include="@(PackageReference)" Exclude="@(BannedPackage)" />
+      <_BannedInUse Include="@(PackageReference)" Exclude="@(_AllowedPackage)" />
+    </ItemGroup>
+    <Error Condition="'@(_BannedInUse)' != ''"
+           Code="SIMPLE0001"
+           Text="$(MSBuildProjectName) references banned package(s): @(_BannedInUse). SIMPLE tests use xunit.v3 4.x on Microsoft Testing Platform v2; VSTest is not used." />
+  </Target>
+
+</Project>

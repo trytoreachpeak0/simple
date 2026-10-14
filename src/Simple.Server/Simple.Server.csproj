@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Simple.Protocol\Simple.Protocol.csproj" />
+    <ProjectReference Include="..\Simple.Server.Console\Simple.Server.Console.csproj" />
+    <ProjectReference Include="..\Simple.Server.Riot\Simple.Server.Riot.csproj" />
+  </ItemGroup>
+
+</Project>
