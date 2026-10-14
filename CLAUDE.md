@@ -145,7 +145,8 @@ single-context layout). Do not start a parallel set of these by hand.
 - **.NET 10** (LTS until 2028-11-14), pinned in `global.json`:
   `10.0.302` with `rollForward: latestFeature`, to be tightened once CI
   has the same SDK. This departs from the older repositories' .NET 8
-  baseline (ADR-cross-0056); the exception is recorded as an ADR here.
+  baseline (ADR-cross-0056); the exception is recorded in
+  `docs/adr/0001-dotnet-10-and-mtp.md`.
 - The onboard PCs stay on Windows 10 Pro 22H2, which is not on the .NET 10
   supported-OS list. This is accepted.
 - `.slnx` solution format: `simple.slnx`.
