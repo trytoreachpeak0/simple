@@ -22,14 +22,15 @@ reviewed in pull requests like the code is.
 
 ## Design principles
 
-- **The server is the only brain.** The onboard HMI is a thin terminal: it
+- **The server is the only brain.** The onboard terminal is thin: it
   executes commands and reports observed facts (doors, locks, light
   curtains, IO, scans). It keeps only operations that need a person
   physically at the vehicle, and it does not hold its own copy of business
   state.
 - **Exceptions come in three tiers:** the server recovers on its own; a
   person handles it remotely in the server console; a person handles it
-  on site at the HMI. On-site staff should handle as little as possible.
+  on site at the onboard terminal. On-site staff should handle as little
+  as possible.
 - **The console can do every control.** The goal is that no operation
   needs a script, SSH or database access.
 - **Prefer mature libraries to hand-written infrastructure.** Only domain
@@ -60,7 +61,7 @@ reviewed in pull requests like the code is.
 | `src/Simple.Server` | Server host: domain logic, dispatch, API, event record |
 | `src/Simple.Server.Console` | Server console; runs in the server process |
 | `src/Simple.Server.Riot` | Fleet-manager (RIoT) adapter; runs in the server process |
-| `src/Simple.Onboard` | Onboard HMI (WPF, `net10.0-windows`) |
+| `src/Simple.Onboard` | Onboard terminal (WPF, `net10.0-windows`) |
 | `src/Simple.MesGateway` | MES gateway, a small separate process |
 | `src/Simple.IoSimulator` | Simulator for the vehicle's IO module |
 | `src/Simple.Protocol` | Server ↔ onboard protocol contracts |
