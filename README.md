@@ -5,7 +5,7 @@
 
 SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批次、辅料和机台备件送到半导体工厂的机台旁。车辆经工厂的车队调度平台派遣。服务端是唯一做决策的一方；车载终端只执行命令、上报现场观测到的事实。
 
-各项目的现场配置放在 `sites/<项目>/` 下，产品代码里不出现项目号或客户名。
+各厂区的业务配置放在 `sites/<厂区>/` 下（首个厂区是 `sites/d8/`），产品代码按配置运行，不按厂区写分支，也不以厂区或客户命名。
 
 ## 目录
 
@@ -14,14 +14,14 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 | `src/Simple.Server` | 服务端：领域逻辑、调度、对外 API、事件记录 |
 | `src/Simple.Server.Console` | 服务端控制台界面，随服务端进程运行 |
 | `src/Simple.Server.Riot` | 车队调度平台 RIoT 的适配 |
-| `src/Simple.Onboard` | 车载终端（WPF） |
+| `src/Simple.OnboardTerminal` | 车载终端（WPF） |
 | `src/Simple.MesGateway` | MES 网关，独立的小进程 |
 | `src/Simple.IoSimulator` | 车上 IO 模块的模拟器 |
 | `src/Simple.Protocol` | 服务端与车载终端之间的协议契约 |
 | `tests/` | 每个项目一个 `*.Tests` 测试项目，另有调度平台的行为契约测试 |
 | `scenarios/` | 统一格式的测试场景 |
-| `samples/replay/` | 脱敏后的回放样本 |
-| `sites/<项目>/` | 各项目的现场配置 |
+| `samples/replay/` | 从真实系统录下的回放样本 |
+| `sites/<厂区>/` | 各厂区的业务配置 |
 
 以后计划加两个入口：`Simple.Cli`，用一条命令起停整套系统、跑场景；`Simple.Mcp`，给 AI 用的一层薄包装，只调用命令行和服务端 API，不放业务逻辑。
 
