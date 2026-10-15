@@ -12,8 +12,8 @@ reviewed in pull requests like the code is.
 
 ## Product scope
 
-- SIMPLE is reused across semiconductor plants. Product code, namespaces
-  and project names are not named after a site, a customer or a project
+- SIMPLE is reused across semiconductor plants. No project, namespace or
+  type in the product is named after a site, a customer or a project
   number. A site's business configuration lives under `sites/<site>/`
   (`sites/d8/` first); product code reads it as configuration and never
   branches on which site it is. Endpoints and credentials are not in it
@@ -104,12 +104,13 @@ This repository is public.
   it goes in.
 - Everything else from the field may be public (the product owner,
   2026-10-15): the customer, the site, server names and addresses, real
-  lot, sublot, AREA, EQP, station and map values, and field evidence as
-  recorded. Replay samples keep their real values.
+  lot, sublot, AREA, EQP, station and map values, and field evidence with
+  its real values. Replay samples keep their real values.
 - Two things stay out regardless: colleagues' names and the systems they
   own, and why the product is called SIMPLE.
-- Being allowed to name a real server is not leave to point at it: the
-  Safety rules below still keep real endpoints out of every default.
+- Being allowed to name a real server is not leave to point at it: no
+  configuration in this repository, default or opt-in, may carry a real
+  endpoint. Real endpoints come from outside the repository (see Safety).
 - The README's first paragraph spells the acronym out letter by letter, in
   English and in Chinese. The README does not explain why the name was
   chosen.
