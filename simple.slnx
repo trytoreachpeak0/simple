@@ -2,7 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Simple.IoSimulator/Simple.IoSimulator.csproj" />
     <Project Path="src/Simple.MesGateway/Simple.MesGateway.csproj" />
-    <Project Path="src/Simple.Onboard/Simple.Onboard.csproj" />
+    <Project Path="src/Simple.OnboardTerminal/Simple.OnboardTerminal.csproj" />
     <Project Path="src/Simple.Protocol/Simple.Protocol.csproj" />
     <Project Path="src/Simple.Server.Console/Simple.Server.Console.csproj" />
     <Project Path="src/Simple.Server.Riot/Simple.Server.Riot.csproj" />

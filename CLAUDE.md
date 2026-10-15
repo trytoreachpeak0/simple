@@ -12,11 +12,12 @@ reviewed in pull requests like the code is.
 
 ## Product scope
 
-- SIMPLE is reused across semiconductor plants. Nothing in the product is
-  named after a project number or a customer. A plant's business
-  configuration lives under `sites/<project>/` (`sites/8005/` first);
-  product code reads it as configuration and never branches on which site
-  it is. Addresses and credentials are not in it (see Safety).
+- SIMPLE is reused across semiconductor plants. No project, namespace or
+  type in the product is named after a site, a customer or a project
+  number. A site's business configuration lives under `sites/<site>/`
+  (`sites/d8/` first); product code reads it as configuration and never
+  branches on which site it is. Endpoints and credentials are not in it
+  (see Safety).
 - Namespaces are `Simple.*`. Do not carry over namespaces or names from
   the previous line.
 
@@ -61,14 +62,14 @@ reviewed in pull requests like the code is.
 | `src/Simple.Server` | Server host: domain logic, dispatch, API, event record |
 | `src/Simple.Server.Console` | Server console; runs in the server process |
 | `src/Simple.Server.Riot` | Fleet-manager (RIoT) adapter; runs in the server process |
-| `src/Simple.Onboard` | Onboard terminal (WPF, `net10.0-windows`) |
+| `src/Simple.OnboardTerminal` | Onboard terminal (WPF, `net10.0-windows`) |
 | `src/Simple.MesGateway` | MES gateway, a small separate process |
 | `src/Simple.IoSimulator` | Simulator for the vehicle's IO module |
 | `src/Simple.Protocol` | Server ↔ onboard protocol contracts |
 | `tests/` | One `<Project>.Tests` per project, plus `Simple.Contracts.Tests` |
 | `scenarios/` | Scenarios in the shared format |
-| `samples/replay/` | Anonymized replay samples |
-| `sites/<project>/` | Per-site configuration |
+| `samples/replay/` | Replay samples recorded from the real systems |
+| `sites/<site>/` | Per-site business configuration |
 
 Planned, not created yet: `Simple.Cli` (bring the system up and down, run
 scenarios) and `Simple.Mcp` (the thin AI layer above).
@@ -96,12 +97,20 @@ scenarios) and `Simple.Mcp` (the thin AI layer above).
 
 This repository is public.
 
-- Never commit real customer data: MES lot and sublot numbers, AREA and
-  EQP values, field evidence with real values. Anonymize replay samples,
-  or keep them out of the repository.
-- Never name plant servers, IP addresses, the customer or colleagues, in
-  code, comments, docs, commit messages, issues or PRs.
-- Credentials, passwords, keys and tokens never enter the repository.
+- Credentials never enter the repository: passwords, keys, tokens, and
+  connection strings that carry any of them. This holds for code,
+  configuration, samples, field evidence, docs, commit messages, issues
+  and PRs. Strip credentials from a sample or a piece of evidence before
+  it goes in.
+- Everything else from the field may be public (the product owner,
+  2026-10-15): the customer, the site, server names and addresses, real
+  lot, sublot, AREA, EQP, station and map values, and field evidence with
+  its real values. Replay samples keep their real values.
+- Two things stay out regardless: colleagues' names and the systems they
+  own, and why the product is called SIMPLE.
+- Being allowed to name a real server is not leave to point at it: no
+  configuration in this repository, default or opt-in, may carry a real
+  endpoint. Real endpoints come from outside the repository (see Safety).
 - The README's first paragraph spells the acronym out letter by letter, in
   English and in Chinese. The README does not explain why the name was
   chosen.
@@ -194,10 +203,10 @@ single-context layout). Do not start a parallel set of these by hand.
   this repository (`appsettings*.json`, code defaults, scenario defaults,
   install packages) may point at a real fleet manager, a real vehicle or a
   production MES, or enable real work by default. Only placeholder values
-  or loopback addresses of fakes appear in the repository.
-- `sites/<project>/` holds only non-sensitive site configuration: sites,
-  areas, task types, the vehicle list and similar business settings. It
-  holds no addresses and no credentials.
+  or loopback addresses of fakes appear in these defaults.
+- `sites/<site>/` holds a site's business configuration: areas, maps,
+  task types, the vehicle list and similar settings, with real values. It
+  holds no endpoints the product connects to and no credentials.
 - Real endpoints and credentials come from outside the repository (a local
   configuration file outside the clone, environment variables, or
   injection at deploy time), and a person selects them explicitly for a
