@@ -40,7 +40,7 @@ Multi-context repo (presence of `CONTEXT-MAP.md` at the root):
 
 ## Keep the rules overview current
 
-`docs/rules-overview.md` summarises, by scenario, the business rules currently in force, each citing its ADR. A PR that changes a rule in force (a new ADR, or an edit to an ADR or `CONTEXT.md`) updates `docs/rules-overview.md` in the same PR.
+`docs/rules-overview.md` summarises, by scenario, the business rules currently in force, each citing its ADR. A PR that changes a rule in force (a new ADR, or an edit to an ADR or `CONTEXT.md`) updates `docs/rules-overview.md` in the same PR. Where the two disagree, the ADR wins.
 
 ## Use the glossary's vocabulary
 
