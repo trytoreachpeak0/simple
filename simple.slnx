@@ -8,4 +8,10 @@
     <Project Path="src/Simple.Server.Riot/Simple.Server.Riot.csproj" />
     <Project Path="src/Simple.Server/Simple.Server.csproj" />
   </Folder>
+  <Folder Name="/tools/" />
+  <Folder Name="/tools/protocol-probe/">
+    <Project Path="tools/protocol-probe/client/Simple.ProtocolProbe.Client.csproj" />
+    <Project Path="tools/protocol-probe/linkcut/Simple.ProtocolProbe.LinkCut.csproj" />
+    <Project Path="tools/protocol-probe/server/Simple.ProtocolProbe.Server.csproj" />
+  </Folder>
 </Solution>
