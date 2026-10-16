@@ -1,0 +1,38 @@
+name: runner-smoke
+
+# Smoke test for the SIMPLE runner win11-01-simple on vm01 (the CI guest on the
+# factory server). It proves the runner picks up jobs, sees the .NET 10 SDK and
+# builds the solution. Issue #20.
+on:
+  pull_request:
+  workflow_dispatch:
+
+# Never cancel a running job on this runner. Cancelling one on a self-hosted
+# runner has wedged the runner session for over four hours before; a duplicate
+# run is the cheaper outcome.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    # Only PRs from branches of this repository. A fork PR would execute its
+    # code on vm01, which reaches the factory server's production services.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # `simple` is carried by win11-01-simple alone.
+    runs-on: [self-hosted, simple]
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: dotnet --info
+        shell: pwsh
+        run: dotnet --info
+
+      - name: Build
+        shell: pwsh
+        run: dotnet build simple.slnx
