@@ -18,8 +18,8 @@ reviewed in pull requests like the code is.
   `sites/<site>/` (`sites/d8/` first); it is imported into the server at
   first install and used by tests and scenarios, and from then on the
   server holds the live configuration, changed only through its API
-  (`docs/adr/0017-site-config-lives-in-server.md`). Product code reads it
-  as configuration and never branches on which site it is. Endpoints and
+  (`docs/adr/0017-site-config-lives-in-server.md`). Product code reads the
+  configuration and never branches on which site it is. Endpoints and
   credentials are not in it (see Safety).
 - Namespaces are `Simple.*`. Do not carry over namespaces or names from
   the previous line.
