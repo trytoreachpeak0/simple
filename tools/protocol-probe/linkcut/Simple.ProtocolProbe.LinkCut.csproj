@@ -5,6 +5,7 @@
        traffic). Not used on real machines. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <AssemblyName>simple-probe-linkcut</AssemblyName>
     <RootNamespace>Simple.ProtocolProbe.LinkCut</RootNamespace>
   </PropertyGroup>
