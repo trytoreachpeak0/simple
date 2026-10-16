@@ -169,7 +169,10 @@ single-context layout). Do not start a parallel set of these by hand.
   `TargetFramework` to `net10.0-windows`.
 - **Central package management.** Every version lives in
   `Directory.Packages.props`. A `PackageReference` never carries
-  `Version=`. Commit the `packages.lock.json` files.
+  `Version=`; restore enforces this with `NU1008`, and with `NU1013` for
+  `VersionOverride=`, which `Directory.Packages.props` disables. Commit
+  the `packages.lock.json` files: on CI (`CI=true`) restore runs in locked
+  mode and fails with `NU1004` when they are out of date.
 
 ## Tests
 
