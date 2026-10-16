@@ -22,39 +22,56 @@ internal static class OperatorConsole
             }
 
             Log.Information("CONSOLE> {Line}", line);
-            switch (parts)
+            try
             {
-                case ["list"]:
-                    hub.List();
-                    break;
-                case ["confirm", var code, var vehicle]:
-                    hub.Confirm(code, vehicle);
-                    break;
-                case ["revoke", var text]:
-                    hub.Revoke(text);
-                    break;
-                case ["forget", var text]:
-                    hub.Forget(text);
-                    break;
-                case ["quiet", var onOff]:
-                    hub.Quiet = onOff == "on";
-                    Log.Information("QUIET {State}: commands {What}", onOff, hub.Quiet ? "paused" : "resumed");
-                    break;
-                case ["hint", var onOff]:
-                    hub.Hint = onOff == "on";
-                    Log.Information("HINT {State}: downstream messages {What} field 50", onOff, hub.Hint ? "carry" : "omit");
-                    break;
-                case ["stats"]:
-                    hub.Stats();
-                    break;
-                case ["quit"]:
-                    lifetime.StopApplication();
+                if (!Execute(hub, lifetime, parts))
+                {
                     return;
-                default:
-                    Log.Warning("CONSOLE unknown command; use {Help}", Help);
-                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "CONSOLE command failed; the console keeps running");
             }
         }
+    }
+
+    private static bool Execute(TerminalHub hub, IHostApplicationLifetime lifetime, string[] parts)
+    {
+        switch (parts)
+        {
+            case ["list"]:
+                hub.List();
+                break;
+            case ["confirm", var code, var vehicle]:
+                hub.Confirm(code, vehicle);
+                break;
+            case ["revoke", var text]:
+                hub.Revoke(text);
+                break;
+            case ["forget", var text]:
+                hub.Forget(text);
+                break;
+            case ["quiet", var onOff]:
+                hub.Quiet = onOff == "on";
+                Log.Information("QUIET {State}: commands {What}", onOff, hub.Quiet ? "paused" : "resumed");
+                break;
+            case ["hint", var onOff]:
+                hub.Hint = onOff == "on";
+                Log.Information("HINT {State}: downstream messages {What} field 50", onOff, hub.Hint ? "carry" : "omit");
+                break;
+            case ["stats"]:
+                hub.Stats();
+                break;
+            case ["quit"]:
+                lifetime.StopApplication();
+                return false;
+            default:
+                Log.Warning("CONSOLE unknown command; use {Help}", Help);
+                break;
+        }
+
+        return true;
     }
 }
 

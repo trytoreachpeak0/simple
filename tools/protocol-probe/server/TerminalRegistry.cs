@@ -52,9 +52,23 @@ internal sealed class TerminalRegistry
     public TerminalEntry? FindByPairingCode(string code) =>
         entries.Values.FirstOrDefault(e => e.State == TerminalState.Pending && e.PairingCode == code);
 
-    public TerminalEntry? FindByVehicleOrKeyPrefix(string text) =>
-        entries.Values.FirstOrDefault(e => e.VehicleId == text)
-        ?? entries.Values.SingleOrDefault(e => e.Key.StartsWith(text, StringComparison.OrdinalIgnoreCase));
+    /// <summary>A vehicle id matches only registrations that are not revoked;
+    /// otherwise the text is taken as a key prefix. Returns null and a reason
+    /// when nothing or more than one entry matches.</summary>
+    public TerminalEntry? Match(string text, out string? problem)
+    {
+        var byVehicle = entries.Values.Where(e => e.VehicleId == text && e.State != TerminalState.Revoked).ToList();
+        var candidates = byVehicle.Count > 0
+            ? byVehicle
+            : entries.Values.Where(e => e.Key.StartsWith(text, StringComparison.OrdinalIgnoreCase)).ToList();
+        problem = candidates.Count switch
+        {
+            0 => $"no terminal matches {text}",
+            1 => null,
+            _ => $"{text} matches {candidates.Count} terminals ({string.Join(", ", candidates.Select(e => e.Key[..12]))}); give a longer key prefix",
+        };
+        return problem is null ? candidates[0] : null;
+    }
 
     public void Add(TerminalEntry entry)
     {

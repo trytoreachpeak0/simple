@@ -126,8 +126,8 @@ internal sealed class ProbeV1Service(TerminalHub hub, ProbeServerOptions options
 }
 
 /// <summary>The <c>simple.probe.v2</c> stream: only shows that a second major is
-/// served side by side. It accepts any client certificate and keeps no state.</summary>
-internal sealed class ProbeV2Service : V2.Probe.ProbeBase
+/// served side by side. It admits confirmed terminal keys and keeps no state.</summary>
+internal sealed class ProbeV2Service(TerminalHub hub) : V2.Probe.ProbeBase
 {
     public override async Task Connect(
         IAsyncStreamReader<V2.Report> requestStream,
@@ -135,7 +135,14 @@ internal sealed class ProbeV2Service : V2.Probe.ProbeBase
         ServerCallContext context)
     {
         var info = ConnectionInfo.From(context);
-        Log.Information("CALL v2 conn={Conn} tls={Tls} cipher={Cipher} alpn={Alpn}", info.ConnectionId, info.TlsProtocol, info.CipherSuite, info.Alpn);
+        Log.Information("CALL v2 conn={Conn} tls={Tls} cipher={Cipher} alpn={Alpn} key={Key}", info.ConnectionId, info.TlsProtocol, info.CipherSuite, info.Alpn,
+            info.Key is null ? "none" : TerminalHub.Short(info.Key));
+        if (info.Key is null || !hub.IsConfirmed(info.Key))
+        {
+            Log.Warning("REFUSE v2 conn={Conn} status=PermissionDenied detail=only confirmed terminal keys may use v2", info.ConnectionId);
+            throw new RpcException(new Status(StatusCode.PermissionDenied, "only confirmed terminal keys may use v2"));
+        }
+
         await foreach (var report in requestStream.ReadAllAsync(context.CancellationToken))
         {
             Log.Information("RX v2 conn={Conn} seq={Seq} vehicleNumber={Vehicle}", info.ConnectionId, report.Seq, report.VehicleNumber);

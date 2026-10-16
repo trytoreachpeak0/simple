@@ -9,6 +9,24 @@ using Serilog.Events;
 using Simple.ProtocolProbe.Server;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Only the command line configures the probe: no environment variables, no
+// appsettings, and no Kestrel endpoints or URLs from configuration, so that
+// nothing but the one TLS listener below can ever be opened.
+builder.Configuration.Sources.Clear();
+builder.Configuration.AddCommandLine(args);
+var foreign = builder.Configuration.AsEnumerable()
+    .Select(pair => pair.Key)
+    .Where(key => key.StartsWith("Kestrel", StringComparison.OrdinalIgnoreCase)
+        || key.Equals("urls", StringComparison.OrdinalIgnoreCase)
+        || key.EndsWith("_ports", StringComparison.OrdinalIgnoreCase))
+    .ToList();
+if (foreign.Count > 0)
+{
+    await Console.Error.WriteLineAsync($"refusing to start: Kestrel endpoints and URLs are fixed by the probe; remove {string.Join(", ", foreign)}");
+    return 2;
+}
+
 var options = ProbeServerOptions.From(builder.Configuration);
 Directory.CreateDirectory(options.DataDirectory);
 
@@ -87,6 +105,7 @@ try
 
     await app.RunAsync();
     Log.Information("STOP server pid={Pid}", Environment.ProcessId);
+    return 0;
 }
 catch (Exception ex)
 {

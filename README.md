@@ -22,6 +22,7 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 | `scenarios/` | 统一格式的测试场景 |
 | `samples/replay/` | 从真实系统录下的回放样本 |
 | `sites/<厂区>/` | 各厂区的起始业务配置 |
+| `tools/` | 一次性验证工具，不属于产品；`tools/protocol-probe` 的结论写回 ADR 0025 后删除 |
 
 以后计划加两个入口：`Simple.Cli`，用一条命令起停整套系统、跑场景；`Simple.Mcp`，给 AI 用的一层薄包装，只调用命令行和服务端 API，不放业务逻辑。
 

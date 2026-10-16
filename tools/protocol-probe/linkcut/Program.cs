@@ -21,6 +21,12 @@ for (var i = 0; i + 1 < args.Length; i += 2)
 
 var listen = IPEndPoint.Parse(map.GetValueOrDefault("listen", "127.0.0.1:6443"));
 var target = IPEndPoint.Parse(map.GetValueOrDefault("target", "127.0.0.1:5443"));
+if (!IPAddress.IsLoopback(listen.Address) || !IPAddress.IsLoopback(target.Address))
+{
+    Console.Error.WriteLine($"linkcut only relays between loopback addresses; got --listen {listen} --target {target}");
+    return 2;
+}
+
 using var log = map.TryGetValue("log", out var logPath) ? new StreamWriter(logPath, append: true) { AutoFlush = true } : null;
 var gate = new Gate();
 var pairs = new List<Pair>();
@@ -76,12 +82,14 @@ while (Console.ReadLine() is { } command)
 
             break;
         case "quit":
-            return;
+            return 0;
         default:
             Write($"UNKNOWN {command}");
             break;
     }
 }
+
+return 0;
 
 async Task AcceptAsync()
 {

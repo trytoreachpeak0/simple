@@ -172,6 +172,14 @@ internal sealed class TerminalHub(ProbeServerOptions options, TerminalRegistry r
         }
     }
 
+    public bool IsConfirmed(string key)
+    {
+        lock (gate)
+        {
+            return registry.Find(key)?.State == TerminalState.Confirmed;
+        }
+    }
+
     public void SendCommandIfDue(Session session)
     {
         lock (gate)
@@ -230,7 +238,7 @@ internal sealed class TerminalHub(ProbeServerOptions options, TerminalRegistry r
                 Log.Information("LIST key={Key} state={State} vehicle={Vehicle} pairingCode={Code} connected={Connected} lastFreshAgoMs={Ago}",
                     Short(e.Key), e.State, e.VehicleId ?? "-", e.PairingCode ?? "-",
                     runtime.Active is { } s ? $"s{s.Id}/{s.Info.ConnectionId}" : "no",
-                    runtime.LastFreshMs is { } t ? (NowMs - t).ToString("F0", CultureInfo.InvariantCulture) : "-");
+                    runtime.StaleTimer is not null ? (NowMs - runtime.LastFreshMs).ToString("F0", CultureInfo.InvariantCulture) : "-");
             }
         }
     }
@@ -266,10 +274,10 @@ internal sealed class TerminalHub(ProbeServerOptions options, TerminalRegistry r
     {
         lock (gate)
         {
-            var entry = registry.FindByVehicleOrKeyPrefix(text);
+            var entry = registry.Match(text, out var problem);
             if (entry is null)
             {
-                Log.Warning("REVOKE refused: no terminal matches {Text}", text);
+                Log.Warning("REVOKE refused: {Problem}", problem);
                 return;
             }
 
@@ -284,10 +292,10 @@ internal sealed class TerminalHub(ProbeServerOptions options, TerminalRegistry r
     {
         lock (gate)
         {
-            var entry = registry.FindByVehicleOrKeyPrefix(text);
+            var entry = registry.Match(text, out var problem);
             if (entry is null)
             {
-                Log.Warning("FORGET refused: no terminal matches {Text}", text);
+                Log.Warning("FORGET refused: {Problem}", problem);
                 return;
             }
 

@@ -22,10 +22,10 @@ dotnet publish tools/protocol-probe/linkcut -c Release -r win-x64 --self-contain
 ## 服务端
 
 ```
-simple-probe-server --bind 0.0.0.0 --port 5443 --data D:/simple-probe/data
+simple-probe-server --bind <服务端厂区网卡的 IP> --port 5443 --data D:/simple-probe/data
 ```
 
-- 默认只监听 `127.0.0.1:5443`，数据目录默认在当前用户的 `%LOCALAPPDATA%\simple-probe\server`。要让车载电脑连进来，必须显式给 `--bind`。
+- 默认只监听 `127.0.0.1:5443`，数据目录默认在当前用户的 `%LOCALAPPDATA%\simple-probe\server`。要让车载电脑连进来，必须显式给 `--bind`，而且绑具体网卡的 IP、不绑 `0.0.0.0`：factory01 上绑 `0.0.0.0` 会把探针一并暴露到 CI runner 所在的另一个网段。
 - 第一次启动在数据目录里生成 `server.pfx`（服务端证书，无口令，不进 Windows 证书存储）和 `server-pin.txt`（证书公钥的 SHA-256，终端要钉的就是它，属公开信息）。`terminals.json` 记录每把终端钥匙是待确认、已确认、已吊销还是疑似克隆。
 - 其他选项：`--tls 12`（默认，只开 TLS 1.2；`os` 表示用系统默认）、`--key-alg ecdsa|rsa`、`--command-interval 10`（秒）、`--stale-after 10`（秒，"上报过期"计时器）、`--log <文件>`、`--console-log false`。
 - `--ping-delay <秒>`、`--ping-timeout <秒>` 打开服务端的 HTTP/2 保活 ping（Kestrel 默认不发 ping）。启动时日志里有一行 `KESTREL ...` 记下生效的值。注意：`--Kestrel:Limits:...` 这种配置写法对 Limits 不生效（实测），所以单独做了这两个选项。
