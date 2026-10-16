@@ -14,10 +14,13 @@ reviewed in pull requests like the code is.
 
 - SIMPLE is reused across semiconductor plants. No project, namespace or
   type in the product is named after a site, a customer or a project
-  number. A site's business configuration lives under `sites/<site>/`
-  (`sites/d8/` first); product code reads it as configuration and never
-  branches on which site it is. Endpoints and credentials are not in it
-  (see Safety).
+  number. A site's starting business configuration lives under
+  `sites/<site>/` (`sites/d8/` first); it is imported into the server at
+  first install and used by tests and scenarios, and from then on the
+  server holds the live configuration, changed only through its API
+  (`docs/adr/0017-site-config-lives-in-server.md`). Product code reads the
+  configuration and never branches on which site it is. Endpoints and
+  credentials are not in it (see Safety).
 - Namespaces are `Simple.*`. Do not carry over namespaces or names from
   the previous line.
 
@@ -69,7 +72,7 @@ reviewed in pull requests like the code is.
 | `tests/` | One `<Project>.Tests` per project, plus `Simple.Contracts.Tests` |
 | `scenarios/` | Scenarios in the shared format |
 | `samples/replay/` | Replay samples recorded from the real systems |
-| `sites/<site>/` | Per-site business configuration |
+| `sites/<site>/` | Per-site starting business configuration |
 
 Planned, not created yet: `Simple.Cli` (bring the system up and down, run
 scenarios) and `Simple.Mcp` (the thin AI layer above).
@@ -204,9 +207,10 @@ single-context layout). Do not start a parallel set of these by hand.
   install packages) may point at a real fleet manager, a real vehicle or a
   production MES, or enable real work by default. Only placeholder values
   or loopback addresses of fakes appear in these defaults.
-- `sites/<site>/` holds a site's business configuration: areas, maps,
-  task types, the vehicle list and similar settings, with real values. It
-  holds no endpoints the product connects to and no credentials.
+- `sites/<site>/` holds a site's starting business configuration: areas,
+  maps, task types, the vehicle list and similar settings, with real
+  values. It holds no endpoints the product connects to and no
+  credentials.
 - Real endpoints and credentials come from outside the repository (a local
   configuration file outside the clone, environment variables, or
   injection at deploy time), and a person selects them explicitly for a
