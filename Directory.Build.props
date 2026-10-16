@@ -9,6 +9,13 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
+  <!-- On CI (GitHub Actions sets CI=true) restore must match the committed
+       packages.lock.json exactly: a dependency change without its lock file
+       fails restore with NU1004 instead of silently resolving anew. -->
+  <PropertyGroup Condition="'$(CI)' == 'true'">
+    <RestoreLockedMode>true</RestoreLockedMode>
+  </PropertyGroup>
+
   <!-- Test projects run on Microsoft Testing Platform v2 (xunit.v3 4.x), which
        builds each test project as its own executable. -->
   <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">

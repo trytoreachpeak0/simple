@@ -1,0 +1,28 @@
+# Text files are stored with LF in the repository. The working-tree line
+# ending follows each machine's git settings (core.autocrlf / core.eol).
+* text=auto
+
+# Windows batch files need CRLF to run; shell scripts need LF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.sh  text eol=lf
+
+# Binary files: never convert, never diff as text.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.bmp    binary
+*.pdf    binary
+*.zip    binary
+*.7z     binary
+*.dll    binary
+*.exe    binary
+*.pdb    binary
+*.nupkg  binary
+*.snupkg binary
+*.pfx    binary
+*.ttf    binary
+*.woff   binary
+*.woff2  binary
