@@ -3,6 +3,9 @@ name: runner-smoke
 # Smoke test for the SIMPLE runner win11-01-simple on vm01 (the CI guest on the
 # factory server). It proves the runner picks up jobs, sees the .NET 10 SDK and
 # builds the solution. Issue #20.
+#
+# Interim (#25): it also runs the tests against SQL Server Express on vm01,
+# so every PR is tested there until F3 turns this into the proper CI workflow.
 on:
   pull_request:
   workflow_dispatch:
@@ -36,3 +39,30 @@ jobs:
       - name: Build
         shell: pwsh
         run: dotnet build simple.slnx
+
+      # Each test creates its own database Simple_test_<random> on .\SQLEXPRESS
+      # and drops it. The runner account (NETWORK SERVICE) uses Windows
+      # authentication; there is no password.
+      - name: Test
+        shell: pwsh
+        env:
+          SIMPLE_TEST_SQLSERVER: Server=.\SQLEXPRESS;Integrated Security=true;TrustServerCertificate=true
+        run: dotnet test --solution simple.slnx --no-build
+
+      # A database left behind means a test failed to clean up after itself.
+      - name: No test databases left behind
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not (Get-Command sqlcmd -ErrorAction SilentlyContinue)) {
+            Write-Output '::warning::sqlcmd is not installed on this runner; leftover test databases cannot be checked.'
+            exit 0
+          }
+          $left = sqlcmd -S '.\SQLEXPRESS' -E -h -1 -b -Q "SET NOCOUNT ON; SELECT name FROM sys.databases WHERE name LIKE 'Simple[_]test[_]%'" |
+            Where-Object { $_.Trim() }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($left) {
+            Write-Output "::error::Test databases left behind: $($left.Trim() -join ', ')"
+            exit 1
+          }
+          Write-Output 'No Simple_test_* databases left behind.'
