@@ -167,12 +167,23 @@ single-context layout). Do not start a parallel set of these by hand.
   usings, warnings as errors and lock files for every project. Do not
   repeat those in a `.csproj`; a WPF project only overrides
   `TargetFramework` to `net10.0-windows`.
+- **Storage is SQL Server 2022 everywhere** (the product owner,
+  2026-10-17): LocalDB `(localdb)\MSSQLLocalDB` on development machines,
+  Express on `vm01` for CI, never SQLite. The server uses EF Core
+  migrations (`src/Simple.Server/Persistence/Migrations`); `dotnet-ef` is a
+  local tool pinned in `.config/dotnet-tools.json` (`dotnet tool restore`).
+  The database is `Simple_<instance>`, named by `Simple:Instance`; a
+  connection string never names a database.
 - **Central package management.** Every version lives in
   `Directory.Packages.props`. A `PackageReference` never carries
   `Version=`; restore enforces this with `NU1008`, and with `NU1013` for
   `VersionOverride=`, which `Directory.Packages.props` disables. Commit
   the `packages.lock.json` files: on CI (`CI=true`) restore runs in locked
   mode and fails with `NU1004` when they are out of date.
+  `CentralPackageTransitivePinningEnabled` is on: a `PackageVersion` also
+  pins that package where it arrives transitively. Raise a vulnerable
+  transitive package this way (`NU1902`/`NU1903` fail the build), with a
+  comment naming the advisory.
 
 ## Tests
 
@@ -195,6 +206,11 @@ single-context layout). Do not start a parallel set of these by hand.
   `Directory.Build.props` makes it an executable and adds `using Xunit;`
   (xunit.v3 4.x does not add it on its own). Its `.csproj` only references
   `xunit.v3` and the project under test.
+- **Tests that need a database** create their own, `Simple_test_<random>`,
+  and drop it when done, so concurrent runs never share one. They use
+  LocalDB unless `SIMPLE_TEST_SQLSERVER` holds another SQL Server
+  connection string (without a database). Never point it at a shared or
+  production instance.
 - **Create a test project together with its first test, not before.** A
   test run that finds zero tests exits with code 8 and fails. Never pass
   `--ignore-exit-code 8`: it would also let a filter that selects nothing
@@ -210,6 +226,10 @@ single-context layout). Do not start a parallel set of these by hand.
   install packages) may point at a real fleet manager, a real vehicle or a
   production MES, or enable real work by default. Only placeholder values
   or loopback addresses of fakes appear in these defaults.
+- Until the server API has authentication, the server listens on
+  loopback only and refuses to start on any other address.
+  `Simple.Server.Tests` checks every `appsettings*.json` under `src/` for
+  hosts that are neither loopback nor LocalDB.
 - `sites/<site>/` holds a site's starting business configuration: areas,
   maps, task types, the vehicle list and similar settings, with real
   values. It holds no endpoints the product connects to and no
