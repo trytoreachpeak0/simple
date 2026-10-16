@@ -35,3 +35,8 @@ csharp_indent_switch_labels = true
 
 # Namespaces
 csharp_style_namespace_declarations = file_scoped
+
+# NuGet writes lock files without a final newline; keep editors from adding
+# one so saving and restore do not fight over it.
+[packages.lock.json]
+insert_final_newline = false
