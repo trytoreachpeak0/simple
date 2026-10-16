@@ -38,6 +38,10 @@ Multi-context repo (presence of `CONTEXT-MAP.md` at the root):
         └── docs/adr/
 ```
 
+## Keep the rules overview current
+
+`docs/rules-overview.md` summarises, by scenario, the business rules currently in force, each citing its ADR. A PR that changes a rule in force (a new ADR, or an edit to an ADR or `CONTEXT.md`) updates `docs/rules-overview.md` in the same PR.
+
 ## Use the glossary's vocabulary
 
 When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
