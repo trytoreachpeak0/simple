@@ -1,0 +1,188 @@
+name: ci
+
+# Restore, build and test every pull request and every push to main on the
+# SIMPLE runner win11-01-simple on vm01 (the CI guest on the factory server),
+# and record how long each phase takes (issue #28).
+#
+# Moving CI to another self-hosted machine: change `runs-on` below (the only
+# place that names the runner) and preinstall on the new machine the .NET SDK
+# that global.json pins, plus SQL Server (Express is enough) reachable as
+# .\SQLEXPRESS with Windows authentication and CREATE ANY DATABASE for the
+# runner account. No step downloads an SDK or names the machine.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never cancel a running job on a self-hosted runner. Cancelling one has wedged
+# the runner session for over four hours before, so cancel-in-progress stays
+# false: a newer run for the same branch waits for the running one instead.
+# (GitHub still drops a run that is only *pending* when an even newer one
+# arrives; that run never started on the runner, so nothing is killed.)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # The timing summary reads this run's job and step times from the API.
+  actions: read
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+
+jobs:
+  build-and-test:
+    name: build-and-test
+    # Only PRs from branches of this repository. A fork PR would execute its
+    # code on vm01, which sits in the plant network next to production
+    # services. This condition only stops fork PRs that leave this file alone:
+    # a pull_request run uses the PR's own copy of the workflow, so a fork PR
+    # can delete the condition. Those are held by the repository setting that
+    # makes outside contributors' PRs wait for approval; before approving one,
+    # read its changes under .github/workflows/ first.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # The only place that names the runner. `simple` is carried by
+    # win11-01-simple alone; never add a label of the v2 runners here.
+    runs-on: [self-hosted, simple]
+    # Backstop only. When GitHub cancels a job for running past this limit it
+    # sends the runner the same cancel message as a manual cancel, which is the
+    # path that has wedged runners. Every step therefore carries its own
+    # timeout-minutes, and this limit stays above their sum (74) plus margin, so
+    # a hang always hits a step timeout first: the runner enforces a step
+    # timeout itself, kills that step's processes and finishes the job normally.
+    timeout-minutes: 90
+
+    steps:
+      # Steps are judged by exit codes only: vm01 runs a Chinese-locale
+      # Windows and dotnet prints localized text.
+      - name: Record machine load
+        timeout-minutes: 2
+        run: |
+          # Our own job is one Runner.Worker; any other one is a job of another
+          # runner on this machine (on vm01 the runners of the v2 line and of
+          # riot-sdk, which share its CPU and memory).
+          $others = [Math]::Max(0, @(Get-Process -Name Runner.Worker -ErrorAction Ignore).Count - 1)
+          "SIMPLE_CI_OTHER_JOBS_AT_START=$others" >> $env:GITHUB_ENV
+          # The NuGet caches stay on the machine between runs, apart from those
+          # of the other runners, which run under the same service account.
+          # This keeps SIMPLE's runs from writing into their caches by
+          # accident; it does not stop code running under that account on
+          # purpose.
+          "NUGET_PACKAGES=$(Join-Path $env:RUNNER_WORKSPACE 'nuget-packages')" >> $env:GITHUB_ENV
+          "NUGET_HTTP_CACHE_PATH=$(Join-Path $env:RUNNER_WORKSPACE 'nuget-http-cache')" >> $env:GITHUB_ENV
+          Write-Output "Other runner jobs on this machine: $others"
+
+      # Actions are pinned by commit SHA: this runner sits in the plant network.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 10
+        with:
+          persist-credentials: false
+
+      - name: SDK matches global.json
+        timeout-minutes: 2
+        run: |
+          $pinned = (Get-Content global.json -Raw | ConvertFrom-Json).sdk.version
+          $resolved = dotnet --version
+          $code = $LASTEXITCODE
+          if ($code -ne 0 -or $resolved -ne $pinned) {
+            dotnet --list-sdks
+            Write-Output "::error::global.json pins SDK $pinned; this machine resolves '$resolved' (exit code $code). Install SDK $pinned on the runner."
+            exit 1
+          }
+          Write-Output "SDK $resolved"
+
+      - name: Restore (locked mode)
+        timeout-minutes: 10
+        run: dotnet restore simple.slnx --locked-mode
+
+      # With CentralPackageTransitivePinningEnabled a stale packages.lock.json
+      # still passes --locked-mode (exit code 0, old versions resolved; found in
+      # the review of PR #27). Re-resolve from scratch and fail if any lock file
+      # changes or a new one appears.
+      - name: Lock files up to date
+        timeout-minutes: 10
+        run: |
+          dotnet restore simple.slnx --force-evaluate -p:RestoreLockedMode=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git add --intent-to-add -- ':(glob)**/packages.lock.json'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code -- ':(glob)**/packages.lock.json'
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output '::error::packages.lock.json is out of date. Run dotnet restore --force-evaluate locally and commit the lock files.'
+            exit 1
+          }
+
+      - name: Build
+        timeout-minutes: 15
+        run: dotnet build simple.slnx -c Release --no-restore
+
+      # Each test creates its own database Simple_test_<random> on .\SQLEXPRESS
+      # and drops it. The runner account (NETWORK SERVICE) uses Windows
+      # authentication; there is no password.
+      - name: Test
+        timeout-minutes: 15
+        env:
+          SIMPLE_TEST_SQLSERVER: Server=.\SQLEXPRESS;Integrated Security=true;TrustServerCertificate=true
+        run: dotnet test --solution simple.slnx -c Release --no-build --results-directory "$env:RUNNER_TEMP/test-results" --report-xunit-trx
+
+      # Diagnostics only: the Test step has already judged the run, so a
+      # network hiccup while uploading must not turn a green run red.
+      - name: Upload test results
+        if: always()
+        timeout-minutes: 5
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results
+          path: ${{ runner.temp }}/test-results
+          if-no-files-found: ignore
+
+      # A database left behind means a test failed to clean up after itself.
+      # The step drops what it finds and still fails, so one leftover reports
+      # once instead of failing every later run. Queried with the SQL client
+      # that ships with PowerShell 7, so the runner needs no extra tool;
+      # failing to query fails the step.
+      - name: No test databases left behind
+        if: always()
+        timeout-minutes: 2
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $connection = [System.Data.SqlClient.SqlConnection]::new('Server=.\SQLEXPRESS;Integrated Security=true')
+          $connection.Open()
+          try {
+            $command = $connection.CreateCommand()
+            $command.CommandText = "SELECT name FROM sys.databases WHERE name LIKE 'Simple[_]test[_]%'"
+            $reader = $command.ExecuteReader()
+            $left = @(while ($reader.Read()) { $reader.GetString(0) })
+            $reader.Dispose()
+            foreach ($name in $left) {
+              $drop = $connection.CreateCommand()
+              $drop.CommandText = "DECLARE @sql nvarchar(max) = N'ALTER DATABASE ' + QUOTENAME(@name) + N' SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ' + QUOTENAME(@name); EXEC (@sql);"
+              [void]$drop.Parameters.AddWithValue('@name', $name)
+              [void]$drop.ExecuteNonQuery()
+            }
+          }
+          finally {
+            $connection.Dispose()
+          }
+          if ($left) {
+            Write-Output "::error::Test databases left behind (now dropped): $($left -join ', ')"
+            exit 1
+          }
+          Write-Output 'No Simple_test_* databases left behind.'
+
+      # Informational: a failure here never turns the run red.
+      - name: Timing summary
+        if: always()
+        timeout-minutes: 3
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pwsh -File scripts/ci/Measure-CiTiming.ps1 -Summary
