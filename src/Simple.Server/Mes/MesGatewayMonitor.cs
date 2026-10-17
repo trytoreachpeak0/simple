@@ -10,7 +10,9 @@ namespace Simple.Server.Mes;
 /// succeeded. It becomes unavailable for one of two causes, which are the
 /// glossary's two faults: <see cref="CauseGateway"/> (MES gateway fault: the
 /// gateway does not answer) and <see cref="CauseRead"/> (MES fault: the
-/// gateway answers but could not read the MES or got the wrong shape).
+/// gateway answers but could not read the MES or got the wrong shape, or its
+/// rounds have stopped: no new round for <see cref="MesGatewaySettings.StaleAfter"/>,
+/// as a read that hangs would leave it).
 /// </summary>
 public sealed partial class MesGatewayMonitor(
     IServiceScopeFactory scopes,
@@ -21,7 +23,7 @@ public sealed partial class MesGatewayMonitor(
     public const string CauseGateway = "gateway";
     public const string CauseRead = "read";
 
-    private Observation current = new(null, null, null, null, false, null, null);
+    private Observation current = new(null, null, null, null, false, null, null, null, null);
 
     public MesGatewayStatus Status()
     {
@@ -31,8 +33,9 @@ public sealed partial class MesGatewayMonitor(
             o.Reachable,
             o.CheckedAt,
             o.GatewayError,
-            Available: IsAvailable(o) ? true : o.OpenCause is not null ? false : null,
+            Available: IsAvailable(o, settings.Value.StaleAfter) ? true : o.OpenCause is not null ? false : null,
             o.UnavailableSince,
+            o.NewRoundSeenAt,
             o.Snapshot is { } s ? new MesRoundStatus(s.Round, s.ReadAt, s.Succeeded, s.Failure) : null,
             o.Snapshot?.Rows?.Count,
             o.Snapshot?.Rows);
@@ -50,11 +53,15 @@ public sealed partial class MesGatewayMonitor(
     public Task SnapshotReceivedAsync(MesSnapshot snapshot, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        var now = time.GetUtcNow();
         return ObserveAsync(
             o => o with
             {
                 Reachable = true,
-                CheckedAt = time.GetUtcNow(),
+                CheckedAt = now,
+                // By the server's own clock: the gateway's may differ.
+                NewRoundSeenAt = o.NewRoundSeenAt is null || o.LastReportedRound != snapshot.Round ? now : o.NewRoundSeenAt,
+                LastReportedRound = snapshot.Round,
                 GatewayError = null,
                 NotReadYet = snapshot.Round == 0,
                 Snapshot = snapshot.Round > 0 ? snapshot : o.Snapshot,
@@ -76,12 +83,12 @@ public sealed partial class MesGatewayMonitor(
         var next = change(old);
         string? type = null;
         object? data = null;
-        if (Problem(next) is { } problem && problem.Cause != old.OpenCause)
+        if (Problem(next, settings.Value.StaleAfter) is { } problem && problem.Cause != old.OpenCause)
         {
             next = next with { OpenCause = problem.Cause, UnavailableSince = old.UnavailableSince ?? next.CheckedAt };
             (type, data) = (EventTypes.MesUnreachable, new { problem.Cause, problem.Error, next.Snapshot?.Round });
         }
-        else if (IsAvailable(next) && old.OpenCause is not null)
+        else if (IsAvailable(next, settings.Value.StaleAfter) && old.OpenCause is not null)
         {
             next = next with { OpenCause = null, UnavailableSince = null };
             (type, data) = (EventTypes.MesRecovered, new { next.Snapshot!.Round, RowCount = next.Snapshot.Rows?.Count, old.UnavailableSince });
@@ -105,11 +112,17 @@ public sealed partial class MesGatewayMonitor(
         Volatile.Write(ref current, next);
     }
 
-    private static bool IsAvailable(Observation o) => o.Reachable == true && !o.NotReadYet && o.Snapshot is { Succeeded: true };
+    private static bool IsAvailable(Observation o, TimeSpan staleAfter) =>
+        o.Reachable == true && !o.NotReadYet && !IsStale(o, staleAfter) && o.Snapshot is { Succeeded: true };
+
+    /// <summary>The gateway answers, but its round number has not changed for longer than <paramref name="staleAfter"/>.</summary>
+    private static bool IsStale(Observation o, TimeSpan staleAfter) =>
+        o.Reachable == true && o.CheckedAt - o.NewRoundSeenAt > staleAfter;
 
     /// <summary>Why the MES is unavailable now, or null when it is available or nothing is known yet.</summary>
-    private static (string Cause, string? Error)? Problem(Observation o) =>
+    private static (string Cause, string? Error)? Problem(Observation o, TimeSpan staleAfter) =>
         o.Reachable == false ? (CauseGateway, o.GatewayError)
+        : IsStale(o, staleAfter) ? (CauseRead, $"No new round for more than {staleAfter}; the gateway still reports round {o.LastReportedRound}.")
         : !o.NotReadYet && o.Snapshot is { Succeeded: false } failed ? (CauseRead, failed.Failure?.Message)
         : null;
 
@@ -118,6 +131,7 @@ public sealed partial class MesGatewayMonitor(
 
     /// <param name="Snapshot">The latest round the gateway reported, kept while the gateway is unreachable.</param>
     /// <param name="NotReadYet">The gateway answered round 0 last time.</param>
+    /// <param name="NewRoundSeenAt">When the server last saw the gateway's round number change, by the server's clock.</param>
     /// <param name="OpenCause">The cause recorded in the last <see cref="EventTypes.MesUnreachable"/>, until the recovery is recorded.</param>
     private sealed record Observation(
         bool? Reachable,
@@ -125,6 +139,8 @@ public sealed partial class MesGatewayMonitor(
         string? GatewayError,
         MesSnapshot? Snapshot,
         bool NotReadYet,
+        long? LastReportedRound,
+        DateTimeOffset? NewRoundSeenAt,
         string? OpenCause,
         DateTimeOffset? UnavailableSince);
 }
@@ -136,6 +152,7 @@ public sealed partial class MesGatewayMonitor(
 /// <param name="GatewayError">Why the last fetch failed; null when it succeeded.</param>
 /// <param name="Available">The gateway answered and its latest round succeeded; null while nothing is known.</param>
 /// <param name="UnavailableSince">When the MES became unavailable, by the server's clock; null while available.</param>
+/// <param name="NewRoundSeenAt">When the server last saw a new round, by the server's clock; no new round for longer than StaleAfter makes the MES unavailable.</param>
 /// <param name="LastRound">The gateway's latest round; kept, with its time, while the gateway is unreachable.</param>
 /// <param name="RowCount">Rows of the latest round; null when it failed.</param>
 /// <param name="Rows">The rows themselves; null when the latest round failed.</param>
@@ -146,6 +163,7 @@ public sealed record MesGatewayStatus(
     string? GatewayError,
     bool? Available,
     DateTimeOffset? UnavailableSince,
+    DateTimeOffset? NewRoundSeenAt,
     MesRoundStatus? LastRound,
     int? RowCount,
     IReadOnlyList<MesRow>? Rows);

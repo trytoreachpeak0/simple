@@ -19,11 +19,15 @@ public sealed class StubMesGateway
     private MesReadFailure? failure;
     private string? unreachable;
     private bool notReadYet;
+    private bool frozen;
 
     public int Fetches { get; private set; }
 
     /// <summary>Good rounds with these rows.</summary>
-    public void Answer(params MesRow[] answer) => Set(() => (rows, failure, unreachable, notReadYet) = (answer, null, null, false));
+    public void Answer(params MesRow[] answer) => Set(() => (rows, failure, unreachable, notReadYet, frozen) = (answer, null, null, false, false));
+
+    /// <summary>The gateway answers, but its round stays where it is, as when a read hangs.</summary>
+    public void Freeze() => Set(() => frozen = true);
 
     /// <summary>Failed rounds: the gateway answers, the MES did not.</summary>
     public void FailRounds(string kind, string message) =>
@@ -62,7 +66,7 @@ public sealed class StubMesGateway
 
             var snapshot = notReadYet
                 ? new MesSnapshot(0, null, false, null, null)
-                : new MesSnapshot(++round, DateTimeOffset.UtcNow, failure is null, failure, rows);
+                : new MesSnapshot(frozen ? round : ++round, DateTimeOffset.UtcNow, failure is null, failure, rows);
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(snapshot, options: JsonSerializerOptions.Web) };
         }
     }

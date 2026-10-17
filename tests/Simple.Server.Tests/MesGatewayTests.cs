@@ -128,6 +128,28 @@ public sealed class MesGatewayTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ARoundThatStopsMovingMakesTheMesUnavailableWhileTheGatewayAnswers()
+    {
+        server.MesGateway.Answer(Row);
+        await StatusUntilAsync(m => m.Rows?.Contains(Row) == true);
+
+        server.MesGateway.Freeze();
+        var stale = await StatusUntilAsync(m => m.Available == false);
+        server.MesGateway.Answer(Row);
+        await StatusUntilAsync(m => m.Available == true);
+
+        Assert.True(stale.Reachable);
+        Assert.True(stale.LastRound!.Succeeded);
+        // StaleAfter is 2 s in these tests.
+        Assert.True(stale.CheckedAt - stale.NewRoundSeenAt > TimeSpan.FromSeconds(2));
+        var events = await MesEventsAsync();
+        Assert.Equal([EventTypes.MesUnreachable, EventTypes.MesRecovered], events.Select(e => e.Type));
+        var down = events[0].Data!.Value;
+        Assert.Equal(MesGatewayMonitor.CauseRead, down.GetProperty("cause").GetString());
+        Assert.StartsWith("No new round for more than 00:00:02", down.GetProperty("error").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AGatewayUnreachableFromTheStartIsRecordedAndARoundZeroIsNotData()
     {
         await server.StopAsync();
@@ -167,6 +189,7 @@ public sealed class MesGatewayTests : IAsyncLifetime
 
         Assert.Equal(TimeSpan.FromSeconds(30), new MesGatewaySettings().RetryMaxDelay);
         Assert.Equal(TimeSpan.FromSeconds(2), new MesGatewaySettings().PollInterval);
+        Assert.Equal(TimeSpan.FromSeconds(90), new MesGatewaySettings().StaleAfter);
         Assert.Equal(new Uri("http://127.0.0.1:9"), settings.Url);
     }
 

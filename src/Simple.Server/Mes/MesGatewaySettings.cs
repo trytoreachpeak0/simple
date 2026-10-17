@@ -16,6 +16,15 @@ public sealed class MesGatewaySettings
     /// <summary>The longest wait between retries while the gateway cannot be reached (ADR 0008: 30 s).</summary>
     public TimeSpan RetryMaxDelay { get; set; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// No new round for longer than this makes the MES unavailable (cause
+    /// read), even while the gateway answers: a read that hangs leaves the
+    /// round where it was. Above the gateway's 30 s retry cap and the
+    /// previous line's 30 s query timeout, so a slow but working MES does not
+    /// trip it.
+    /// </summary>
+    public TimeSpan StaleAfter { get; set; } = TimeSpan.FromSeconds(90);
+
     /// <summary>How long one fetch may take before the gateway counts as unreachable.</summary>
     public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(5);
 }
@@ -37,6 +46,7 @@ public sealed class MesGatewaySettingsValidator : IValidateOptions<MesGatewaySet
                      ("PollInterval", options.PollInterval),
                      ("RetryMaxDelay", options.RetryMaxDelay),
                      ("RequestTimeout", options.RequestTimeout),
+                     ("StaleAfter", options.StaleAfter),
                  })
         {
             if (value <= TimeSpan.Zero)

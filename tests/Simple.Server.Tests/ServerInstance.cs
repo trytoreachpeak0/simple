@@ -43,6 +43,7 @@ public sealed class ServerInstance : IAsyncDisposable
             [$"{MesGatewaySettings.Section}:Url"] = "http://127.0.0.1:9",
             [$"{MesGatewaySettings.Section}:PollInterval"] = "00:00:00.1",
             [$"{MesGatewaySettings.Section}:RetryMaxDelay"] = "00:00:00.3",
+            [$"{MesGatewaySettings.Section}:StaleAfter"] = "00:00:02",
         };
         Database = new ServerSettings { Instance = Instance, ConnectionString = SqlServer };
     }
