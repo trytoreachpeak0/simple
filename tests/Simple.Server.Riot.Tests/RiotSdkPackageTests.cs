@@ -21,7 +21,7 @@ public sealed class RiotSdkPackageTests
         """;
 
     [Fact]
-    public async Task Facade_reads_dispatchable_vehicles_through_the_package()
+    public async Task FacadeReadsDispatchableVehiclesThroughThePackage()
     {
         var handler = new CannedResponse(SimpleInfoBody);
         using var http = new HttpClient(handler);

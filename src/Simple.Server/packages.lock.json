@@ -262,6 +262,63 @@
           "Microsoft.IdentityModel.Logging": "7.7.1"
         }
       },
+      "Microsoft.IO.RecyclableMemoryStream": {
+        "type": "Transitive",
+        "resolved": "3.0.1",
+        "contentHash": "s/s20YTVY9r9TPfTrN5g8zPF1YhwxyqO6PxUkrYTGI2B+OGPe9AdajWZrLhFqXIvqIW23fnUE4+ztrUWNU1+9g=="
+      },
+      "Microsoft.Kiota.Abstractions": {
+        "type": "Transitive",
+        "resolved": "1.22.2",
+        "contentHash": "xktJuKVMXfcX9LJR0QH8gwbZ2WO+WrqTujCPtN13Y6GfLaB7wV0v1pv3hdO1Fek2/vKRpALhbdRYmFNoyzO1Sg==",
+        "dependencies": {
+          "Std.UriTemplate": "2.0.8"
+        }
+      },
+      "Microsoft.Kiota.Http.HttpClientLibrary": {
+        "type": "Transitive",
+        "resolved": "1.22.2",
+        "contentHash": "t3rPJbiLKBuvFQoCK/wmgwSjRmvEHomNjbXwV3suVpkszHPegj6MSmRorgUuvh8u+Gf7kvB8bNaBpLGc84Ps2w==",
+        "dependencies": {
+          "Microsoft.Kiota.Abstractions": "1.22.2"
+        }
+      },
+      "Microsoft.Kiota.Serialization.Form": {
+        "type": "Transitive",
+        "resolved": "1.22.2",
+        "contentHash": "oenk5iemusMXQ3XvmlBXN6ycwZghH0EFCz2ZWeuSFzm1F7aNvl3EHJdQbiYTHievXoPnWXzW/diSQdKpvWZLwg==",
+        "dependencies": {
+          "Microsoft.IO.RecyclableMemoryStream": "3.0.1",
+          "Microsoft.Kiota.Abstractions": "1.22.2"
+        }
+      },
+      "Microsoft.Kiota.Serialization.Json": {
+        "type": "Transitive",
+        "resolved": "1.22.2",
+        "contentHash": "7MSOb/6cdAQpSie22BZSPxL0u5hkEVJL4oKn30jioX7rJtoWZgMd8LDVQP4w/JGpSYEWrNSs8o1g1Q1NHSStDg==",
+        "dependencies": {
+          "Microsoft.IO.RecyclableMemoryStream": "3.0.1",
+          "Microsoft.Kiota.Abstractions": "1.22.2"
+        }
+      },
+      "Microsoft.Kiota.Serialization.Multipart": {
+        "type": "Transitive",
+        "resolved": "1.22.2",
+        "contentHash": "9tieLdQLSyk6ZhG1KIYfoSLWKyNkam9/sDqvI1XZcl962g/KzX6CCPh6H44Ub/D5KS6wDzz4YoWxjO9UXJ24cw==",
+        "dependencies": {
+          "Microsoft.IO.RecyclableMemoryStream": "3.0.1",
+          "Microsoft.Kiota.Abstractions": "1.22.2"
+        }
+      },
+      "Microsoft.Kiota.Serialization.Text": {
+        "type": "Transitive",
+        "resolved": "1.22.2",
+        "contentHash": "FIC94KqhgTb13FZ3jYvdaMT625oQ8TrXWZ157zDo9jnJ2SKELSBCs7qC2ZfEOJVApx4JruHfJ/r1dnqb4wj+8g==",
+        "dependencies": {
+          "Microsoft.IO.RecyclableMemoryStream": "3.0.1",
+          "Microsoft.Kiota.Abstractions": "1.22.2"
+        }
+      },
       "Microsoft.OpenApi": {
         "type": "Transitive",
         "resolved": "2.12.2",
@@ -289,6 +346,24 @@
         "type": "Transitive",
         "resolved": "13.0.4",
         "contentHash": "pdgNNMai3zv51W5aq268sujXUyx7SNdE2bj1wZcWjAQrKMFZV260lbqYop1d2GM67JI1huLRwxo9ZqnfF/lC6A=="
+      },
+      "RIoT.Sdk.Core": {
+        "type": "Transitive",
+        "resolved": "0.3.0",
+        "contentHash": "eNK0vsWQHRbT0te4KIIoklRI1Qsa8Xa1iuJ4LpGsM38h3TDcw+LbjMeLX2aseAaqTIAfn1WDj52N5tcf1hWdPg=="
+      },
+      "RIoT.Sdk.Generated": {
+        "type": "Transitive",
+        "resolved": "0.3.0",
+        "contentHash": "AURAyw9azVr5oy+X7itXtXhoDki/6wBCReTbP0/3DBwLs7+X8ge8SYOi8Jqq59DxPCn/b4HKBILqyB9z91Euww==",
+        "dependencies": {
+          "Microsoft.Kiota.Bundle": "1.17.4"
+        }
+      },
+      "Std.UriTemplate": {
+        "type": "Transitive",
+        "resolved": "2.0.8",
+        "contentHash": "IAR4gJlLVD4r/FsU/rDb1+9sbB3/tCFVZz5IzlbM2yHoiUisBi5Ek/KXRUF7RcqNARka79EoaOz9INnXvQ/O6w=="
       },
       "System.ClientModel": {
         "type": "Transitive",
@@ -385,7 +460,10 @@
         "type": "Project"
       },
       "simple.server.riot": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "RIoT.Sdk.Facade": "[0.3.0, )"
+        }
       },
       "Microsoft.Data.SqlClient": {
         "type": "CentralTransitive",
@@ -404,6 +482,31 @@
           "System.Configuration.ConfigurationManager": "9.0.11",
           "System.IdentityModel.Tokens.Jwt": "7.7.1",
           "System.Security.Cryptography.Pkcs": "9.0.11"
+        }
+      },
+      "Microsoft.Kiota.Bundle": {
+        "type": "CentralTransitive",
+        "requested": "[1.22.2, )",
+        "resolved": "1.22.2",
+        "contentHash": "dqzCwYgDhIPIeTma2oeAgc1hAOCN+s7/oa1Wt8VzDoK25xnk+vsLTVyBEg5LW2T733cr22GdZw66D9Dl4dQNFg==",
+        "dependencies": {
+          "Microsoft.Kiota.Abstractions": "1.22.2",
+          "Microsoft.Kiota.Http.HttpClientLibrary": "1.22.2",
+          "Microsoft.Kiota.Serialization.Form": "1.22.2",
+          "Microsoft.Kiota.Serialization.Json": "1.22.2",
+          "Microsoft.Kiota.Serialization.Multipart": "1.22.2",
+          "Microsoft.Kiota.Serialization.Text": "1.22.2"
+        }
+      },
+      "RIoT.Sdk.Facade": {
+        "type": "CentralTransitive",
+        "requested": "[0.3.0, )",
+        "resolved": "0.3.0",
+        "contentHash": "G47l/9bbm6HYL6/qrt7z0mY705r4wFHgIZuNOFlTPHZ3QfxPY7vsF0F+L3oHU4xtpLcwx0jyuAHH7DKWEn2BHg==",
+        "dependencies": {
+          "Microsoft.Kiota.Bundle": "1.17.4",
+          "RIoT.Sdk.Core": "0.3.0",
+          "RIoT.Sdk.Generated": "0.3.0"
         }
       },
       "System.Security.Cryptography.Pkcs": {
