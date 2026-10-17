@@ -101,8 +101,15 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
         evidence.Write("finished", new { Verdict = result.Verdict, result.ExpectedVerdict, result.AsExpected });
         evidence.WriteJson(Evidence.Result, result);
         // Recorded in result.json too late to list itself; the manifest shows
-        // every file that is there.
-        evidence.Seal();
+        // every file that is there. Like any evidence, it never changes the verdict.
+        try
+        {
+            evidence.Seal();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            progress.WriteLine($"{Evidence.Manifest} could not be written: {e.Message}");
+        }
 
         var lines = new List<string> { $"Scenario {scenario.Name}: {scenario.Title}" };
         lines.AddRange(result.Expectations.Select(e => $"  {e.Verdict,-15} {e.Name}: {e.Kind} {e.Condition} — {e.Reason}"));
