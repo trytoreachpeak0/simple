@@ -150,9 +150,14 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
                     ServerCertificate.Delete(Database.ServerKeyName, TestKeyStore.IsMachine);
                 }
 
-                if (Directory.Exists(LogDirectory))
+                try
                 {
                     Directory.Delete(LogDirectory, recursive: true);
+                }
+                catch (IOException)
+                {
+                    // Best effort: a log file just closed can still be held for a moment
+                    // (a virus scan, for example), and a leftover temp folder does no harm.
                 }
             }
         }

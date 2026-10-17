@@ -132,7 +132,15 @@ public sealed class TestInputTests
 
             await Task.WhenAll(output, errors);
             process.Dispose();
-            Directory.Delete(directory, recursive: true);
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Best effort: a log file just closed can still be held for a moment
+                // (a virus scan, for example), and a leftover temp folder does no harm.
+            }
         }
 
         private async Task WaitForTestInputAsync(int input)

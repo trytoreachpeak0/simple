@@ -50,9 +50,14 @@ internal sealed class TestLog : IDisposable
     public void Dispose()
     {
         Close();
-        if (System.IO.Directory.Exists(Directory))
+        try
         {
             System.IO.Directory.Delete(Directory, recursive: true);
+        }
+        catch (System.IO.IOException)
+        {
+            // Best effort: a log file just closed can still be held for a moment
+            // (a virus scan, for example), and a leftover temp folder does no harm.
         }
     }
 }

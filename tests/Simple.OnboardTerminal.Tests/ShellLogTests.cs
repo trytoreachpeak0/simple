@@ -29,9 +29,14 @@ public sealed class ShellLogTests
         }
         finally
         {
-            if (Directory.Exists(directory))
+            try
             {
                 Directory.Delete(directory, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Best effort: a log file just closed can still be held for a moment
+                // (a virus scan, for example), and a leftover temp folder does no harm.
             }
         }
     }
@@ -80,9 +85,14 @@ public sealed class ShellLogTests
         }
         finally
         {
-            if (Directory.Exists(directory))
+            try
             {
                 Directory.Delete(directory, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Best effort: a log file just closed can still be held for a moment
+                // (a virus scan, for example), and a leftover temp folder does no harm.
             }
         }
     }
