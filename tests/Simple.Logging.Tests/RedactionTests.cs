@@ -84,6 +84,12 @@ public sealed partial class RedactionTests
     [InlineData("serverCertificatePin 3F2A9C0B7D1E4F5A6B8C9D0E1F2A3B4C5D6E7F8091A2B3C4D5E6F708192A3B4C")]
     [InlineData("Server=(localdb)\\MSSQLLocalDB;Integrated Security=true;TrustServerCertificate=true")]
     [InlineData("Round 42: read 17 rows; lot LOT123 at EQP-01")]
+    // Business values are often digits, a 6-digit one included: only a pairing
+    // code named as such is taken out, never a number for looking like one.
+    [InlineData("Sublot 482913.01 for EQP 100234 at station 300512, task 654321, vehicle 2")]
+    [InlineData("SAMPLE_TO_OVEN SMP0001.01 S1-1 SMP-DA-01 SMP-CURE 2026-01-05T08:00:00 SMP-PKG-A")]
+    [InlineData("""{"taskType":"SAMPLE_TO_GATE","sublot":"482913.01","eqp":"100234","area":"S2-1"}""")]
+    [InlineData("Scan 482913 received from vehicle-2; code 123456 is not a known lot")]
     public void AnOrdinaryLineIsWrittenAsItIs(string message)
     {
         using var log = new TestLog();
