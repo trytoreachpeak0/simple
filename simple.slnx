@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Simple.Cli/Simple.Cli.csproj" />
     <Project Path="src/Simple.IoSimulator/Simple.IoSimulator.csproj" />
     <Project Path="src/Simple.MesGateway/Simple.MesGateway.csproj" />
     <Project Path="src/Simple.OnboardTerminal/Simple.OnboardTerminal.csproj" />
@@ -9,6 +10,7 @@
     <Project Path="src/Simple.Server/Simple.Server.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Simple.Cli.Tests/Simple.Cli.Tests.csproj" />
     <Project Path="tests/Simple.Server.Tests/Simple.Server.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/" />
