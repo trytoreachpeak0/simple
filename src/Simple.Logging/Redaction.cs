@@ -130,13 +130,11 @@ public static partial class Redaction
         var copied = 0;
         foreach (Match match in Named().Matches(text))
         {
-            if (match.Index < copied || !IsSecretName(match.Groups["key"].Value))
-            {
-                continue;
-            }
-
-            var start = match.Index + match.Length;
-            if (string.CompareOrdinal(text, start, Mask, 0, Mask.Length) == 0)
+            var start = match.Groups["compound"].Success
+                ? CompoundValueStart(match)
+                : IsSecretName(match.Groups["key"].Value) ? match.Index + match.Length : -1;
+            if (match.Index < copied || start < 0 || start >= text.Length
+                || string.CompareOrdinal(text, start, Mask, 0, Mask.Length) == 0)
             {
                 continue;
             }
@@ -153,6 +151,30 @@ public static partial class Redaction
         }
 
         return output is null ? text : output.Append(text, copied, text.Length - copied).ToString();
+    }
+
+    /// <summary>
+    /// In a word such as <c>Simple:Mes:Password:hunter2</c>, where the value
+    /// starts: after the first colon whose part before it names a credential;
+    /// -1 when no part does.
+    /// </summary>
+    private static int CompoundValueStart(Match match)
+    {
+        var word = match.Value;
+        if (!SecretNamePart().IsMatch(word) && !word.Contains("key", StringComparison.OrdinalIgnoreCase))
+        {
+            return -1;
+        }
+
+        for (var colon = word.IndexOf(':', StringComparison.Ordinal); colon >= 0; colon = word.IndexOf(':', colon + 1))
+        {
+            if (IsSecretName(word[..colon]))
+            {
+                return match.Index + colon + 1;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>
@@ -276,12 +298,14 @@ public static partial class Redaction
     [GeneratedRegex(@"(?<name>(?<![A-Za-z0-9+.\-])[A-Za-z][A-Za-z0-9+.\-]{0,30}://[^/\s:@]{1,200}:)[^\s/]+(?=@[^@\s/]*(?:[/?#\s]|$))", Options, TimeoutMilliseconds)]
     private static partial Regex UrlPassword();
 
-    // A name followed by = or :, or a --option followed by a space. The name is taken whole
-    // (atomic), so the match is tried once per word; IsSecretName decides about it.
-    [GeneratedRegex(@"(?<![\w.:-])(?:(?<key>(?>[\w.-]+(?::[\w.-]+)*))\s*(?:(?<equals>=)|:)\s*|(?<key>(?>--[\w.-]+(?::[\w.-]+)*))\s+(?=[^\s-]))", Options, TimeoutMilliseconds)]
+    // A name followed by = or :, a --option followed by a space, or a word with colons and
+    // no separator after it (Password:hunter2, Simple:Mes:Password:hunter2). The name is taken
+    // whole (atomic), so the match is tried once per word; IsSecretName decides about it. The
+    // space around a separator never spans lines: a value is never looked for on the next one.
+    [GeneratedRegex(@"(?<![\w.:-])(?:(?<key>(?>[\w.-]+(?::[\w.-]+)*))[ \t]*(?:(?<equals>=)|:)[ \t]*|(?<key>(?>--[\w.-]+(?::[\w.-]+)*))[ \t]+(?=[^\s-])|(?<compound>(?>[\w.-]+(?::[\w.-]+)+)))", Options, TimeoutMilliseconds)]
     private static partial Regex Named();
 
     // The pairing code written out rather than named by a property: "pairing code 482913", "配对码：482913".
-    [GeneratedRegex(@"(?<name>(?:pairing[\s_-]*code|配对码)\s*[:=：]?\s*)\d+", Options, TimeoutMilliseconds)]
+    [GeneratedRegex(@"(?<name>(?:pairing[\s_-]*code|配对码)(?:\s*[:=：])?\s*)\d+", Options, TimeoutMilliseconds)]
     private static partial Regex PairingCodeInWords();
 }

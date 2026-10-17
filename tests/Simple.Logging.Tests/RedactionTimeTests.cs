@@ -16,6 +16,8 @@ public sealed class RedactionTimeTests
     [InlineData("base64")]
     [InlineData("quotes")]
     [InlineData("words")]
+    [InlineData("pairing-spaces")]
+    [InlineData("配对码-spaces")]
     public void AMegabyteLongValueIsRedactedWithinASecond(string shape)
     {
         var text = shape switch
@@ -26,6 +28,8 @@ public sealed class RedactionTimeTests
             "colons" => string.Concat(Enumerable.Repeat("Simple:Mes:", 95_000)),
             "base64" => Convert.ToBase64String(new byte[768 * 1024]),
             "quotes" => string.Concat(Enumerable.Repeat("\"a\":", 260_000)),
+            "pairing-spaces" => "pairing code" + new string(' ', 1024 * 1024),
+            "配对码-spaces" => "配对码" + new string(' ', 1024 * 1024),
             _ => string.Concat(Enumerable.Repeat("pass word token key ", 52_000)),
         };
 

@@ -79,6 +79,10 @@ public sealed partial class RedactionTests
     [InlineData("Server=db01;Password=with space-secret", "space-secret", "Server=db01;Password=***")]
     [InlineData("GET https://simple:p@ss-At-secret@mes.example/api", "At-secret", "GET https://simple:***@mes.example/api")]
     [InlineData("key -----BEGIN PRIVATE KEY-----\nMIIBCut-secret", "Cut-secret", "key ***")]
+    [InlineData("Password:Colon-secret", "Colon-secret", "Password:***")]
+    [InlineData("pwd:Pwd-colon-secret next", "Pwd-colon-secret", "pwd:*** next")]
+    [InlineData("token:abc123def", "abc123def", "token:***")]
+    [InlineData("Simple:Mes:Password:Setting-colon-secret", "Setting-colon-secret", "Simple:Mes:Password:***")]
     public void ACredentialInFreeTextIsNotWritten(string message, string secret, string kept)
     {
         using var log = new TestLog();
@@ -146,6 +150,44 @@ public sealed partial class RedactionTests
     }
 
     private sealed record GatewayLogin(string User, string Password);
+
+    /// <summary>
+    /// A line whose last word is a credential name with a colon or an equals
+    /// sign has nothing after it to take out: it is written whole, and the
+    /// next line starts on a line of its own.
+    /// </summary>
+    [Theory]
+    [InlineData("Press any key:")]
+    [InlineData("failed to read token:")]
+    [InlineData("Settings lack Simple:Mes:Password=")]
+    public void ALineEndingInACredentialNameIsWrittenWhole(string message)
+    {
+        using var log = new TestLog();
+
+        Said(log.Logger, message);
+        Said(log.Logger, "after");
+
+        var lines = log.Text().Split(Environment.NewLine);
+        Assert.Contains(lines, line => line.EndsWith("[INF] Simple.Logging.Tests: " + message, StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.EndsWith("[INF] Simple.Logging.Tests: after", StringComparison.Ordinal) && line.IndexOf("[INF]", StringComparison.Ordinal) == line.LastIndexOf("[INF]", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AnExceptionWhoseMessageEndsInACredentialNameIsRecorded()
+    {
+        using var log = new TestLog();
+
+        log.Provider.Unhandled.RecordUnhandled(new InvalidOperationException("Settings lack Simple:Mes:Password="), "the UI thread");
+
+        Assert.Contains("System.InvalidOperationException: Settings lack Simple:Mes:Password=", log.Text(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AValueIsNeverLookedForOnTheNextLine()
+    {
+        Assert.Equal("Password=\r\nnext line value", Redaction.Redact("Password=\r\nnext line value"));
+        Assert.Equal("Password=\nnext line value", Redaction.Redact("Password=\nnext line value"));
+    }
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Settings {@Login}")]
     private static partial void Settings(ILogger logger, GatewayLogin login);
