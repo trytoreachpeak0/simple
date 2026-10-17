@@ -213,7 +213,7 @@ single-context layout). Do not start a parallel set of these by hand.
 - The instance defaults to the clone's folder name, so two worktrees never share one; its database is `Simple_<instance>`. Its state file and `sqlserver.txt` (the SQL Server its database is on) are in `%LOCALAPPDATA%\simple\instances\<instance>\`, or under `SIMPLE_HOME`. The command line stops only the processes it recorded, by process id and start time, never by process name, and stops them gracefully so the server records `server.stopped`.
 - The command line starts a local system only, on whichever machine runs it. It has no switch that points at anything real, removes `Simple__*`, `ConnectionStrings__*`, `ASPNETCORE_*`, `Kestrel__*` and `DOTNET_ENVIRONMENT` from the components' environment, and always runs them as Production. `simple remote` does not change this: it runs the same command line on the remote machine, which starts a local system there, on that machine's loopback and on its own named SQL Server instance (`.\SIMPLE_DEV`), and it has no switch that points at anything real either.
 - SQL Server (`SIMPLE_SQLSERVER`, LocalDB by default): only LocalDB or a named instance on this machine, with Windows authentication. A port, the instance name `MSSQLSERVER`, a failover partner and a SQL login (User ID, Password) are refused. Before starting the server and before dropping a database, the command line asks the server who it is (`SERVERPROPERTY` `IsLocalDB`, `InstanceName`, `MachineName`) and goes on only for LocalDB or a named instance other than `MSSQLSERVER` on this machine.
-- `simple remote <command>` (`build`, `test`, `exec -- <command>`, `up`, `down`, `status`, `events`, `logs`, `forget`) runs on the machine named by `SIMPLE_REMOTE`, an alias in the user's SSH configuration; the repository names no machine. It sends exactly this clone's working tree as a snapshot commit (uncommitted changes and new files, `.gitignore` respected, nothing pushed) and prints that commit at the start and the end. Run full builds, full test runs and `simple up` through it; run targeted tests (`--filter-class` and the like) locally. It ends with the remote command's own exit code (a test run's 2 and 8 included); its own failures are 20 (did not run), 21 (snapshot adds large files) and 22 (instance or slot busy). Test results come back to `artifacts/remote/<instance>/`. Run `simple remote forget` before deleting a worktree.
+- `simple remote <command>` (`build`, `test`, `exec -- <command>`, `up`, `down`, `status`, `events`, `logs`, `forget`) runs on the machine named by `SIMPLE_REMOTE`, an alias in the user's SSH configuration; the repository names no machine. It sends exactly this clone's working tree as a snapshot commit (uncommitted changes and new files, `.gitignore` respected, nothing pushed) and prints that commit at the start and the end. Run full builds, full test runs, `simple up`, mutation runs and other long loops through it, for a review too; run targeted tests (one `--project` with a filter) locally, and anything larger, a whole test project included, through it. It ends with the remote command's own exit code (a test run's 2 and 8 included); its own failures are 20 (did not run), 21 (snapshot adds large files) and 22 (instance or slot busy). Test results come back to `artifacts/remote/<instance>/`. Run `simple remote forget` before deleting a worktree or clone.
 
 ## Tests
 
@@ -225,11 +225,14 @@ single-context layout). Do not start a parallel set of these by hand.
   Without it, `dotnet test` on the .NET 10 SDK does not use MTP.
 - **Filters use MTP options:** `--filter-class`, `--filter-method`,
   `--filter-trait`, `--filter-query`. Older repositories run on VSTest and
-  take `--filter`; that habit does not carry over.
+  take `--filter`; that habit does not carry over. Give any filter one
+  test project with `--project`: over the whole solution every other test
+  project runs zero tests and exits 8 (see below), so the run fails.
 
   ```
-  dotnet test --solution simple.slnx
-  dotnet test --solution simple.slnx --filter-class "*MesGatewayTests"
+  ./simple remote test                 # full run, on the remote machine (see Local system)
+  dotnet test --solution simple.slnx   # the same run where it executes (CI, the remote machine)
+  dotnet test --project tests/Simple.Server.Tests --filter-class "*MesGatewayTests"
   ```
 
 - A project whose name ends in `.Tests` is a test project automatically:
