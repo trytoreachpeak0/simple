@@ -43,6 +43,11 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
 
     public const int MaxInputTextLength = 256;
 
+    /// <summary>A vehicle's IO module has 16 inputs and 16 outputs; these leave room for a larger one.</summary>
+    public const int MaxIoPointsPerReport = 128;
+
+    public const int MaxIoPointNumber = 64;
+
     /// <summary>What the screen shows in this version, where the server has nothing else to say yet.</summary>
     public const string ConnectedScreenText = "已连接服务端";
 
@@ -153,7 +158,16 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
             }
 
             terminal.Version = report.TerminalVersion;
+            if (report.IoModuleReadable != terminal.IoModuleReadable && (terminal.IoModuleReadable is not null || !report.IoModuleReadable))
+            {
+                Record(
+                    report.IoModuleReadable ? EventTypes.OnboardIoReadable : EventTypes.OnboardIoUnreadable,
+                    EventSources.Server,
+                    new { terminal.VehicleId, Connection = link.Id, ReadAgeMs = report.HasIoReadAgeMs ? report.IoReadAgeMs : (ulong?)null });
+            }
+
             terminal.IoModuleReadable = report.IoModuleReadable;
+            terminal.Io = Io(link, report);
             if (link.WrittenNoEarlierThan(report.LastReceivedSeq) is { } written
                 && now - written <= StaleAfter
                 && (terminal.FreshWrittenAt is null || written > terminal.FreshWrittenAt))
@@ -249,8 +263,9 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
                     t.Link?.RemoteAddress,
                     t.FreshWrittenAt is { } written ? Math.Round((now - written).TotalSeconds, 3) : null,
                     t.Stale,
-                    t.IoModuleReadable,
-                    t.LastScreenText))
+                    t.IoModuleReadable ?? false,
+                    t.LastScreenText,
+                    t.Io))
                 .ToList();
         }
     }
@@ -270,6 +285,41 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
 
         // What is queued still gets written; the database outlives this.
         writing.Wait(TimeSpan.FromSeconds(10));
+    }
+
+    /// <summary>
+    /// The report's IO points as raw values, by kind and number; a point the
+    /// server cannot use is skipped and logged (ADR 0024), and for a number
+    /// reported twice the last one counts.
+    /// </summary>
+    private OnboardIoStatus Io(TerminalLink link, OnboardReport report)
+    {
+        var inputs = new SortedDictionary<int, OnboardIoPointStatus>();
+        var outputs = new SortedDictionary<int, OnboardIoPointStatus>();
+        var skipped = Math.Max(0, report.IoPoints.Count - MaxIoPointsPerReport);
+        foreach (var point in report.IoPoints.Take(MaxIoPointsPerReport))
+        {
+            var into = point.Kind switch
+            {
+                IoPointKind.Input => inputs,
+                IoPointKind.Output => outputs,
+                _ => null,
+            };
+            if (into is null || point.Number is 0 or > MaxIoPointNumber)
+            {
+                skipped++;
+                continue;
+            }
+
+            into[(int)point.Number] = new OnboardIoPointStatus((int)point.Number, point.Value ? 1 : 0, point.Changes, point.MsSinceChange);
+        }
+
+        if (skipped > 0)
+        {
+            LogIoPointsSkipped(logger, link.Id, skipped, MaxIoPointsPerReport, MaxIoPointNumber);
+        }
+
+        return new OnboardIoStatus(report.HasIoReadAgeMs ? report.IoReadAgeMs : null, [.. inputs.Values], [.. outputs.Values]);
     }
 
     private static object Describe(KnownTerminal terminal, TerminalLink link, OnboardInput input) => input.KindCase switch
@@ -354,6 +404,9 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
     [LoggerMessage(Level = LogLevel.Error, Message = "Could not record {Type} in the event record")]
     private static partial void LogNotRecorded(ILogger logger, Exception exception, string type);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Stream {Connection}: skipped {Count} IO point(s): of unknown kind, numbered outside 1-{MaxNumber}, or beyond {MaxCount} in one report")]
+    private static partial void LogIoPointsSkipped(ILogger logger, string connection, int count, int maxCount, int maxNumber);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Stream {Connection}: skipped {Count} onboard input(s), {Why}")]
     private static partial void LogInputsSkipped(ILogger logger, string connection, int count, string why);
 
@@ -428,7 +481,11 @@ internal sealed class KnownTerminal(string vehicleId, DateTimeOffset firstSeenAt
 
     public string Version { get; set; } = string.Empty;
 
-    public bool IoModuleReadable { get; set; }
+    /// <summary>Whether its latest report said it can read its IO module; null before its first report.</summary>
+    public bool? IoModuleReadable { get; set; }
+
+    /// <summary>The IO points of its latest report.</summary>
+    public OnboardIoStatus Io { get; set; } = OnboardIoStatus.None;
 
     public TerminalLink? Link { get; set; }
 

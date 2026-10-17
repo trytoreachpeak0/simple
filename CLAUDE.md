@@ -68,11 +68,13 @@ reviewed in pull requests like the code is.
 | `src/Simple.Server.Console` | Server console; runs in the server process |
 | `src/Simple.Server.Riot` | Fleet-manager (RIoT) adapter; runs in the server process |
 | `src/Simple.OnboardTerminal` | Onboard terminal: the WPF shell (`net10.0-windows`) |
-| `src/Simple.OnboardTerminal.Core` | Onboard terminal core without WPF: connection to the server, messages, onboard inputs |
+| `src/Simple.OnboardTerminal.Core` | Onboard terminal core without WPF: connection to the server, messages, onboard inputs, reading the IO module |
 | `src/Simple.OnboardTerminal.Headless` | The onboard terminal without a window, for the local system, tests and CI; its test input listens on loopback only |
 | `src/Simple.MesGateway` | MES gateway, a small separate process |
 | `src/Simple.FakeRiot` | Fake fleet manager: answers the part of RIoT's HTTP API that SIMPLE uses, on loopback only, for the local system, tests and CI; it must pass `Simple.Contracts.Tests` |
-| `src/Simple.IoSimulator` | Simulator for the vehicle's IO module |
+| `src/Simple.IoSimulator` | IO simulator: the WPF shell (`net10.0-windows`); no window content yet |
+| `src/Simple.IoSimulator.Core` | IO simulator core without WPF: the cabinet's physics, the IO module's Modbus TCP face (FluentModbus), communication faults, the auto-responder |
+| `src/Simple.IoSimulator.Headless` | The IO simulator without a window, for the local system, tests and CI; its Modbus face and control API listen on loopback only |
 | `src/Simple.Protocol` | Server ↔ onboard protocol contracts |
 | `src/Simple.Logging` | Program logs every program writes: Serilog behind Microsoft.Extensions.Logging, size-limited local files, credentials redacted, unhandled exceptions recorded (ADR 0034) |
 | `src/Simple.Cli` | The `simple` command line: brings the local system up and down, shows status, events and logs, and runs builds, tests and the system on a remote machine (`simple remote`) |

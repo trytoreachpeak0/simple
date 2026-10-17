@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The IO simulator without a window: the cabinet's physics, the Modbus TCP
+       face of the IO module, communication faults and the auto-responder.
+       The headless host and the WPF shell both run it. -->
+
+  <ItemGroup>
+    <PackageReference Include="FluentModbus" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Simple.IoSimulator.Core.Tests" />
+  </ItemGroup>
+
+</Project>

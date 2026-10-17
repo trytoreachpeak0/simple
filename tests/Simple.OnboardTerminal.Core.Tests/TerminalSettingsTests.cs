@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace Simple.OnboardTerminal.Core.Tests;
 
 public sealed class TerminalSettingsTests
@@ -15,9 +17,12 @@ public sealed class TerminalSettingsTests
             Assert.Equal(new TerminalSettings("vehicle-1", TerminalSettings.DefaultServer, Pin), loaded);
             Assert.Empty(loaded.Problems());
 
-            var other = loaded with { Server = "https://172.19.205.222:5181" };
+            Assert.Null(loaded.IoModule);
+
+            var other = loaded with { Server = "https://172.19.205.222:5181", IoModule = "192.168.71.150:502" };
             other.Save(path);
             Assert.Equal(other, TerminalSettings.Load(path));
+            Assert.Equal(IPEndPoint.Parse("192.168.71.150:502"), other.IoModuleEndpoint);
         }
         finally
         {
@@ -35,5 +40,16 @@ public sealed class TerminalSettingsTests
         var settings = new TerminalSettings(vehicle, server, pin == "aa" ? Pin : pin);
 
         Assert.Contains(problem, Assert.Single(settings.Problems()), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("192.168.71.150")]
+    [InlineData("io-module:502")]
+    [InlineData("192.168.71.150:0")]
+    public void AnIoModuleIsAnAddressAndAPort(string module)
+    {
+        var settings = new TerminalSettings("vehicle-1", TerminalSettings.DefaultServer, Pin, module);
+
+        Assert.Contains($"ioModule '{module}'", Assert.Single(settings.Problems()), StringComparison.Ordinal);
     }
 }

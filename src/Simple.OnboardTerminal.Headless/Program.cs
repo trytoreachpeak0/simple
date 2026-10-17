@@ -66,11 +66,16 @@ builder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Information);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(settings);
 builder.Services.AddSingleton<OnboardInputs>();
+builder.Services.AddSingleton(services => new IoModuleReader(
+    settings.IoModuleEndpoint,
+    services.GetRequiredService<TimeProvider>(),
+    services.GetRequiredService<ILoggerFactory>()));
 builder.Services.AddSingleton(services => new TerminalConnection(
     settings,
     services.GetRequiredService<OnboardInputs>(),
     services.GetRequiredService<TimeProvider>(),
-    services.GetRequiredService<ILoggerFactory>()));
+    services.GetRequiredService<ILoggerFactory>(),
+    io: services.GetRequiredService<IoModuleReader>()));
 builder.Services.AddHostedService<TerminalService>();
 if (testInput is not null)
 {
