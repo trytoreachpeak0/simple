@@ -83,6 +83,34 @@ public sealed class TerminalConnectionTests
         await Until(() => server.Reports.Skip(before).Any(r => r.Seq == 1));
     }
 
+    [Fact]
+    public async Task AStopThatComesWhileAFailedStreamIsBeingRetriedEndsTheRunQuietly()
+    {
+        await using var server = new FakeServer();
+        await server.StartAsync();
+        var time = new StillClock();
+        await using var terminal = new Terminal(server.Url, server.Pin, time);
+        await Until(() => terminal.Connection.Status.State == TerminalState.Connected);
+
+        // The first reading once the stream fails is the one that asks
+        // whether it settled: the session has just seen that the terminal is
+        // not stopping, and the retry has not yet looked. The stop lands
+        // there, as it can on a busy machine (#55).
+        var before = terminal.Log.Count;
+        time.OnNextReading = terminal.Stop;
+        await server.StopAsync();
+        await Until(() => time.OnNextReading is null);
+
+        await terminal.Running;
+        Assert.Equal(TerminalState.Disconnected, terminal.Connection.Status.State);
+        // The stop did land in that window: the stream failed while the
+        // terminal was not stopping, and the retry turned it down at once
+        // (a stop after that would have logged "Retry 1" first).
+        var after = terminal.Log.Skip(before).ToList();
+        Assert.Contains(after, l => l.StartsWith("Stream ended", StringComparison.Ordinal) || l.StartsWith("Disconnected (", StringComparison.Ordinal));
+        Assert.DoesNotContain(after, l => l.StartsWith("Retry ", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("2,3", "车载终端版本需要更新，请联系系统维护人员")]
     [InlineData("0", "车载终端与服务端版本不一致，请联系系统维护人员")]
@@ -114,14 +142,15 @@ public sealed class TerminalConnectionTests
     {
         private readonly CancellationTokenSource stop = new();
         private readonly ILoggerFactory loggers;
-        private readonly Task running;
 
-        public Terminal(string url, string pin)
+        public Terminal(string url, string pin, TimeProvider? time = null)
         {
             loggers = LoggerFactory.Create(logging => logging.AddProvider(new ListLogger(Log)));
-            Connection = new TerminalConnection(new TerminalSettings("vehicle-7", url, pin), Inputs, TimeProvider.System, loggers);
-            running = Connection.RunAsync(stop.Token);
+            Connection = new TerminalConnection(new TerminalSettings("vehicle-7", url, pin), Inputs, time ?? TimeProvider.System, loggers);
+            Running = Connection.RunAsync(stop.Token);
         }
+
+        public Task Running { get; }
 
         public ConcurrentQueue<string> Log { get; } = new();
 
@@ -129,13 +158,37 @@ public sealed class TerminalConnectionTests
 
         public TerminalConnection Connection { get; }
 
+        public void Stop() => stop.Cancel();
+
         public async ValueTask DisposeAsync()
         {
             await stop.CancelAsync();
-            await running;
+            await Running;
             Connection.Dispose();
             loggers.Dispose();
             stop.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Real timers, but readings that never move, so no stream ever counts as
+    /// settled; the next reading first runs <see cref="OnNextReading"/>.
+    /// </summary>
+    private sealed class StillClock : TimeProvider
+    {
+        private readonly long reading = System.GetTimestamp();
+        private Action? onNextReading;
+
+        public Action? OnNextReading
+        {
+            get => Volatile.Read(ref onNextReading);
+            set => Volatile.Write(ref onNextReading, value);
+        }
+
+        public override long GetTimestamp()
+        {
+            Interlocked.Exchange(ref onNextReading, null)?.Invoke();
+            return reading;
         }
     }
 
