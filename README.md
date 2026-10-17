@@ -26,9 +26,9 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 | `src/Simple.Logging` | 各程序共用的程序日志：写本机文件、限大小、脱敏、记下没接住的异常 |
 | `src/Simple.Cli` | `simple` 命令行：在本机一条命令起停整套系统、查看状态、事件和日志 |
 | `tests/` | 每个项目一个 `*.Tests` 测试项目，另有调度平台的行为契约测试 |
-| `scenarios/` | 统一格式的测试场景 |
+| `scenarios/` | 统一格式的测试场景，`simple scenario run` 和 `dotnet test` 跑同一批文件（格式与跑法见 `scenarios/README.md`） |
 | `samples/replay/` | 从真实系统录下的回放样本 |
-| `sites/<厂区>/` | 各厂区的起始业务配置 |
+| `sites/<厂区>/` | 各厂区的起始业务配置；`sites/sample/` 是场景默认用的虚构小厂区 |
 
 以后计划再加一个入口 `Simple.Mcp`：给 AI 用的一层薄包装，只调用命令行和服务端 API，不放业务逻辑。
 
