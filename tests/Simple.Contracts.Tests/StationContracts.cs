@@ -37,6 +37,11 @@ public sealed class StationContracts : OrderContractTest
     {
         Target.RequireWrites();
         await ExecutingAsync("heading");
+        // Keep it executing while it is read: a software stop holds the
+        // vehicle and leaves the order EXECUTING (BC-ORDER-015), where a fast
+        // order would otherwise be done before the list is read.
+        await Riot.Device.TriggerEmergencyStopAsync(Facts.VehicleKey, Cancel);
+        await UntilAsync(_ => VehicleAsync(), v => v.EmergencyState == "CAN_RECOVER", "急停锁上");
 
         var page = await Riot.Order.ListOrdersByStatesAsync([OrderStates.Executing], 1, 100, Cancel);
         var record = Assert.Single(page.Records, r => r.ExecuteVehicleKey == Facts.VehicleKey);

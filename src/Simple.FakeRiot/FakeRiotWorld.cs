@@ -955,12 +955,15 @@ public sealed class FakeRiotWorld
             return;
         }
 
+        // The head of the vehicle's queue goes first, promoted orders ahead
+        // (BC-ORDER-014); a head too new to start yet is waited for, not
+        // passed over by an older order behind it.
         var next = orders
-            .Where(o => o.State == OrderStates.Queueing && o.AppointVehicleKey == v.Key && now - o.CreatedAt >= Real(Timing.QueueToStart))
+            .Where(o => o.State == OrderStates.Queueing && o.AppointVehicleKey == v.Key)
             .OrderByDescending(o => o.Promotion)
             .ThenBy(o => o.Id)
             .FirstOrDefault();
-        if (next is null)
+        if (next is null || now - next.CreatedAt < Real(Timing.QueueToStart))
         {
             return;
         }

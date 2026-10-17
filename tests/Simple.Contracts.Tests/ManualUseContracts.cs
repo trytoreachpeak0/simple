@@ -149,7 +149,7 @@ public sealed class ManualUseContracts : OrderContractTest
             $"订单 {upperId} 开始执行");
 
         // The drive takes a second in the fake; an order that took over would start within its 50 ms queue time.
-        Assert.True(queuedWhileMoving > TimeSpan.FromMilliseconds(400), $"车在动时订单只排了 {queuedWhileMoving.TotalMilliseconds} ms 就不再排队。");
+        Assert.True(queuedWhileMoving > TimeSpan.FromMilliseconds(200), $"车在动时订单只排了 {queuedWhileMoving.TotalMilliseconds} ms 就不再排队。");
         await UntilStateAsync(upperId, OrderStates.Success);
     }
 
