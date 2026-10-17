@@ -174,7 +174,7 @@ public sealed class TestInputTests
                 }
                 catch (TaskCanceledException) when (!Cancel.IsCancellationRequested)
                 {
-                    // Listening, not answering yet.
+                    // Not listening or not answering yet.
                 }
 
                 Assert.True(DateTime.UtcNow < deadline, "The test input did not answer within 30 s.");
