@@ -28,8 +28,13 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
 
     private const string BaseRef = "refs/remotes/origin/main";
 
-    /// <summary>The agent is missing there, or its content does not match the hash in its name.</summary>
-    private const int AgentMissing = 199;
+    /// <summary>
+    /// The line the remote side prints when the agent is missing there, or
+    /// its content does not match the hash in its name. A line, not an exit
+    /// code: the remote machine's shell does not pass exit codes on
+    /// (<see cref="SshMachine.Command"/>).
+    /// </summary>
+    public const string AgentMissingLine = "##simple-remote-agent-missing";
 
     private static readonly Lazy<byte[]> Agent = new(() =>
     {
@@ -352,13 +357,14 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         var agent = Quote($"{machine.Root}/bin/{AgentFile}");
         var script = $$"""
             $agent = {{agent}}
-            if (-not (Test-Path -LiteralPath $agent)) { exit {{AgentMissing}} }
+            if (-not (Test-Path -LiteralPath $agent)) { [Console]::Error.WriteLine('{{AgentMissingLine}}'); exit 1 }
             & $agent -Request '{{encoded}}'
             exit $LASTEXITCODE
             """;
         for (var attempt = 0; ; attempt++)
         {
             JsonElement? result = null;
+            var missing = false;
             var exitCode = await machine.RunAsync(
                 script,
                 output,
@@ -367,7 +373,11 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
                     // The command's last output may not end its line, and then
                     // the result follows it on the same line.
                     var at = line.IndexOf(marker, StringComparison.Ordinal);
-                    if (at >= 0)
+                    if (line == AgentMissingLine)
+                    {
+                        missing = true;
+                    }
+                    else if (at >= 0)
                     {
                         if (at > 0)
                         {
@@ -388,7 +398,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
                 return done;
             }
 
-            if (exitCode == AgentMissing && attempt == 0)
+            if (missing && attempt == 0)
             {
                 await InstallAgentAsync(cancellationToken);
                 continue;
@@ -396,7 +406,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
 
             throw new RemoteException(
                 ExitCodes.RemoteFailed,
-                exitCode == AgentMissing
+                missing
                     ? $"{machine.Root}/bin/{AgentFile} on {machine.Name} is missing or does not match its name, even after copying it again."
                     : $"The remote side on {machine.Name} ended with exit code {exitCode} without reporting what happened.");
         }

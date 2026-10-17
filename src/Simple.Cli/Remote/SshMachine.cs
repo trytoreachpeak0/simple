@@ -55,7 +55,7 @@ public sealed partial class SshMachine : IRemoteMachine
     {
         ArgumentNullException.ThrowIfNull(script);
         var start = new ProcessStartInfo("ssh");
-        foreach (var argument in (string[])["-T", .. Options, Name, "pwsh -NoProfile -NonInteractive -EncodedCommand " + Encode(script)])
+        foreach (var argument in (string[])["-T", .. Options, Name, Command(script)])
         {
             start.ArgumentList.Add(argument);
         }
@@ -82,6 +82,14 @@ public sealed partial class SshMachine : IRemoteMachine
 
     /// <summary>A script for <c>-EncodedCommand</c>: no quoting survives ssh, the remote shell and pwsh in between otherwise.</summary>
     public static string Encode(string script) => Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+
+    /// <summary>
+    /// The command line sshd hands to the remote machine's default shell.
+    /// That shell does not pass the script's exit code on: pwsh, run with
+    /// -c, ends with 1 for any non-zero code (seen on simple01, 2026-10-17).
+    /// What the script has to say goes into its output instead.
+    /// </summary>
+    public static string Command(string script) => "pwsh -NoProfile -NonInteractive -EncodedCommand " + Encode(script);
 
     private static async Task ScpAsync(string workingDirectory, string[] arguments, CancellationToken cancellationToken)
     {

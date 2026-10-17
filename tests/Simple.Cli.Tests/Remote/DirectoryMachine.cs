@@ -34,8 +34,10 @@ public sealed class DirectoryMachine(string root) : IRemoteMachine
 
     public Task<int> RunAsync(string script, Action<string> onOutput, Action<string> onError, CancellationToken cancellationToken)
     {
+        // As sshd does with DefaultShell pwsh: the command line SSH would send,
+        // run by an outer pwsh -c, which turns every non-zero exit code into 1.
         var start = new ProcessStartInfo("pwsh");
-        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", SshMachine.Encode(script) })
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-c", SshMachine.Command(script) })
         {
             start.ArgumentList.Add(argument);
         }
