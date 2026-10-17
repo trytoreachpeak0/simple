@@ -14,6 +14,14 @@ public sealed record Snapshot(string Commit, string Head, int Uncommitted)
     public static string Ref(string instance) => $"refs/simple-remote/{instance}";
 
     /// <summary>
+    /// The ref the remote cache fetches the origin's branch into for an
+    /// instance. One per instance, not the shared refs/remotes/origin/main:
+    /// a fetch ended by a cut leaves the ref's lock, which only that
+    /// instance's next run, under the instance's lock, can safely remove.
+    /// </summary>
+    public static string OriginRef(string instance) => $"refs/simple-remote-origin/{instance}";
+
+    /// <summary>
     /// Takes the snapshot through a temporary index: it starts from HEAD and
     /// takes in every change and every new file that .gitignore does not
     /// exclude (<c>git add -A</c>), so a test file nobody has added yet is in

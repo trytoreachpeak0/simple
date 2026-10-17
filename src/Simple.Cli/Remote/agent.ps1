@@ -110,8 +110,9 @@ function Stop-Abandoned([Diagnostics.Process] $process) {
 #
 # -Interruptible: the connection is watched while git runs, as for the
 # command, and a cut ends git too. Only for fetches, from the origin or of a
-# bundle, which can take minutes and leave at worst unused objects and a
-# ref lock (cleared under the instance's lock, Receive-Snapshot). Every other
+# bundle, which can take minutes and leave at worst unused objects and the
+# lock of a ref only this instance writes (cleared under the instance's lock,
+# Receive-Snapshot). Every other
 # git runs to its end and the connection is checked after it: a killed
 # worktree add or checkout leaves the worktree locked with an index.lock,
 # and every later run of the instance failed (review of #64).
@@ -213,8 +214,12 @@ function Fetch-Origin {
         return
     }
 
+    # Into the instance's own ref (Snapshot.OriginRef), not one all instances
+    # share: a cut leaves that ref's lock, and a lock on a shared ref no run
+    # may remove (another instance may be fetching into it) stopped every
+    # later fetch with "Another git process seems to be running" (review of #64).
     Say "fetching $($spec.originBranch) from $($spec.originUrl)"
-    $result = Start-Git @($fetchOptions + @('-C', $repo, 'fetch', '--quiet', $spec.originUrl, "+refs/heads/$($spec.originBranch):refs/remotes/origin/$($spec.originBranch)")) -Interruptible
+    $result = Start-Git @($fetchOptions + @('-C', $repo, 'fetch', '--quiet', $spec.originUrl, "+refs/heads/$($spec.originBranch):$($spec.originRef)")) -Interruptible
     $result.Output -split '\r?\n' | Where-Object { $_ } | ForEach-Object { Say $_ }
 }
 
@@ -223,10 +228,17 @@ function Test-Bundle([string] $bundle) {
     (Start-Git @('-C', $repo, 'bundle', 'verify', '--quiet', $bundle) -Interruptible).ExitCode -eq 0
 }
 
+# A fetch into one of the instance's refs ended by a cut leaves its lock;
+# only this instance's runs write those refs, under the instance's lock,
+# which the caller holds.
+function Clear-RefLocks {
+    foreach ($ref in $spec.ref, $spec.originRef) {
+        Remove-Item -LiteralPath (Join-Path $repo "$ref.lock") -Force -ErrorAction Ignore
+    }
+}
+
 function Receive-Snapshot {
-    # A fetch into the instance's ref ended by a cut leaves its lock; only
-    # this instance's runs write that ref, under the lock held here.
-    Remove-Item -LiteralPath (Join-Path $repo "$($spec.ref).lock") -Force -ErrorAction Ignore
+    Clear-RefLocks
     $fetched = $false
     if ($spec.bundle) {
         $bundle = Join-Path $root $spec.bundle
@@ -325,7 +337,12 @@ function Remove-Instance {
     }
 
     Remove-Item -LiteralPath (Join-Path $root "runs/$instance") -Recurse -Force -ErrorAction Ignore
-    [void](Start-Git @('-C', $repo, 'update-ref', '-d', $spec.ref))
+    # forget checks nothing out, so Receive-Snapshot did not clear them: a
+    # lock left there would make update-ref -d fail and keep the ref.
+    Clear-RefLocks
+    foreach ($ref in $spec.ref, $spec.originRef) {
+        [void](Start-Git @('-C', $repo, 'update-ref', '-d', $ref))
+    }
 }
 
 # Files no run needs any more. Every version of the command line installs an

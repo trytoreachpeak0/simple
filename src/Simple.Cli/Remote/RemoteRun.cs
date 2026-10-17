@@ -296,6 +296,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         Bundle = bundle,
         OriginUrl = originUrl,
         OriginBranch = "main",
+        OriginRef = Snapshot.OriginRef(instance),
         plan.FileName,
         Arguments = plan.CommandLine,
         Slot = plan.Slot,
