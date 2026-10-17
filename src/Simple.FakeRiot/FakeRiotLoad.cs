@@ -6,13 +6,22 @@ namespace Simple.FakeRiot;
 
 /// <summary>
 /// Makes load visible: counts every call to the RIoT API by endpoint and
-/// holds every read for the read delay. Real RIoT is shared by about 25
+/// holds every read (a GET, or one of the three route queries) for the read
+/// delay, on the fake's clock. Real RIoT is shared by about 25
 /// vehicles; the previous line read it about ten times a second and its reads
 /// took about 168 ms at p95, so a caller that polls too often slowed the
 /// whole fleet (research/riot-review.md R39, D16).
 /// </summary>
-public sealed class FakeRiotLoad(IOptions<FakeRiotSettings> settings)
+public sealed class FakeRiotLoad(IOptions<FakeRiotSettings> settings, TimeProvider time)
 {
+    /// <summary>The POSTs that only read: the three route queries.</summary>
+    private static readonly HashSet<string> ReadingPosts = new(StringComparer.Ordinal)
+    {
+        "/api/task/v1/route/getRouteCostsBy",
+        "/api/task/v1/route/queryNearEnd",
+        "/api/task/v1/route/queryNearestStart",
+    };
+
     private readonly ConcurrentDictionary<string, long> calls = new(StringComparer.Ordinal);
     private long readDelayTicks = settings.Value.ReadDelay.Ticks;
 
@@ -28,11 +37,20 @@ public sealed class FakeRiotLoad(IOptions<FakeRiotSettings> settings)
     public void Reset() => calls.Clear();
 
     public void Count(string key) => calls.AddOrUpdate(key, 1, (_, n) => n + 1);
+
+    /// <summary>Holds a read (a GET, or one of the route queries) for the read delay, on the fake's clock.</summary>
+    public Task DelayIfReadAsync(HttpRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var delay = ReadDelay;
+        var read = HttpMethods.IsGet(request.Method) || (HttpMethods.IsPost(request.Method) && ReadingPosts.Contains(request.Path.Value ?? ""));
+        return read && delay > TimeSpan.Zero ? Task.Delay(delay, time, cancellationToken) : Task.CompletedTask;
+    }
 }
 
 public static class FakeRiotLoadMiddleware
 {
-    /// <summary>Counts each /api call, the unauthorised ones too, and delays each /api GET.</summary>
+    /// <summary>Counts each /api call, the unauthorised ones too, and delays each read.</summary>
     public static IApplicationBuilder UseFakeRiotLoad(this IApplicationBuilder app) =>
         app.Use(async (context, next) =>
         {
@@ -44,10 +62,7 @@ public static class FakeRiotLoadMiddleware
                     ? "/" + pattern.RawText?.TrimStart('/')
                     : request.Path.Value;
                 load.Count($"{request.Method} {route}");
-                if (HttpMethods.IsGet(request.Method) && load.ReadDelay > TimeSpan.Zero)
-                {
-                    await Task.Delay(load.ReadDelay, context.RequestAborted);
-                }
+                await load.DelayIfReadAsync(request, context.RequestAborted);
             }
 
             await next(context);

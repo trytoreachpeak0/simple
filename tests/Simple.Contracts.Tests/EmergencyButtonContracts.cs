@@ -27,8 +27,8 @@ public sealed class EmergencyButtonContracts : OrderContractTest
     /// release it: it is set again at once, the way a pressed bumper does.
     /// </summary>
     [Fact]
-    [Contract("ADR 0009", "#11")]
-    [NotVerifiedOnRealRiot("车上的急停按钮还按着时，在 RIoT 里解除急停会立刻再触发，软件解不开一类急停（产品负责人，ADR 0009；#11 #14 补充）")]
+    [Contract("ADR 0009", "#11", "round 27")]
+    [NotVerifiedOnRealRiot("部分实测：第 27 轮 A 节硬件急停要物理松开后 cancelEmergency 才回 OK；'在 RIoT 里解除会立刻再触发'是产品负责人的说法（ADR 0009；#11 #14 补充）")]
     public async Task WhileTheButtonIsPressedAReleaseInRiotDoesNotReleaseTheStop()
     {
         var control = Target.RequireControl("按下车上的急停按钮");
@@ -45,8 +45,8 @@ public sealed class EmergencyButtonContracts : OrderContractTest
     /// the vehicle is still stopped (CAN_RECOVER) until the stop is released in RIoT.
     /// </summary>
     [Fact]
-    [Contract("ADR 0009", "#11")]
-    [NotVerifiedOnRealRiot("一类急停触发时同时触发二类，一类消除后二类还在，要在 RIoT 里解除（产品负责人，ADR 0009；#7 评论第 5 条）")]
+    [Contract("ADR 0009", "#11", "round 27")]
+    [NotVerifiedOnRealRiot("部分实测：第 27 轮 A 节物理松开急停后要 cancelEmergency 才回 OK；'一类触发同时触发二类、一类消除后二类还在'是产品负责人的说法（ADR 0009；#7 评论第 5 条）")]
     public async Task OnceTheButtonIsLetGoTheStopStaysUntilReleasedInRiot()
     {
         var control = Target.RequireControl("按下再松开车上的急停按钮");

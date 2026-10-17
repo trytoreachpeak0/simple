@@ -562,13 +562,18 @@ public sealed class FakeRiotWorld
                 case ("CMD_ORDER_CONTINUE_FROM_HELD", OrderStates.Held):
                     // Accepted even while the vehicle is emergency stopped; the
                     // order is executing again but the stop holds the vehicle (BC-ORDER-020 item 4).
-                    // The vehicle starts about 16 s later (item 3).
+                    // After a stop while held, the vehicle starts about 16 s later
+                    // (item 3); without a stop no such delay was seen (round 10).
                     order.State = OrderStates.Executing;
-                    order.StartDelayLeft = Timing.ContinueStartDelay;
+                    order.StartDelayLeft = order.StoppedWhileHeld ? Timing.ContinueStartDelay : TimeSpan.Zero;
+                    order.StoppedWhileHeld = false;
                     order.Touch(time.GetUtcNow());
                     return Answer.OkWithoutResult();
                 case ("CMD_ORDER_CONTINUE_FROM_HELD", OrderStates.Executing):
                     return Answer.Fail("100020", "订单不是暂停状态");
+                case ("CMD_ORDER_CONTINUE_FROM_HANG" or "CMD_ORDER_JUMP_FROM_HANG", OrderStates.Hang) when vehicle!.BrakeReleased:
+                    // The brake still released: refused, the order stays hung (round 27 F, Q-035).
+                    return Answer.Fail("14013", "车辆状态异常");
                 case ("CMD_ORDER_CONTINUE_FROM_HANG" or "CMD_ORDER_JUMP_FROM_HANG", OrderStates.Hang) when vehicle!.Emergency == EmergencyStates.Ok:
                     order.State = OrderStates.Executing;
                     order.Touch(time.GetUtcNow());
@@ -718,7 +723,8 @@ public sealed class FakeRiotWorld
 
     /// <summary>
     /// What a person does to the vehicle itself; only the values given change.
-    /// Releasing the brake hangs the executing or held order (BC-ORDER-015).
+    /// Releasing the brake hangs the executing order (BC-ORDER-015; round 27 F
+    /// saw it on an executing order only, so a held order stays held).
     /// While the brake is released, the mode is not MODE_AUTO, the manual
     /// charger is plugged in or the battery is at the no-order level or below,
     /// RIoT gives the vehicle no order and the vehicle does not move (rounds
@@ -749,7 +755,7 @@ public sealed class FakeRiotWorld
             if (brakeReleased is { } released && released != v.BrakeReleased)
             {
                 v.BrakeReleased = released;
-                if (released && v.Current is { State: OrderStates.Executing or OrderStates.Held } order)
+                if (released && v.Current is { State: OrderStates.Executing } order)
                 {
                     order.State = OrderStates.Hang;
                     order.Touch(now);
@@ -908,6 +914,11 @@ public sealed class FakeRiotWorld
                     {
                         v.FaultCodesClearAt = now + Real(Timing.FaultCodeResidue);
                     }
+                }
+
+                if (v.Current is { State: OrderStates.Held } held && v.Emergency != EmergencyStates.Ok)
+                {
+                    held.StoppedWhileHeld = true;
                 }
 
                 // An emergency stop holds the vehicle; it does not put the
@@ -1155,11 +1166,17 @@ public sealed class FakeRiotWorld
         _ => "PROCESSING_ORDER",
     };
 
-    /// <summary>A stopped vehicle with an executing order still reads MT_RUNNING, at speed 0 (R28).</summary>
+    /// <summary>
+    /// A stopped vehicle with an executing order still reads MT_RUNNING, at
+    /// speed 0 (R28); so does a vehicle a person drives with no order, with
+    /// procState IDLE (round 38).
+    /// </summary>
     private static string MovementState(VehicleState v) => v.Current switch
     {
+        null when v.Driving => "MT_RUNNING",
         { State: OrderStates.Held } => "MT_PAUSED",
-        { State: OrderStates.Executing } when v.TravelNeeded > TimeSpan.Zero => "MT_RUNNING",
+        // Waiting to start after a continue, too (BC-ORDER-020 item 3).
+        { State: OrderStates.Executing } o when v.TravelNeeded > TimeSpan.Zero || o.StartDelayLeft > TimeSpan.Zero => "MT_RUNNING",
         _ => "MT_FINISHED",
     };
 
@@ -1368,6 +1385,9 @@ public sealed class FakeRiotWorld
         public TimeSpan Finishing { get; set; }
 
         public long Promotion { get; set; }
+
+        /// <summary>The vehicle was emergency stopped while the order was held: a continue then starts late (BC-ORDER-020 item 3).</summary>
+        public bool StoppedWhileHeld { get; set; }
 
         /// <summary>World time left before a continued order's vehicle starts (BC-ORDER-020 item 3).</summary>
         public TimeSpan StartDelayLeft { get; set; }

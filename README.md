@@ -256,7 +256,7 @@ RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。�
 一个只在回环地址上监听的小服务（默认 `http://127.0.0.1:5200`，监听地址不是回环时拒绝启动），按 riot-sdk 0.3.1 实际发出的请求和读取方式回答：登录、建单（含带充电动作的）、按 upperId 或 orderId 查单、订单列表、取消、暂停、从暂停继续、从挂起继续、优先执行、急停与解除、上下线、路线代价与就近站点、车辆状态、地图、站点和边表。`./simple up` 把它作为第一个部件起来，服务端默认连它。
 
 - **种子**：`src/Simple.FakeRiot/seed.json`，两张虚构的小地图和三台假车（`fake-vehicle-1` 在 1 号图 1 号站）。1 号图的路网是有向的，6 号站没有路通进去，5 号站是充电桩；两张图都有 1 号站，演示站号跨图不唯一。没有用 D8 的真实地图和车。
-- **会自己动**：订单排队 → 执行 → 车到站 → 约 1 秒后成功；行驶中车的站号读 0；执行中 `controlState` 一直是 `CONTROL_STATE_ERR`；急停约 1 秒锁上、解除后 4～5 秒才回 `OK`，读到 `OK` 后故障码还残留约 3.5 秒；暂停后继续，订单当即回到执行中，车约 16 秒后才起步；在桩上充电时电量每 36 秒涨 1%，涨到 98% 停（`FakeRiot:ChargingStopsAtBattery`），之后仍报 `CHARGING`；电量 ≤10%（`FakeRiot:NoOrdersAtOrBelowBattery`）的车不派单。默认时长接近真 RIoT，都在 `FakeRiot:Timing` 下，契约测试用几十到几百毫秒。
+- **会自己动**：订单排队 → 执行 → 车到站 → 约 1 秒后成功；行驶中车的站号读 0；执行中 `controlState` 一直是 `CONTROL_STATE_ERR`；急停约 1 秒锁上、解除后 4～5 秒才回 `OK`，读到 `OK` 后故障码还残留约 3.5 秒；暂停期间车被急停过的，解除后再继续，订单当即回到执行中、读 `MT_RUNNING`，车约 16 秒后才起步；在桩上充电时电量每 36 秒涨 1%，涨到 98% 停（`FakeRiot:ChargingStopsAtBattery`），之后仍报 `CHARGING`；电量 ≤10%（`FakeRiot:NoOrdersAtOrBelowBattery`）的车不派单。默认时长接近真 RIoT，都在 `FakeRiot:Timing` 下，契约测试用几十到几百毫秒。
 - **时间压缩**：`FakeRiot:Timing:Speedup` 是倍速，上面所有时长连同行驶时间都除以它。默认 1 是真实速度；设成 100，一张从 1 号站到 3 号站（20 米）的单从建单到成功不到 1 秒，不用真等十几秒的起步延迟。`Tick`（多久推进一次）和接口上的时间戳不压缩。
 - **负载看得见**：`FakeRiot:ReadDelay` 让每个读请求（`/api` 下的 GET）先等这么久再回答。真 RIoT 读请求的 p95 约 168 ms，上一代现场约每秒 10 次读，轮询过密会拖慢全厂（`research/riot-review.md` R39）。默认 0；运行中可以用控制面改。每个 `/api` 调用都按"方法 + 路由模板"计数，没鉴权被拒的也算，用 `GET /fake-riot/calls` 读。
 - **没观测过的就不编**：真 RIoT 在某种情况下怎么回答没有记录时（例如对一张已成功的单发取消），假 RIoT 回业务码 `FAKE-UNOBSERVED`，说明这是知识的空白，任何代码都不能依赖它。只有产品负责人的说法、还没实测的，假 RIoT 照说法做，对应的契约标"未实测"（见下面的 #11 对照表）。
@@ -265,12 +265,12 @@ RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。�
   | 接口 | 作用 |
   | --- | --- |
   | `POST /fake-riot/orders/{orderId}/hang?resultCode=` | 把执行中或暂停的单打成挂起（9），就像有人在车载屏上取消 |
-  | `POST /fake-riot/orders/{orderId}/fail` | 让排队中的单变成失败（4）。假 RIoT 自己从不让单失败；按产品负责人的说法，真 RIoT 也只会让刚建、还没开始的单失败（ADR 0010），所以执行中的单回 404 |
+  | `POST /fake-riot/orders/{orderId}/fail` | 让排队中的单变成失败（4）。假 RIoT 自己从不让单失败；按产品负责人的说法，真 RIoT 也只会让刚创建、还没排队的单失败（ADR 0010）。假 RIoT 没有"还没排队"这一态，用排队中的单代替，执行中的单回 404 |
   | `POST /fake-riot/orders/web` | 正文 `{"vehicleKey", "mapId", "station", "orderName"}`：像有人在 RIoT 网页上手动派单，`upperId` 是空串（Q-043、`cs#617`），回 `{"orderId"}` |
   | `POST /fake-riot/faults/create-00002` | 正文 `{"orderMade": true, "times": 1}`：接下来几次建单回 `00002`；`orderMade` 为 `true` 时单其实建成了，为 `false` 时没建。真 RIoT 的 `00002` 两种都可能，要按"结果未知"对待（R6） |
   | `PUT /fake-riot/order-list/churn` | 正文 `{"ordersPerRead": 1}`：每读一次订单列表之前，别的产线先建这么多单，翻页途中总数会变（`cs#573`）；0 停止 |
-  | `PUT /fake-riot/vehicles/{deviceKey}` | 正文里给哪项改哪项：`battery`（0～100）、`brakeReleased`（松抱闸：执行中或暂停的单挂起，`breakSwitchState` 读 `UNMOVABLE`）、`mode`（`MODE_AUTO` 或 `MODE_MANUAL`）、`manualCharger`（插手动充电器：`batteryState` 读 `CHARGING`）、`emergencyButtonPressed`（按下车上的急停按钮：`CAN_NOT_RECOVER`、执行中的单挂起，在 RIoT 里解除无效；松开后变 `CAN_RECOVER`，要在 RIoT 里解除）。松抱闸、不是 `MODE_AUTO`、插着手动充电器时，车不接新单、手上的单也不走 |
-  | `POST /fake-riot/vehicles/{deviceKey}/drive` | 正文 `{"station": 3}`：人不经订单把车开过去，像用手控器（先把 `mode` 切成 `MODE_MANUAL`）或在 Matrix 上操作（`mode` 仍是 `MODE_AUTO`）；车在动、RIoT 里没有订单 |
+  | `PUT /fake-riot/vehicles/{deviceKey}` | 正文里给哪项改哪项：`battery`（0～100）、`brakeReleased`（松抱闸：执行中的单挂起，`breakSwitchState` 读 `UNMOVABLE`；抱闸还松着时从挂起继续回 `14013` 车辆状态异常）、`mode`（`MODE_AUTO` 或 `MODE_MANUAL`）、`manualCharger`（插手动充电器：`batteryState` 读 `CHARGING`）、`emergencyButtonPressed`（按下车上的急停按钮：`CAN_NOT_RECOVER`、执行中的单挂起，在 RIoT 里解除无效；松开后变 `CAN_RECOVER`，要在 RIoT 里解除）。松抱闸、不是 `MODE_AUTO`、插着手动充电器时，车不接新单、手上的单也不走 |
+  | `POST /fake-riot/vehicles/{deviceKey}/drive` | 正文 `{"station": 3}`：人不经订单把车开过去，像用手控器（先把 `mode` 切成 `MODE_MANUAL`）或在 Matrix 上操作（`mode` 仍是 `MODE_AUTO`）；车在动、读 `MT_RUNNING`、`procState` 是 `IDLE`，RIoT 里没有订单；这时建的单排着，车到站后才执行（第 38 轮）。车有订单（包括挂起的）时不让开 |
   | `PUT /fake-riot/maps/{mapId}/chargers/{stationId}` | 正文 `{"connected": false}`：拔掉充电器，之后去这个桩的充电单挂起、结果码 `407802` |
   | `POST /fake-riot/maps/{mapId}/stations`、`DELETE /fake-riot/maps/{mapId}/stations/{stationId}` | 像在 RIoT 的地图编辑里新建、删除站点。新站点的站号是这张图有过的最大站号加一，删掉的站号不再分配（ADR 0015）；车站着、出发或要去的站点删不掉（409） |
   | `GET /fake-riot/calls`、`DELETE /fake-riot/calls` | 读、清零调用计数 |
@@ -285,7 +285,9 @@ RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。�
   - 列表里网页手派单的 `upperId` 是什么形状没观测过（Q-043 第 2 问），假 RIoT 和按 orderId 查一样给空串；
   - 按急停按钮后订单"多久"进挂起不知道，假 RIoT 当即挂起；从挂起继续后有没有起步延迟没观测过，假 RIoT 不加；
   - 充电速度没量过（假 RIoT 用每 1% 36 秒）；行驶不耗电；
-  - 人用手控器或 Matrix 开车时 `movementState` 读什么没观测过，假 RIoT 读 `MT_FINISHED`（手推车时见过 `MT_FINISHED`，U7）；
+  - 没被急停过的暂停，继续后不加起步延迟：约 16 秒只在"暂停 + 急停 + 解除"之后见过（BC-ORDER-020 第 3 条），没有不急停的对照；第 10 轮暂停后继续，约 9 秒已经到站，不支持每次都有 16 秒；
+  - 暂停中松抱闸会怎样没观测过（第 27 轮 F 节只看了执行中的单），假 RIoT 让暂停的单保持暂停；
+  - 挂起期间人又在车上让车走、这时发从挂起继续，真 RIoT 回成功、订单仍挂起（BC-ORDER-018 第 2 条），假 RIoT 没做：有订单（包括挂起的）的车不让人开；
   - 删掉的站点会不会出现在 `removedStation` 列表里没观测过，假 RIoT 的这个列表一直是空的。
 
 ### 契约测试
@@ -303,10 +305,10 @@ dotnet test --project tests/Simple.Contracts.Tests --filter-trait "Contract=BC-O
 | #11 的条目 | 契约 | ADR | 实测情况 |
 | --- | --- | --- | --- |
 | 站号永不改变，新站点只递增、删掉的不再分配；站号跨图不唯一 | `StationContracts.ANewStationGetsANumberNoStationHadBefore`、`MapContracts.TwoMapsHaveAStationWithTheSameId` | 0015 | 前者未实测；后者实验室见过（BC-MAP-002） |
-| 订单只在刚创建、还没开始时失败，车在原地 | `FailedOrderContracts` 两条 | 0010 | 未实测 |
+| 订单只在刚创建、还没排队时失败，车在原地 | `FailedOrderContracts.AJustMadeOrderFailsWithTheVehicleWhereItIs`（假 RIoT 拒绝让执行中的单失败，由 `Simple.FakeRiot.Tests` 测） | 0010 | 未实测 |
 | 按急停按钮进挂起；服务端下的急停不进挂起 | `EmergencyButtonContracts.PressingTheButtonHangsTheExecutingOrder`、`EmergencyStopContracts.AnEmergencyStopKeepsTheExecutingOrderExecuting` | 0010 | 前者未实测；后者实验室见过（BC-ORDER-015） |
 | 对挂起的单发取消，变成已取消 | `OrderCommandContracts.CancellingAHungOrderCancelsIt` | 0010 | 未实测 |
-| 一类急停软件解不开；一类触发同时触发二类，一类消除后二类还在；按钮按着时在 RIoT 里解除会立刻再触发 | `EmergencyButtonContracts.WhileTheButtonIsPressedAReleaseInRiotDoesNotReleaseTheStop`、`OnceTheButtonIsLetGoTheStopStaysUntilReleasedInRiot` | 0009 | 未实测 |
+| 一类急停软件解不开；一类触发同时触发二类，一类消除后二类还在；按钮按着时在 RIoT 里解除会立刻再触发 | `EmergencyButtonContracts.WhileTheButtonIsPressedAReleaseInRiotDoesNotReleaseTheStop`、`OnceTheButtonIsLetGoTheStopStaysUntilReleasedInRiot` | 0009 | 部分实测：第 27 轮 A 节见过硬件急停要物理松开后 `cancelEmergency` 才回 `OK`；"立刻再触发""一类带出二类"是产品负责人的说法 |
 | 三类急停解除后车接着走原来的单 | `EmergencyStopContracts.AfterTheStopIsReleasedTheVehicleGoesOnWithItsOrder` | 0009 | 未实测（BC-ORDER-020 第 5 条只是推断） |
 | 下线后不开始排队的单，已开始的照常做完，暂停、挂起的仍能恢复 | `IntegrationLevelContracts` 三条 | 0011 | 未实测（第 13 轮只看到开头） |
 | `MODE_MANUAL` 时人能直接开车 | `ManualUseContracts.InManualModeAPersonDrivesTheVehicleWithoutAnOrder` | 0022 | 未实测 |
@@ -314,12 +316,12 @@ dotnet test --project tests/Simple.Contracts.Tests --filter-trait "Contract=BC-O
 | 插着手动充电器车动不了 | `ManualUseContracts.WithTheManualChargerPluggedInTheVehicleReadsChargingAndDoesNotMove` | 0022 | 未实测；读 `CHARGING` 第 42 轮见过 |
 | 判断站点上或开往站点的车只能遍历车辆和订单 | `StationContracts.EveryVehicleOnTheListHasACardThatSaysWhereItStands`（只读，真 RIoT 上也跑）、`TheOrderListShowsWhereAnExecutingVehicleIsHeading` | 0020 | 未实测 |
 | 电池可能 97%～99% 停充、报不出 100%；充满后还报不报 `CHARGING` | `ChargingContracts.ChargingStopsShortOfAHundredPercentAndTheVehicleStillReadsCharging` | 0020 | 未实测（推测）；假 RIoT 取仍报 `CHARGING` |
-| 在 Matrix 上让车走时 `mode` 仍是 `MODE_AUTO`、车在动没订单 | `ManualUseContracts.DrivenFromMatrixTheVehicleMovesWithoutAnOrderInAutoMode` | 0022 | 未实测（推测，1 个样本） |
+| 在 Matrix 上让车走时 `mode` 仍是 `MODE_AUTO`、车在动没订单 | `ManualUseContracts.DrivenFromMatrixTheVehicleMovesWithoutAnOrderInAutoMode`、`AnOrderMadeWhileAPersonDrivesTheVehicleWaitsUntilItArrives` | 0022 | `mode` 未实测（推测，1 个样本）；`MT_RUNNING`、`procState` `IDLE`、途中建的单到站后才执行，第 38 轮单机去站点见过（把实验室的"单机"当成 ADR 里的 Matrix，是推断） |
 | 充电单 = move + `act(78,1,0)`，开始充电即成功；下一单队首自动插 `act(78,2,0)`；充不上电 `407802` 挂起 | `ChargingContracts` 前三条 | 0020 | 实验室见过（第 24、25 轮） |
-| 松抱闸：`mode` 仍 `MODE_AUTO`、`breakSwitchState` 读 `UNMOVABLE`；松着时新建的单一直排队 | `ManualUseContracts.AReleasedBrakeReadsUnmovableAndTheModeStaysAuto`、`AnOrderMadeWhileTheBrakeIsReleasedStaysQueued`、`ReleasingTheBrakeHangsTheExecutingOrder` | 0022 | 实验室见过（第 21、27-F、29-F、30 轮，BC-ORDER-015） |
+| 松抱闸：`mode` 仍 `MODE_AUTO`、`breakSwitchState` 读 `UNMOVABLE`；松着时新建的单一直排队 | `ManualUseContracts.AReleasedBrakeReadsUnmovableAndTheModeStaysAuto`、`AnOrderMadeWhileTheBrakeIsReleasedStaysQueued`、`ReleasingTheBrakeHangsTheExecutingOrder`、`ContinuingWhileTheBrakeIsStillReleasedIsRefusedWith14013` | 0022 | 实验室见过（第 21、27-F、29-F、30 轮，BC-ORDER-015） |
 | 在桩上充电、插手动充电器时都报 `CHARGING` | `ChargingContracts.AChargeOrderSucceedsOnceTheVehicleCharges`、`ManualUseContracts.WithTheManualChargerPluggedInTheVehicleReadsChargingAndDoesNotMove` | 0020、0022 | 实验室见过（第 24、25、42 轮） |
-| 手动用车（松抱闸、`MODE_MANUAL`、手动充电器）时取消排队、暂停、挂起的单能不能生效 | `ManualUseContracts.AQueuedOrderCanBeCancelledDuringManualUse`（三种）、`AHungOrderCanBeCancelledWhileTheBrakeIsReleased` | 0022 | 未实测；假 RIoT 取能生效 |
-| 恢复以后排着的单会不会自己开始 | `ManualUseContracts.AQueuedOrderStartsByItselfOnceManualUseEnds`（三种）、`AHungOrderDoesNotGoOnByItselfOnceTheBrakeIsApplied` | 0022 | 未实测；假 RIoT 取排队的自己开始、挂起的要发继续 |
+| 手动用车（松抱闸、`MODE_MANUAL`、手动充电器）时取消排队、暂停、挂起的单能不能生效 | `ManualUseContracts.AQueuedOrderCanBeCancelledDuringManualUse`、`AHeldOrderCanBeCancelledDuringManualUse`、`AHungOrderCanBeCancelledDuringManualUse`，各三种手动用车 | 0022 | 未实测；假 RIoT 取都能生效 |
+| 恢复以后排队、暂停、挂起的单会不会自己开始 | `ManualUseContracts.AQueuedOrderStartsByItselfOnceManualUseEnds`、`AHeldOrderStaysHeldOnceManualUseEnds`、`AHungOrderDoesNotGoOnByItselfOnceManualUseEnds`，各三种手动用车 | 0022 | 未实测；假 RIoT 取排队的自己开始、暂停和挂起的要发继续（合上抱闸后从挂起继续回 0，第 27 轮 F 见过） |
 | 车离开桩时读哪个字段 | `ChargingContracts.TheChargerIsFreeOnceTheVehicleHasLeftIt` | 0020 | 未实测；假 RIoT 一离站 `currentStation` 就读 0 |
 | C2000 脉冲开锁、关机断电、开锁输出常 1 时能否锁上（#16 第六场） | 不是 RIoT 的行为，不在这里 | 0024、0012 | 归车上 IO 模块与 IO 模拟器，等台架或真车窗口核对 |
 

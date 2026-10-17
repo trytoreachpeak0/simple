@@ -136,6 +136,28 @@ public sealed class FakeRiotHostTests : IDisposable
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    /// <summary>
+    /// The control API fails only a queued order: real RIoT is said to fail
+    /// only an order just made (ADR 0010), so an executing one is refused.
+    /// </summary>
+    [Fact]
+    public async Task TheControlApiFailsOnlyAQueuedOrder()
+    {
+        await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(host =>
+        {
+            host.UseSetting("Simple:Logs:Directory", logDirectory);
+            // Twice as fast: it executes after a second and travels for ten.
+            host.UseSetting("FakeRiot:Timing:Speedup", "2");
+        });
+        using var client = FakeRiotHttp.Client(factory);
+        var orderId = await FakeRiotHttp.CreateMoveAsync(client, "executing", station: 3);
+        Assert.Equal(3, await FakeRiotHttp.StateWithinAsync(client, "executing", TimeSpan.FromSeconds(10), 3));
+
+        using var fail = await client.PostAsync(new Uri($"/fake-riot/orders/{orderId}/fail", UriKind.Relative), content: null, Cancel);
+
+        Assert.Equal(HttpStatusCode.NotFound, fail.StatusCode);
+    }
+
     /// <summary>A station a vehicle stands on cannot be deleted; a vehicle with the manual charger plugged in cannot be driven.</summary>
     [Fact]
     public async Task TheControlApiRefusesWhatThePlantWouldNotAllow()

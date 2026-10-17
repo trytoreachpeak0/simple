@@ -33,7 +33,8 @@ public sealed class FakeRiotSettings
     public int ChargingStopsAtBattery { get; set; } = 98;
 
     /// <summary>
-    /// How long every read (a GET under /api) waits before it is answered,
+    /// How long every read (a GET under /api, or one of the three route
+    /// queries) waits before it is answered,
     /// in real time; not compressed by <see cref="FakeRiotTiming.Speedup"/>.
     /// Real RIoT's reads took about 168 ms at p95 (research/riot-review.md R39).
     /// Zero by default; the control API changes it while the fake runs.
@@ -115,8 +116,10 @@ public sealed class FakeRiotTiming
     public TimeSpan FaultCodeResidue { get; set; } = TimeSpan.FromSeconds(3.5);
 
     /// <summary>
-    /// From CONTINUE_FROM_HELD to the vehicle moving: the order is executing at
-    /// once but real RIoT's vehicle started about 16 seconds later (BC-ORDER-020 item 3).
+    /// From CONTINUE_FROM_HELD to the vehicle moving, when the vehicle was
+    /// emergency stopped while the order was held: the order is executing at
+    /// once but real RIoT's vehicle started about 16 seconds later
+    /// (BC-ORDER-020 item 3). Without a stop no delay is added.
     /// </summary>
     public TimeSpan ContinueStartDelay { get; set; } = TimeSpan.FromSeconds(16);
 

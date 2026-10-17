@@ -1,9 +1,9 @@
 using System.Diagnostics;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using static Simple.FakeRiot.Tests.FakeRiotHttp;
 
 namespace Simple.FakeRiot.Tests;
 
@@ -14,7 +14,6 @@ namespace Simple.FakeRiot.Tests;
 /// </summary>
 public sealed class FakeRiotTimingTests : IDisposable
 {
-    private const string CallKey = "fake-riot-call-api-key-not-a-secret";
     private readonly string logDirectory = Path.Combine(Path.GetTempPath(), "simple-fakeriot-tests", Guid.NewGuid().ToString("N"));
 
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
@@ -37,6 +36,9 @@ public sealed class FakeRiotTimingTests : IDisposable
     {
         await using var factory = Fake(("FakeRiot:Timing:Speedup", "100"));
         using var client = Client(factory);
+        // Warm up: the first create and read pay for starting the host and compiling, not for the fake's clock.
+        await CreateMoveAsync(client, "warm-up", station: 2, Vehicle3, mapId: 2);
+        await StateWithinAsync(client, "warm-up", TimeSpan.Zero, 5);
         var clock = Stopwatch.StartNew();
 
         await CreateMoveAsync(client, "speedup-100", station: 3);
@@ -74,6 +76,21 @@ public sealed class FakeRiotTimingTests : IDisposable
         await client.GetStringAsync(new Uri("/api/imap/v1/mapInfo/getALLMapInfoExcludeMapJson", UriKind.Relative), Cancel);
 
         Assert.True(clock.Elapsed >= TimeSpan.FromMilliseconds(290), $"读只用了 {clock.ElapsedMilliseconds} ms。");
+    }
+
+    /// <summary>The three route queries are POSTs that only read; they wait too.</summary>
+    [Fact]
+    public async Task ARouteQueryWaitsTheReadDelay()
+    {
+        await using var factory = Fake(("FakeRiot:ReadDelay", "00:00:00.300"));
+        using var client = Client(factory);
+        var query = new { mapId = 1, stationId = 3, deviceKeys = new[] { Vehicle1 } };
+        (await client.PostAsJsonAsync(new Uri("/api/task/v1/route/getRouteCostsBy", UriKind.Relative), query, Cancel)).Dispose();
+        var clock = Stopwatch.StartNew();
+
+        using var response = await client.PostAsJsonAsync(new Uri("/api/task/v1/route/getRouteCostsBy", UriKind.Relative), query, Cancel);
+
+        Assert.True(clock.Elapsed >= TimeSpan.FromMilliseconds(290), $"路线查询只用了 {clock.ElapsedMilliseconds} ms。");
     }
 
     [Fact]
@@ -130,47 +147,4 @@ public sealed class FakeRiotTimingTests : IDisposable
                 host.UseSetting(key, value);
             }
         });
-
-    private static HttpClient Client(WebApplicationFactory<Program> factory)
-    {
-        var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CallKey);
-        return client;
-    }
-
-    private static async Task CreateMoveAsync(HttpClient client, string upperId, int station)
-    {
-        using var response = await client.PostAsJsonAsync(
-            new Uri("/api/order/v1/add/byDefaultMissions", UriKind.Relative),
-            new
-            {
-                upperId,
-                orderName = upperId,
-                appointVehicleKey = "BROKERX-0000000000000000000000000000fa01",
-                mission = new[] { new { type = "move", mapId = 1, destination = station } },
-            },
-            Cancel);
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Cancel));
-        Assert.Equal("0", body.RootElement.GetProperty("code").GetString());
-    }
-
-    /// <summary>Reads the order's state until it is <paramref name="wanted"/> or the time is up; returns the last state read.</summary>
-    private static async Task<int> StateWithinAsync(HttpClient client, string upperId, TimeSpan within, int wanted)
-    {
-        var deadline = Stopwatch.StartNew();
-        var state = 0;
-        while (deadline.Elapsed < within)
-        {
-            using var body = JsonDocument.Parse(await client.GetStringAsync(new Uri($"/api/order/v1/orderRecord/detailByUpperId/{upperId}", UriKind.Relative), Cancel));
-            state = body.RootElement.GetProperty("result").GetProperty("orderState").GetInt32();
-            if (state == wanted)
-            {
-                break;
-            }
-
-            await Task.Delay(20, Cancel);
-        }
-
-        return state;
-    }
 }

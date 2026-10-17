@@ -41,6 +41,26 @@ public sealed class ManualUseContracts : OrderContractTest
         await UntilStateAsync(upperId, OrderStates.Hang);
     }
 
+    /// <summary>
+    /// With the brake still released, CONTINUE_FROM_HANG is refused with 14013
+    /// (车辆状态异常) and the order stays hung; once the brake is applied the
+    /// same command is accepted.
+    /// </summary>
+    [Fact]
+    [Contract("round 27", "Q-035", "BC-ORDER-015")]
+    public async Task ContinuingWhileTheBrakeIsStillReleasedIsRefusedWith14013()
+    {
+        var control = Target.RequireControl("松开车的抱闸");
+        var (upperId, order) = await ExecutingAsync("brake-continue");
+        await control.SetVehicleAsync(Facts.VehicleKey, brakeReleased: true);
+        await UntilStateAsync(upperId, OrderStates.Hang);
+
+        var refused = await Assert.ThrowsAsync<RIoT.Sdk.Core.RiotApiException>(() => Riot.Tasks.HangContinueAsync(order.OrderId, cancellationToken: Cancel));
+
+        Assert.Equal("14013", refused.BusinessCode);
+        Assert.Equal(OrderStates.Hang, (await ReadAsync(upperId)).OrderState);
+    }
+
     /// <summary>An order made while the brake is released stays queued.</summary>
     [Fact]
     [Contract("round 29-F", "round 30", "#11", "ADR 0022")]
@@ -74,10 +94,16 @@ public sealed class ManualUseContracts : OrderContractTest
         await UntilAsync(_ => CardAsync(), c => c.CurrentPosition == Facts.ReachableStation, "车开到站");
     }
 
-    /// <summary>Driven from Matrix, the vehicle moves with no order while its mode still reads MODE_AUTO.</summary>
+    /// <summary>
+    /// Driven from Matrix, the vehicle moves with no order: MT_RUNNING with
+    /// procState IDLE (round 38, the lab's "单机去站点"), while its mode still
+    /// reads MODE_AUTO. That Matrix is what the lab calls 单机 (stand-alone
+    /// operation on the vehicle) is an inference: ADR 0010 and ADR 0022 say
+    /// "Matrix", the lab says 单机, and both name what is done on the vehicle itself.
+    /// </summary>
     [Fact]
-    [Contract("ADR 0022", "#11")]
-    [NotVerifiedOnRealRiot("在 Matrix 上让车走时 mode 仍是 MODE_AUTO，车在动、车上没有订单（推测；2026-10-11 现场一个样本，没记下操作方式；ADR 0022）")]
+    [Contract("ADR 0022", "#11", "round 38", "Q-039")]
+    [NotVerifiedOnRealRiot("在 Matrix 上让车走时 mode 仍是 MODE_AUTO，车在动、车上没有订单（推测；2026-10-11 现场一个样本，没记下操作方式；ADR 0022）。MT_RUNNING、procState IDLE 第 38 轮单机去站点见过")]
     public async Task DrivenFromMatrixTheVehicleMovesWithoutAnOrderInAutoMode()
     {
         var control = Target.RequireControl("在车上的 Matrix 里让车走");
@@ -87,7 +113,44 @@ public sealed class ManualUseContracts : OrderContractTest
 
         Assert.Equal("MODE_AUTO", moving.Mode);
         Assert.Equal("IDLE", moving.ProcState);
+        Assert.Equal("MT_RUNNING", moving.MovementState);
         Assert.Null((await CardAsync()).OrderTaskId);
+    }
+
+    /// <summary>
+    /// An order made while a person drives the vehicle from Matrix is queued
+    /// and does not take over; it starts once the vehicle has arrived
+    /// (round 38: about 2 s after MT_FINISHED).
+    /// </summary>
+    [Fact]
+    [Contract("BC-ORDER-018", "round 38", "Q-039")]
+    public async Task AnOrderMadeWhileAPersonDrivesTheVehicleWaitsUntilItArrives()
+    {
+        var control = Target.RequireControl("在车上的 Matrix 里让车去站点");
+        await control.DriveAsync(Facts.VehicleKey, Facts.ReachableStation);
+        await UntilAsync(_ => VehicleAsync(), v => v.Speed > 0, "车在动");
+        var upperId = NewUpperId("behind-matrix");
+
+        await CreateMoveAsync(upperId, Facts.SecondReachableStation);
+        var created = DateTimeOffset.UtcNow;
+        var queuedWhileMoving = TimeSpan.Zero;
+        await UntilAsync(
+            async _ =>
+            {
+                var reading = (Order: (await ReadAsync(upperId)).OrderState, Vehicle: await VehicleAsync());
+                if (reading is { Order: OrderStates.Queueing, Vehicle: { Speed: > 0, ProcState: "IDLE", MovementState: "MT_RUNNING" } })
+                {
+                    queuedWhileMoving = DateTimeOffset.UtcNow - created;
+                }
+
+                return reading;
+            },
+            r => r.Order != OrderStates.Queueing,
+            $"订单 {upperId} 开始执行");
+
+        // The drive takes a second in the fake; an order that took over would start within its 50 ms queue time.
+        Assert.True(queuedWhileMoving > TimeSpan.FromMilliseconds(400), $"车在动时订单只排了 {queuedWhileMoving.TotalMilliseconds} ms 就不再排队。");
+        await UntilStateAsync(upperId, OrderStates.Success);
     }
 
     /// <summary>
@@ -144,16 +207,35 @@ public sealed class ManualUseContracts : OrderContractTest
         await UntilStateAsync(upperId, OrderStates.Cancelled);
     }
 
-    /// <summary>A hung order can be cancelled while the brake is still released.</summary>
-    [Fact]
+    /// <summary>A held order can be cancelled while the vehicle is in manual use.</summary>
+    [Theory]
+    [InlineData(ManualUse.BrakeReleased)]
+    [InlineData(ManualUse.ManualMode)]
+    [InlineData(ManualUse.ManualCharger)]
     [Contract("ADR 0022", "#11")]
-    [NotVerifiedOnRealRiot("抱闸松着时对挂起的订单发取消能生效（待实测，#11 PR #13 审查补充第 1 条；ADR 0022）")]
-    public async Task AHungOrderCanBeCancelledWhileTheBrakeIsReleased()
+    [NotVerifiedOnRealRiot("抱闸松着、MODE_MANUAL、插着手动充电器时，对暂停的订单发取消能生效（待实测，#11 PR #13 审查补充第 1 条；ADR 0022）")]
+    public async Task AHeldOrderCanBeCancelledDuringManualUse(ManualUse use)
     {
-        var control = Target.RequireControl("松开车的抱闸");
-        var (upperId, order) = await ExecutingAsync("brake-cancel-hang");
-        await control.SetVehicleAsync(Facts.VehicleKey, brakeReleased: true);
-        await UntilStateAsync(upperId, OrderStates.Hang);
+        var control = Target.RequireControl("人手动用车（松抱闸、切手动、插手动充电器）");
+        var (upperId, order) = await HeldAsync("manual-cancel-held");
+        await StartAsync(control, use);
+
+        await Riot.Tasks.CancelOrderAsync(order.OrderId, cancellationToken: Cancel);
+
+        await UntilStateAsync(upperId, OrderStates.Cancelled);
+    }
+
+    /// <summary>A hung order can be cancelled while the vehicle is in manual use.</summary>
+    [Theory]
+    [InlineData(ManualUse.BrakeReleased)]
+    [InlineData(ManualUse.ManualMode)]
+    [InlineData(ManualUse.ManualCharger)]
+    [Contract("ADR 0022", "#11")]
+    [NotVerifiedOnRealRiot("抱闸松着、MODE_MANUAL、插着手动充电器时，对挂起的订单发取消能生效（待实测，#11 PR #13 审查补充第 1 条；ADR 0022）")]
+    public async Task AHungOrderCanBeCancelledDuringManualUse(ManualUse use)
+    {
+        var control = Target.RequireControl("人手动用车（松抱闸、切手动、插手动充电器）");
+        var (upperId, order) = await HungAsync(control, use, "manual-cancel-hang");
 
         await Riot.Tasks.CancelOrderAsync(order.OrderId, cancellationToken: Cancel);
 
@@ -180,20 +262,45 @@ public sealed class ManualUseContracts : OrderContractTest
         await UntilStateAsync(upperId, OrderStates.Success);
     }
 
-    /// <summary>A hung order does not go on by itself when the brake is applied again: it needs CONTINUE_FROM_HANG.</summary>
-    [Fact]
-    [Contract("ADR 0022", "#11")]
-    [NotVerifiedOnRealRiot("合上抱闸以后，挂起的单不会自己继续，要发从挂起继续（待实测，#11 PR #13 审查补充第 2 条；ADR 0022）")]
-    public async Task AHungOrderDoesNotGoOnByItselfOnceTheBrakeIsApplied()
+    /// <summary>
+    /// A hung order does not go on by itself once the manual use ends: it
+    /// needs CONTINUE_FROM_HANG, which is then accepted (for the brake, round
+    /// 27 F saw the continue accepted once the brake was applied).
+    /// </summary>
+    [Theory]
+    [InlineData(ManualUse.BrakeReleased)]
+    [InlineData(ManualUse.ManualMode)]
+    [InlineData(ManualUse.ManualCharger)]
+    [Contract("ADR 0022", "#11", "round 27")]
+    [NotVerifiedOnRealRiot("切回自动模式、合上抱闸、拔下手动充电器以后，挂起的单不会自己继续，要发从挂起继续（待实测，#11 PR #13 审查补充第 2 条；ADR 0022）；合上抱闸后从挂起继续回 0，第 27 轮 F 见过")]
+    public async Task AHungOrderDoesNotGoOnByItselfOnceManualUseEnds(ManualUse use)
     {
-        var control = Target.RequireControl("松开再合上车的抱闸");
-        var (upperId, order) = await ExecutingAsync("brake-applied-hang");
-        await control.SetVehicleAsync(Facts.VehicleKey, brakeReleased: true);
-        await UntilStateAsync(upperId, OrderStates.Hang);
+        var control = Target.RequireControl("人手动用车，用完恢复");
+        var (upperId, order) = await HungAsync(control, use, "manual-ends-hang");
 
-        await control.SetVehicleAsync(Facts.VehicleKey, brakeReleased: false);
+        await EndAsync(control, use);
         await ThroughoutAsync(_ => ReadAsync(upperId), o => o.OrderState == OrderStates.Hang, "仍挂起");
         await Riot.Tasks.HangContinueAsync(order.OrderId, cancellationToken: Cancel);
+
+        await UntilStateAsync(upperId, OrderStates.Success);
+    }
+
+    /// <summary>A held order stays held once the manual use ends: it needs CONTINUE_FROM_HELD.</summary>
+    [Theory]
+    [InlineData(ManualUse.BrakeReleased)]
+    [InlineData(ManualUse.ManualMode)]
+    [InlineData(ManualUse.ManualCharger)]
+    [Contract("ADR 0022", "#11")]
+    [NotVerifiedOnRealRiot("切回自动模式、合上抱闸、拔下手动充电器以后，暂停的单不会自己继续（待实测，#11 PR #13 审查补充第 2 条；ADR 0022）")]
+    public async Task AHeldOrderStaysHeldOnceManualUseEnds(ManualUse use)
+    {
+        var control = Target.RequireControl("人手动用车，用完恢复");
+        var (upperId, order) = await HeldAsync("manual-ends-held");
+        await StartAsync(control, use);
+
+        await EndAsync(control, use);
+        await ThroughoutAsync(_ => ReadAsync(upperId), o => o.OrderState == OrderStates.Held, "仍暂停");
+        await Riot.Tasks.OrderContinueAsync(order.OrderId, cancellationToken: Cancel);
 
         await UntilStateAsync(upperId, OrderStates.Success);
     }
@@ -203,6 +310,32 @@ public sealed class ManualUseContracts : OrderContractTest
         BrakeReleased,
         ManualMode,
         ManualCharger,
+    }
+
+    private async Task<(string UpperId, RIoT.Sdk.Core.OrderSnapshot Order)> HeldAsync(string tag)
+    {
+        var (upperId, order) = await ExecutingAsync(tag);
+        await Riot.Tasks.OrderHoldAsync(order.OrderId, cancellationToken: Cancel);
+        await UntilStateAsync(upperId, OrderStates.Held);
+        return (upperId, order);
+    }
+
+    /// <summary>
+    /// A hung order with the manual use under way. Releasing the brake hangs
+    /// the order by itself (round 27 F); for the other two the order is hung as
+    /// a cancel on the vehicle's own screen does (round 27 E), then the use starts.
+    /// </summary>
+    private async Task<(string UpperId, RIoT.Sdk.Core.OrderSnapshot Order)> HungAsync(Targets.FakeRiotControl control, ManualUse use, string tag)
+    {
+        var (upperId, order) = await ExecutingAsync(tag);
+        if (use != ManualUse.BrakeReleased)
+        {
+            await control.HangAsync(order.OrderId);
+        }
+
+        await StartAsync(control, use);
+        await UntilStateAsync(upperId, OrderStates.Hang);
+        return (upperId, order);
     }
 
     private Task StartAsync(Targets.FakeRiotControl control, ManualUse use) => use switch

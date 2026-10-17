@@ -9,8 +9,8 @@ public sealed class FailedOrderContracts : OrderContractTest
 {
     [Fact]
     [Contract("ADR 0010", "#11", "Q-024")]
-    [NotVerifiedOnRealRiot("订单只会在刚创建、还没排队时变成失败，此时车在原地（产品负责人，ADR 0010；#7 评论第 5 条；实验室从没见过 FAILED，Q-024）")]
-    public async Task AnOrderFailsOnlyBeforeItStartsAndTheVehicleStaysWhereItIs()
+    [NotVerifiedOnRealRiot("订单只会在刚创建、还没排队时变成失败，此时车在原地（产品负责人，ADR 0010；#7 评论第 5 条；实验室从没见过 FAILED，Q-024）。假 RIoT 没有'还没排队'这一态，用排队中的单代替")]
+    public async Task AJustMadeOrderFailsWithTheVehicleWhereItIs()
     {
         var control = Target.RequireControl("让 RIoT 的订单失败（没人知道怎样能做到）");
         await Riot.Tasks.DispatchDisableAsync(Facts.VehicleKey, Cancel);
@@ -22,19 +22,5 @@ public sealed class FailedOrderContracts : OrderContractTest
 
         Assert.Equal("--", failed.ExecuteVehicleKey);
         Assert.Equal(Facts.VehicleStation, (await CardAsync()).CurrentPosition);
-    }
-
-    [Fact]
-    [Contract("ADR 0010", "#11")]
-    [NotVerifiedOnRealRiot("执行中的单不会变成失败（产品负责人，ADR 0010：只在刚创建时失败）")]
-    public async Task AnExecutingOrderCannotBeMadeToFail()
-    {
-        var control = Target.RequireControl("让 RIoT 的订单失败（没人知道怎样能做到）");
-        var (upperId, order) = await ExecutingAsync("no-fail-executing");
-
-        var refused = await control.TryFailAsync(order.OrderId);
-
-        Assert.False(refused);
-        Assert.NotEqual(OrderStates.Failed, (await ReadAsync(upperId)).OrderState);
     }
 }
