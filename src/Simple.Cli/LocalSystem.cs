@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Simple.Cli.Instances;
 using Simple.Cli.Processes;
+using Simple.Logging;
 
 namespace Simple.Cli;
 
@@ -169,7 +170,7 @@ public sealed partial class LocalSystem(
                     index++;
                     portsOf[name] = ports.Skip(next).Take(component.PortsPerProcess).ToList();
                     next += component.PortsPerProcess;
-                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name), options.KeyStore)));
+                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name), store.ProgramLogDirectory(instance, name), options.KeyStore)));
                 }
             }
         }
@@ -385,22 +386,42 @@ public sealed partial class LocalSystem(
         return Outcome.Ok(new { Instance = instance, Events = events }, events.Select(FormatEvent).ToList());
     }
 
-    public Outcome Logs(string instance, string name, int? tail)
+    /// <summary>
+    /// A process's program log (ADR 0034), its files oldest first; with
+    /// <paramref name="output"/>, what it wrote to its console instead (or,
+    /// for <c>build</c>, the last build's output).
+    /// </summary>
+    public Outcome Logs(string instance, string name, int? tail, bool output)
     {
-        var path = store.LogPath(instance, name);
-        if (!LogName().IsMatch(name) || !File.Exists(path))
+        IReadOnlyList<string> files = !LogName().IsMatch(name) ? []
+            : output ? (File.Exists(store.LogPath(instance, name)) ? [store.LogPath(instance, name)] : [])
+            : ProgramLog.Files(store.ProgramLogDirectory(instance, name));
+        if (files.Count == 0)
         {
-            var known = Directory.Exists(store.LogDirectory(instance))
-                ? Directory.EnumerateFiles(store.LogDirectory(instance), "*.log").Select(Path.GetFileNameWithoutExtension).Order().ToList()
+            var logs = store.LogDirectory(instance);
+            var programLogs = Directory.Exists(logs)
+                ? Directory.EnumerateDirectories(logs).Where(d => ProgramLog.Files(d).Count > 0).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToList()
+                : [];
+            var outputs = Directory.Exists(logs)
+                ? Directory.EnumerateFiles(logs, "*.log").Select(Path.GetFileNameWithoutExtension).Order(StringComparer.Ordinal).ToList()
                 : [];
             return Outcome.Fail(
                 ExitCodes.NotRunning,
-                $"Instance {instance} has no log '{name}'. "
-                + (known.Count > 0 ? $"Logs: {string.Join(", ", known)}." : "It has never been started here."));
+                $"Instance {instance} has no {(output ? "console output" : "program log")} '{name}'. "
+                + (programLogs.Count + outputs.Count > 0
+                    ? $"Program logs: {Names(programLogs)}. Console output (--output): {Names(outputs)}."
+                    : "It has never been started here."));
         }
 
-        var lines = tail is { } count ? Tail(path, count) : ReadLines(path);
-        return Outcome.Ok(new { Instance = instance, Name = name, Path = path, Lines = lines }, lines);
+        var lines = files.SelectMany(ReadLines).ToList();
+        if (tail is { } count)
+        {
+            lines = lines.TakeLast(count).ToList();
+        }
+
+        return Outcome.Ok(new { Instance = instance, Name = name, Output = output, Paths = files, Lines = lines }, lines);
+
+        static string Names(List<string?> names) => names.Count > 0 ? string.Join(", ", names) : "none";
     }
 
     /// <summary>Asks the SQL Server which instance it is (<see cref="SqlServerTarget.VerifyAsync"/>); null when it may be used.</summary>
@@ -553,7 +574,7 @@ public sealed partial class LocalSystem(
         var component = Components.All.First(c => c.Name == process.Component);
         var portsOf = state.Processes.ToDictionary(p => p.Name, p => p.Ports);
         var context = new ComponentContext(
-            state.Instance, state.SqlServer, process.Index, process.Ports, portsOf, store.ProcessDirectory(state.Instance, process.Name));
+            state.Instance, state.SqlServer, process.Index, process.Ports, portsOf, store.ProcessDirectory(state.Instance, process.Name), store.ProgramLogDirectory(state.Instance, process.Name));
         return component.IsReady(context, Http, cancellationToken);
     }
 

@@ -46,6 +46,14 @@ public sealed class TerminalSmokeTests
         var text = await cli.RunAsync("status", "--instance", instance);
         Assert.Contains("Onboard terminals", text.Output, StringComparison.Ordinal);
 
+        // Each terminal writes its own program log (ADR 0034).
+        foreach (var terminal in new[] { "terminal-1", "terminal-2", "terminal-3" })
+        {
+            var log = await cli.RunAsync("logs", terminal, "--instance", instance);
+            Assert.True(log.ExitCode == ExitCodes.Success, $"logs {terminal} exited with {log.ExitCode}: {log.Error}");
+            Assert.Contains("Simple.Logging.ProgramLog: OnboardTerminal started (version ", log.Output, StringComparison.Ordinal);
+        }
+
         // A scan, typed into terminal-1's test input the way a scanner types: ends with Enter.
         using var http = new HttpClient();
         var input = new Uri(new Uri(Url(processes, "terminal-1")), "/test/keyboard");

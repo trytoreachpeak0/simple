@@ -27,6 +27,7 @@ public static class Components
             [
                 $"--urls={context.Url()}",
                 "--Simple:Mes:Source=Fake",
+                context.LogDirectoryArgument,
             ],
             IsReady: (context, http, cancellationToken) =>
                 Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),
@@ -46,6 +47,7 @@ public static class Components
                 $"--Simple:OnboardTerminals:ServerKeyName={ServerKeyName(context.Instance)}",
                 $"--Simple:OnboardTerminals:ServerKeyStore={context.KeyStore}",
                 $"--Simple:MesGateway:Url={context.UrlOf("mes-gateway")}",
+                context.LogDirectoryArgument,
             ],
             IsReady: (context, http, cancellationToken) =>
                 Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),
@@ -60,6 +62,7 @@ public static class Components
             [
                 $"--config={Path.Combine(context.Directory, "terminal.json")}",
                 $"--test-input={context.Url()}",
+                context.LogDirectoryArgument,
             ],
             IsReady: (context, http, cancellationToken) =>
                 Readiness.HttpOkAsync(http, new Uri(context.Url(), "/test/ready"), cancellationToken),
@@ -120,6 +123,7 @@ public sealed record UpOptions(int Terminals, bool BreakAway = false, ServerKeyS
 /// <param name="Ports">This process's own ports.</param>
 /// <param name="PortsOf">Every process's ports by process name, for components that connect to another.</param>
 /// <param name="Directory">This process's own directory for files it reads or writes, outside the clone; kept after down.</param>
+/// <param name="LogDirectory">This process's program log directory (<see cref="Instances.InstanceStore.ProgramLogDirectory"/>).</param>
 /// <param name="KeyStore">Where the server keeps its key.</param>
 public sealed record ComponentContext(
     string Instance,
@@ -128,8 +132,12 @@ public sealed record ComponentContext(
     IReadOnlyList<int> Ports,
     IReadOnlyDictionary<string, IReadOnlyList<int>> PortsOf,
     string Directory,
+    string LogDirectory,
     ServerKeyStore KeyStore = ServerKeyStore.User)
 {
+    /// <summary>Where the process writes its program log (ADR 0034); every component is given it.</summary>
+    public string LogDirectoryArgument => $"--Simple:Logs:Directory={LogDirectory}";
+
     public Uri Url(int port = 0) => new($"http://127.0.0.1:{Ports[port].ToString(CultureInfo.InvariantCulture)}");
 
     /// <summary>The loopback address of another process's port, for a component that connects to it.</summary>
