@@ -19,9 +19,13 @@ public sealed class ProgramLogTests
 
         var file = Assert.Single(ProgramLog.Files(server.LogDirectory));
         Assert.Equal("Server.log", Path.GetFileName(file));
+        // Read the way simple logs reads: the file may still be open for a
+        // moment after the host has stopped (seen once on simple01).
+        await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
         Assert.Contains(
             $"[INF] Simple.Server.Events.ServerLifecycleRecorder: Bringing database Simple_{server.Instance} to the current schema",
-            await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken),
+            await reader.ReadToEndAsync(TestContext.Current.CancellationToken),
             StringComparison.Ordinal);
     }
 }

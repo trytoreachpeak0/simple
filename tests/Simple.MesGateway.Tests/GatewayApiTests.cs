@@ -113,7 +113,10 @@ public sealed class GatewayApiTests : IAsyncLifetime
 
         var file = Assert.Single(Simple.Logging.ProgramLog.Files(logDirectory));
         Assert.Equal("MesGateway.log", Path.GetFileName(file));
-        var text = await File.ReadAllTextAsync(file, Cancel);
+        // Read the way simple logs reads: the file may still be open for a moment after the host has stopped.
+        await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        var text = await reader.ReadToEndAsync(Cancel);
         Assert.DoesNotContain("Gateway-secret", text, StringComparison.Ordinal);
         Assert.Contains("failed (read), retrying with backoff: ORA-01017: invalid username/password for Data Source=mes01;User Id=simple;Password=***", text, StringComparison.Ordinal);
     }
