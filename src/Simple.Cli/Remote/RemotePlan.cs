@@ -33,7 +33,13 @@ public sealed record RemotePlan(
             "exec" => throw new RemoteException(ExitCodes.Usage, "simple remote exec needs a command: simple remote exec -- <command> [arguments]."),
             // up builds, so it takes a slot like the other heavy commands; the
             // system it starts outlives the command and holds no slot.
-            "up" => SimpleCli(["up", global::Simple.Cli.SimpleCommand.BreakAwayOption, .. arguments, .. jsonFlag], checkout: true, slot: true),
+            // Over SSH the components must outlive the session (--break-away),
+            // and the server cannot use the user's key store (no DPAPI for a
+            // key login).
+            "up" => SimpleCli(
+                ["up", global::Simple.Cli.SimpleCommand.BreakAwayOption, global::Simple.Cli.SimpleCommand.ServerKeyStoreOption, nameof(ServerKeyStore.Machine), .. arguments, .. jsonFlag],
+                checkout: true,
+                slot: true),
             "down" or "status" or "events" or "logs" => SimpleCli([command, .. arguments, .. jsonFlag], checkout: false, slot: false),
             "forget" => SimpleCli(["down", "--reset", .. arguments, .. jsonFlag], checkout: false, slot: false) with { Forget = true },
             _ => throw new ArgumentException($"Unknown remote command '{command}'.", nameof(command)),

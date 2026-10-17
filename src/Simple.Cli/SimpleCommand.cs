@@ -12,6 +12,7 @@ public static partial class SimpleCommand
     public const string InstanceOption = "--instance";
     public const string JsonOption = "--json";
     public const string BreakAwayOption = "--break-away";
+    public const string ServerKeyStoreOption = "--server-key-store";
 
     /// <summary>
     /// The exit codes each command can end with, listed in its help. Every
@@ -115,6 +116,21 @@ public static partial class SimpleCommand
             Hidden = true,
         };
 
+        var keyStore = new Option<string>(ServerKeyStoreOption)
+        {
+            Description = "Internal, for simple remote up: where the server keeps its key, User (default) or Machine. "
+                + "Machine is for an SSH key login, which cannot use the user's store; only an administrator can create or delete a key there.",
+            Hidden = true,
+            DefaultValueFactory = _ => nameof(ServerKeyStore.User),
+        };
+        keyStore.Validators.Add(result =>
+        {
+            if (!ServerKey.TryParse(result.GetValueOrDefault<string>(), out _))
+            {
+                result.AddError($"{ServerKeyStoreOption} '{result.GetValueOrDefault<string>()}' is neither User nor Machine.");
+            }
+        });
+
         var up = new Command(
             "up",
             "Build once, start every component of the local system from the build output, and return when all are ready. "
@@ -123,12 +139,13 @@ public static partial class SimpleCommand
             terminals,
             timeout,
             breakAway,
+            keyStore,
         };
         up.SetAction((parse, cancellationToken) => RunAsync(parse, environment, (system, instance) =>
             system.UpAsync(
                 instance,
                 environment.SqlServer,
-                new UpOptions(parse.GetValue(terminals), parse.GetValue(breakAway)),
+                new UpOptions(parse.GetValue(terminals), parse.GetValue(breakAway), StoreOf(parse.GetValue(keyStore))),
                 TimeSpan.FromSeconds(parse.GetValue(timeout)),
                 cancellationToken)));
 
@@ -231,6 +248,10 @@ public static partial class SimpleCommand
 
         return outcome.Write(json, environment.Out, environment.Error);
     }
+
+    /// <summary>The validated value of --server-key-store.</summary>
+    private static ServerKeyStore StoreOf(string? text) =>
+        ServerKey.TryParse(text, out var store) ? store : throw new ArgumentException($"'{text}' is neither User nor Machine.", nameof(text));
 
     public static string ExitCodesOf(string command) => $"Exit codes {string.Join(", ", CommandExitCodes[command])}.";
 

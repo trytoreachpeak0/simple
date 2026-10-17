@@ -234,7 +234,7 @@ public sealed class RemoteRunTests
         var up = await RunAsync(sandbox, machine, "up", "--terminals", "2");
         var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "status", "--json");
 
-        Assert.Equal(["fake simple up --break-away --terminals 2"], Lines(up.Stdout));
+        Assert.Equal(["fake simple up --break-away --server-key-store Machine --terminals 2"], Lines(up.Stdout));
         Assert.True(exitCode == 0, stderr);
         using var output = JsonDocument.Parse(stdout);
         var result = output.RootElement.GetProperty("result");

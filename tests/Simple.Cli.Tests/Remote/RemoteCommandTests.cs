@@ -74,7 +74,39 @@ public sealed class RemoteCommandTests
         var remote = RemotePlan.For("up", ["--terminals", "2"], "unused", json: false);
 
         Assert.False(local.GetValue<bool>(SimpleCommand.BreakAwayOption));
-        Assert.Equal(["up", SimpleCommand.BreakAwayOption, "--terminals", "2"], remote.Arguments.Skip(4));
+        Assert.Equal(["up", SimpleCommand.BreakAwayOption, SimpleCommand.ServerKeyStoreOption, "Machine", "--terminals", "2"], remote.Arguments.Skip(4));
+    }
+
+    [Theory]
+    [InlineData(new[] { "up" }, ServerKeyStore.User)]
+    [InlineData(new[] { "up", "--server-key-store", "Machine" }, ServerKeyStore.Machine)]
+    [InlineData(new[] { "up", "--server-key-store", "user" }, ServerKeyStore.User)]
+    public void TheServerKeyStoreIsUserUnlessMachineIsAskedFor(string[] args, ServerKeyStore expected)
+    {
+        var parse = SimpleCommand.Create(Environment).Parse(args);
+
+        Assert.Empty(parse.Errors);
+        Assert.True(ServerKey.TryParse(parse.GetValue<string>(SimpleCommand.ServerKeyStoreOption), out var store));
+        Assert.Equal(expected, store);
+    }
+
+    [Theory]
+    [InlineData("Both")]
+    [InlineData("1")]
+    [InlineData("")]
+    public void AnyOtherServerKeyStoreIsAnError(string value)
+    {
+        Assert.NotEmpty(SimpleCommand.Create(Environment).Parse(["up", "--server-key-store", value]).Errors);
+    }
+
+    [Theory]
+    [InlineData(ServerKeyStore.User)]
+    [InlineData(ServerKeyStore.Machine)]
+    public void TheServerIsToldWhichKeyStoreToUse(ServerKeyStore store)
+    {
+        var context = new ComponentContext("i", SqlServerTarget.LocalDb, 1, [20000, 20001], new Dictionary<string, IReadOnlyList<int>> { ["mes-gateway"] = [20002] }, "d", store);
+
+        Assert.Contains($"--Simple:OnboardTerminals:ServerKeyStore={store}", Components.Server.Arguments(context));
     }
 
     [Theory]
@@ -85,9 +117,12 @@ public sealed class RemoteCommandTests
     [InlineData("events")]
     [InlineData("logs")]
     [InlineData("forget")]
-    public void NoOtherRemoteCommandAsksToBreakAway(string command)
+    public void NoOtherRemoteCommandAsksToBreakAwayOrForAKeyStore(string command)
     {
-        Assert.DoesNotContain(SimpleCommand.BreakAwayOption, RemotePlan.For(command, [], "unused", json: false).Arguments);
+        var arguments = RemotePlan.For(command, [], "unused", json: false).Arguments;
+
+        Assert.DoesNotContain(SimpleCommand.BreakAwayOption, arguments);
+        Assert.DoesNotContain(SimpleCommand.ServerKeyStoreOption, arguments);
     }
 
     [Fact]

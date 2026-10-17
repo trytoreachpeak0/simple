@@ -138,7 +138,12 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
             await TryAsync(failures, () => SqlServerTarget.DropDatabaseAsync(SqlServer, instance, CancellationToken.None));
             await TryAsync(failures, () =>
             {
-                ServerKey.Delete(Components.ServerKeyName(instance));
+                // Both stores: an up told --server-key-store Machine keeps it there.
+                foreach (var keyStore in Enum.GetValues<ServerKeyStore>())
+                {
+                    ServerKey.Delete(Components.ServerKeyName(instance), keyStore);
+                }
+
                 return Task.CompletedTask;
             });
             await TryAsync(failures, () =>

@@ -83,11 +83,11 @@ public sealed class TerminalSmokeTests
             Assert.Null(left);
         }
 
-        Assert.True(ServerKey.Exists(Components.ServerKeyName(instance)));
+        Assert.True(ServerKey.Exists(Components.ServerKeyName(instance), ServerKeyStore.User));
         var reset = await cli.RunJsonAsync("down", "--reset", "--instance", instance);
         Assert.Equal(ExitCodes.Success, reset.ExitCode);
         Assert.True(reset.Output.GetProperty("result").GetProperty("serverKeyDeleted").GetBoolean());
-        Assert.False(ServerKey.Exists(Components.ServerKeyName(instance)));
+        Assert.False(ServerKey.Exists(Components.ServerKeyName(instance), ServerKeyStore.User));
     }
 
     private static string Url(List<JsonElement> processes, string name) =>

@@ -84,6 +84,78 @@ public sealed class LocalSystemTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(ServerKeyStore.User)]
+    [InlineData(ServerKeyStore.Machine)]
+    public async Task ResetDeletesTheServerKeyOnlyFromTheStoreUpRecorded(ServerKeyStore recorded)
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        store.WriteSqlServer(instance, CliRunner.SqlServer);
+        store.WriteServerKeyStore(instance, recorded);
+        var asked = new List<(string Name, ServerKeyStore Store)>();
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null, deleteServerKey: (name, keyStore) =>
+        {
+            asked.Add((name, keyStore));
+            return true;
+        });
+
+        var outcome = await system.DownAsync(instance, CliRunner.SqlServer, reset: true, Cancel);
+
+        Assert.Equal(ExitCodes.Success, outcome.ExitCode);
+        Assert.Equal([(Components.ServerKeyName(instance), recorded)], asked);
+        Assert.Null(store.ReadServerKeyStore(instance));
+    }
+
+    [Fact]
+    public async Task WithoutARecordResetLooksInBothStores()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        store.WriteSqlServer(instance, CliRunner.SqlServer);
+        var asked = new List<ServerKeyStore>();
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null, deleteServerKey: (_, keyStore) =>
+        {
+            asked.Add(keyStore);
+            return keyStore == ServerKeyStore.Machine;
+        });
+
+        var outcome = await system.DownAsync(instance, CliRunner.SqlServer, reset: true, Cancel);
+
+        Assert.Equal(ExitCodes.Success, outcome.ExitCode);
+        Assert.Equal([ServerKeyStore.User, ServerKeyStore.Machine], asked);
+        Assert.Contains(outcome.Lines, line => line.Contains("from the Machine key store", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AKeyThatCannotBeDeletedFailsResetAndKeepsTheRecord()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        store.WriteSqlServer(instance, CliRunner.SqlServer);
+        store.WriteServerKeyStore(instance, ServerKeyStore.Machine);
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null, deleteServerKey: (_, _) =>
+            throw new System.Security.Cryptography.CryptographicException("Access denied."));
+
+        var outcome = await system.DownAsync(instance, CliRunner.SqlServer, reset: true, Cancel);
+
+        Assert.Equal(ExitCodes.DatabaseFailed, outcome.ExitCode);
+        Assert.Contains("Only an administrator", outcome.Error, StringComparison.Ordinal);
+        Assert.Equal(ServerKeyStore.Machine, store.ReadServerKeyStore(instance));
+    }
+
+    [Fact]
+    public async Task UpRefusesAnotherKeyStoreThanTheInstanceRecorded()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        store.WriteServerKeyStore(instance, ServerKeyStore.Machine);
+        // No clone here: reaching the build would end with exit code 3, not 2.
+        var system = new LocalSystem(Path.Combine(store.Home, "no-clone"), store, TextWriter.Null, (_, _) => Task.FromResult<string?>(null));
+
+        var outcome = await system.UpAsync(instance, CliRunner.SqlServer, new UpOptions(0), TimeSpan.FromSeconds(5), Cancel);
+
+        Assert.Equal(ExitCodes.Usage, outcome.ExitCode);
+        Assert.Contains("down --reset", outcome.Error, StringComparison.Ordinal);
+        Assert.Equal(ServerKeyStore.Machine, store.ReadServerKeyStore(instance));
+    }
+
     private static async Task<int> ExecuteOnMasterAsync(string sql)
     {
         var builder = new SqlConnectionStringBuilder(CliRunner.SqlServer) { InitialCatalog = "master", Pooling = false };

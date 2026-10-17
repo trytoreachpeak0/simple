@@ -37,8 +37,8 @@ public static class ExitCodes
              instance is partly running (up) or was started from another clone (up, down)
           7  another simple command is still working on this instance or building in this clone
           8  a component did not stop within the timeout and was killed (down)
-          9  the SQL Server could not be reached (up, down --reset), or the database could
-             not be dropped (down --reset)
+          9  the SQL Server could not be reached (up, down --reset), or the database or the
+             server key could not be deleted (down --reset)
 
         simple remote ends with the exit code of the command it ran on the remote machine
         (a test run's own codes included), or with one of its own:
