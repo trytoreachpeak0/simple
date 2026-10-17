@@ -8,4 +8,8 @@
     <Content Update="seed.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Simple.Logging\Simple.Logging.csproj" />
+  </ItemGroup>
+
 </Project>

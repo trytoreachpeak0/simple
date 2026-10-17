@@ -17,6 +17,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Reads the components' program logs in the order they were written (simple logs). -->
+    <ProjectReference Include="..\Simple.Logging\Simple.Logging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The remote side of simple remote, copied to the remote machine when it lacks this version. -->
     <EmbeddedResource Include="Remote/agent.ps1" LogicalName="Simple.Cli.Remote.agent.ps1" />
   </ItemGroup>

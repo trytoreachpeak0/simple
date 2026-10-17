@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 
@@ -10,9 +11,36 @@ namespace Simple.FakeRiot.Tests;
 /// needs to start, its control API and its seed. What it answers as RIoT is
 /// tested by Simple.Contracts.Tests.
 /// </summary>
-public sealed class FakeRiotHostTests
+public sealed class FakeRiotHostTests : IDisposable
 {
+    private readonly string logDirectory = Path.Combine(Path.GetTempPath(), "simple-fakeriot-tests", Guid.NewGuid().ToString("N"));
+
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
+
+    public void Dispose()
+    {
+        if (Directory.Exists(logDirectory))
+        {
+            Directory.Delete(logDirectory, recursive: true);
+        }
+    }
+
+    /// <summary>The fake on its shipped settings, logging to this test's own folder.</summary>
+    private WebApplicationFactory<Program> Fake() =>
+        new WebApplicationFactory<Program>().WithWebHostBuilder(host => host.UseSetting("Simple:Logs:Directory", logDirectory));
+
+    /// <summary>Like every SIMPLE program it writes a program log (ADR 0034).</summary>
+    [Fact]
+    public async Task TheFakeWritesAProgramLog()
+    {
+        await using (var factory = Fake())
+        {
+            using var client = factory.CreateClient();
+            using var ready = await client.GetAsync(new Uri("/health/ready", UriKind.Relative), Cancel);
+        }
+
+        Assert.NotEmpty(Simple.Logging.ProgramLog.Files(logDirectory));
+    }
 
     [Theory]
     [InlineData("urls", "http://0.0.0.0:5200")]
@@ -51,7 +79,7 @@ public sealed class FakeRiotHostTests
     [Fact]
     public async Task TheShippedSettingsStartTheFakeAndItIsReady()
     {
-        await using var factory = new WebApplicationFactory<Program>();
+        await using var factory = Fake();
         using var client = factory.CreateClient();
 
         using var ready = await client.GetAsync(new Uri("/health/ready", UriKind.Relative), Cancel);
@@ -62,7 +90,7 @@ public sealed class FakeRiotHostTests
     [Fact]
     public async Task TheControlApiAnswersNotFoundForAnOrderItDoesNotHave()
     {
-        await using var factory = new WebApplicationFactory<Program>();
+        await using var factory = Fake();
         using var client = factory.CreateClient();
 
         using var hang = await client.PostAsync(new Uri("/fake-riot/orders/order-1/hang", UriKind.Relative), content: null, Cancel);

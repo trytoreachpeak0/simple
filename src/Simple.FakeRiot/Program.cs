@@ -1,8 +1,22 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Simple.FakeRiot;
+using Simple.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// The program log (ADR 0034), like every SIMPLE program: a size-limited file
+// under Simple:Logs:Directory (default %ProgramData%\Simple\FakeRiot\logs)
+// and the console, both redacted; unhandled exceptions are recorded too.
+try
+{
+    builder.Logging.AddProgramLog("FakeRiot", builder.Configuration, console: true);
+}
+catch (InvalidDataException e)
+{
+    await Console.Error.WriteLineAsync($"The fake fleet manager refuses to start: {e.Message}");
+    return 2;
+}
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddOptions<FakeRiotSettings>()
@@ -34,13 +48,8 @@ try
 }
 catch (OptionsValidationException e)
 {
-    await Console.Error.WriteLineAsync("The fake fleet manager refuses to start: the configuration is invalid.");
-    foreach (var failure in e.Failures)
-    {
-        await Console.Error.WriteLineAsync($"  - {failure}");
-    }
-
-    return 2;
+    return await ProgramLog.RefuseToStartAsync(
+        "FakeRiot", builder.Configuration, null, "The fake fleet manager refuses to start: the configuration is invalid.", e.Failures.ToList());
 }
 
 /// <summary>The fake's program; public so tests can host it in process.</summary>

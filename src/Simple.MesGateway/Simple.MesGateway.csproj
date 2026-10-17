@@ -9,4 +9,8 @@
     <Content Update="Fake\seed-rows.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Simple.Logging\Simple.Logging.csproj" />
+  </ItemGroup>
+
 </Project>

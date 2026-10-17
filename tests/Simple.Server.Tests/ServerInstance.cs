@@ -50,6 +50,9 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
 
     public StubRiot Riot { get; } = new();
 
+    /// <summary>The server's program log directory (Simple:Logs:Directory), under the temp folder; deleted on dispose.</summary>
+    public string LogDirectory => Path.Combine(Path.GetTempPath(), "simple-server-tests", Instance);
+
     public ServerSettings Database => new() { Instance = Instance, ConnectionString = SqlServer };
 
     public IServiceProvider Services =>
@@ -70,6 +73,7 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
         {
             [ServerSettings.InstanceKey] = Instance,
             [ServerSettings.ConnectionStringKey] = SqlServer,
+            ["Simple:Logs:Directory"] = LogDirectory,
             // Nothing listens there; the stub answers in its place.
             [$"{MesGatewaySettings.Section}:Url"] = "http://127.0.0.1:9",
             [$"{MesGatewaySettings.Section}:PollInterval"] = "00:00:00.1",
@@ -153,6 +157,16 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
                 if (OperatingSystem.IsWindows())
                 {
                     ServerCertificate.Delete(Database.ServerKeyName, TestKeyStore.IsMachine);
+                }
+
+                try
+                {
+                    Directory.Delete(LogDirectory, recursive: true);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    // Best effort: a file just closed can still be held for a moment
+                    // (a virus scan, or a process that has it loaded), and a leftover temp folder does no harm.
                 }
             }
         }

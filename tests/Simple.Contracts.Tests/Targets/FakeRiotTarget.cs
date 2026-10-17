@@ -17,11 +17,13 @@ public sealed class FakeRiotTarget : RiotTarget
     public const string FakePassword = "fake-admin-password";
 
     private readonly WebApplicationFactory<Program> factory;
+    private readonly string logDirectory;
     private readonly RiotSession session;
 
-    private FakeRiotTarget(WebApplicationFactory<Program> factory)
+    private FakeRiotTarget(WebApplicationFactory<Program> factory, string logDirectory)
     {
         this.factory = factory;
+        this.logDirectory = logDirectory;
         session = SessionWith(new RiotOptions { BaseUrl = BaseUrl, CallApiKey = FakeCallApiKey });
         Control = new FakeRiotControl(factory.CreateClient());
     }
@@ -56,8 +58,11 @@ public sealed class FakeRiotTarget : RiotTarget
 
     public static Task<RiotTarget> StartAsync()
     {
+        // The fake's program log goes to a folder of this test's own, not to %ProgramData%.
+        var logDirectory = Path.Combine(Path.GetTempPath(), "simple-contracts-tests", Guid.NewGuid().ToString("N"));
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(host =>
         {
+            host.UseSetting("Simple:Logs:Directory", logDirectory);
             host.UseSetting("FakeRiot:CallApiKey", FakeCallApiKey);
             host.UseSetting("FakeRiot:Username", FakeUsername);
             host.UseSetting("FakeRiot:Password", FakePassword);
@@ -70,7 +75,7 @@ public sealed class FakeRiotTarget : RiotTarget
             host.UseSetting("FakeRiot:Timing:EmergencyLock", "00:00:00.050");
             host.UseSetting("FakeRiot:Timing:EmergencyRelease", "00:00:00.200");
         });
-        return Task.FromResult<RiotTarget>(new FakeRiotTarget(factory));
+        return Task.FromResult<RiotTarget>(new FakeRiotTarget(factory, logDirectory));
     }
 
     public override RiotSession SessionWith(RiotOptions options) => new(options, factory.Server.CreateHandler());
@@ -83,6 +88,13 @@ public sealed class FakeRiotTarget : RiotTarget
     {
         await session.DisposeAsync();
         await factory.DisposeAsync();
+        try
+        {
+            Directory.Delete(logDirectory, recursive: true);
+        }
+        catch (DirectoryNotFoundException)
+        {
+        }
     }
 }
 

@@ -63,6 +63,7 @@ public sealed class CommandLineTests
     [InlineData("events", "--since", "5m")]
     [InlineData("events", "--since", "2026-10-17T09:00:00+08:00")]
     [InlineData("logs", "server", "--tail", "20")]
+    [InlineData("logs", "server", "--output")]
     public void EveryCommandParses(params string[] args)
     {
         Assert.Empty(Parse(args).Errors);
