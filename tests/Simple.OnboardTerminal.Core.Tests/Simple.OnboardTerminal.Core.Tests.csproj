@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Simple.OnboardTerminal.Core\Simple.OnboardTerminal.Core.csproj" />
+    <!-- The terminal reads the IO simulator's module, as it would read the vehicle's. -->
+    <ProjectReference Include="..\..\src\Simple.IoSimulator.Core\Simple.IoSimulator.Core.csproj" />
   </ItemGroup>
 
 </Project>
