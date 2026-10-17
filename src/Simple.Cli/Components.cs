@@ -22,7 +22,7 @@ public static class Components
             Arguments: context =>
             [
                 $"--urls={context.Url()}",
-                "--MesGateway:Source=Fake",
+                "--Simple:Mes:Source=Fake",
             ],
             IsReady: (context, http, cancellationToken) =>
                 Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),

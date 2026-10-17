@@ -37,7 +37,7 @@ public sealed partial class DefaultConfigurationTests
     [InlineData("""{ "Riot": { "BaseUrl": "http://10.20.30.40:8080/api" } }""")]
     [InlineData("""{ "Mes": { "Endpoint": "https://mes.example.com/query" } }""")]
     [InlineData("""{ "Mes": { "Host": "factory01" } }""")]
-    [InlineData("""{ "Urls": "http://10.1.2.3:5190", "MesGateway": { "Source": "Fake" } }""")]
+    [InlineData("""{ "Urls": "http://10.1.2.3:5190", "Simple": { "Mes": { "Source": "Fake" } } }""")]
     [InlineData("""{ "Simple": { "MesGateway": { "Url": "http://factory01:5190" } } }""")]
     [InlineData("""{ "Riot": { "Address": "192.168.1.20:8080" } }""")]
     [InlineData("""{ "ConnectionStrings": { "Simple": "Server=factory01;Integrated Security=true" } }""")]

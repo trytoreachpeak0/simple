@@ -10,7 +10,12 @@ namespace Simple.MesGateway.Configuration;
 /// </summary>
 public sealed class GatewaySettings
 {
-    public const string Section = "MesGateway";
+    /// <summary>
+    /// Under Simple, like the server's settings, so <c>simple up</c> strips
+    /// <c>Simple__*</c> variables from the caller's environment for the
+    /// gateway too and nothing real reaches a local gateway that way.
+    /// </summary>
+    public const string Section = "Simple:Mes";
     public const string FakeSource = "Fake";
 
     /// <summary>Which MES source the gateway reads. <see cref="FakeSource"/> is the only one so far.</summary>

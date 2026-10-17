@@ -137,9 +137,9 @@ public sealed class GatewayApiTests : IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder) =>
             builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["MesGateway:RoundInterval"] = "00:00:00.1",
-                ["MesGateway:RetryDelay"] = "00:00:00.05",
-                ["MesGateway:RetryMaxDelay"] = "00:00:00.2",
+                ["Simple:Mes:RoundInterval"] = "00:00:00.1",
+                ["Simple:Mes:RetryDelay"] = "00:00:00.05",
+                ["Simple:Mes:RetryMaxDelay"] = "00:00:00.2",
             }));
     }
 }

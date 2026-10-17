@@ -102,7 +102,7 @@ dotnet ef migrations add <迁移名> --project src/Simple.Server --output-dir Pe
 
 MES 网关（`src/Simple.MesGateway`）是一个单独的小进程，是整个系统里唯一和 MES 打交道的地方。它按轮读 MES，每一轮的结果整份留在内存里；服务端每隔一段时间来取一次这整份快照。连线方向只有一个：服务端连网关，网关不需要知道服务端在哪。
 
-目前网关只有一个来源：假 MES（`MesGateway:Source=Fake`，也是唯一允许的值）。读真 Oracle 是以后单独的票，要先拿到客户批准的查询。假 MES 从 `Fake/seed-rows.json` 读起始行，那是一个虚构的小厂区（区域号 `S1-1` 这类，任务类型 `SAMPLE_*`），不是 D8 的真实数据。每一行就是上一代主查询的 7 列：`TASK_TYPE, SUBLOT, AREA, EQP, STEP, DATES, PACKAGE`。
+目前网关只有一个来源：假 MES（`Simple:Mes:Source=Fake`，也是唯一允许的值）。读真 Oracle 是以后单独的票，要先拿到客户批准的查询。假 MES 从 `Fake/seed-rows.json` 读起始行，那是一个虚构的小厂区（区域号 `S1-1` 这类，任务类型 `SAMPLE_*`），不是 D8 的真实数据。每一行就是上一代主查询的 7 列：`TASK_TYPE, SUBLOT, AREA, EQP, STEP, DATES, PACKAGE`。
 
 单独运行：
 

@@ -36,13 +36,13 @@ public sealed class GatewaySettingsTests
     [InlineData("urls", "http://*:5190", "urls 'http://*:5190' is not a loopback address")]
     [InlineData("Kestrel:Endpoints:Http:Url", "http://factory01:5190", "Kestrel:Endpoints:Http:Url 'http://factory01:5190' is not a loopback address")]
     [InlineData("http_ports", "5190", "http_ports '5190' listens on every network interface")]
-    [InlineData("MesGateway:Source", "Oracle", "MesGateway:Source 'Oracle' is not a known MES source")]
-    [InlineData("MesGateway:Source", "", "MesGateway:Source '' is not a known MES source")]
-    [InlineData("MesGateway:Fake:SeedFile", "", "MesGateway:Fake:SeedFile is missing")]
-    [InlineData("MesGateway:Fake:SeedFile", "no-such-seed.json", "no-such-seed.json' cannot be read")]
-    [InlineData("MesGateway:RoundInterval", "00:00:00", "MesGateway:RoundInterval must be longer than zero")]
-    [InlineData("MesGateway:RoundInterval", "five seconds", "MesGateway:RoundInterval 'five seconds' is not a duration")]
-    [InlineData("MesGateway:RetryMaxDelay", "00:00:00.5", "MesGateway:RetryMaxDelay must not be shorter than MesGateway:RetryDelay")]
+    [InlineData("Simple:Mes:Source", "Oracle", "Simple:Mes:Source 'Oracle' is not a known MES source")]
+    [InlineData("Simple:Mes:Source", "", "Simple:Mes:Source '' is not a known MES source")]
+    [InlineData("Simple:Mes:Fake:SeedFile", "", "Simple:Mes:Fake:SeedFile is missing")]
+    [InlineData("Simple:Mes:Fake:SeedFile", "no-such-seed.json", "no-such-seed.json' cannot be read")]
+    [InlineData("Simple:Mes:RoundInterval", "00:00:00", "Simple:Mes:RoundInterval must be longer than zero")]
+    [InlineData("Simple:Mes:RoundInterval", "five seconds", "Simple:Mes:RoundInterval 'five seconds' is not a duration")]
+    [InlineData("Simple:Mes:RetryMaxDelay", "00:00:00.5", "Simple:Mes:RetryMaxDelay must not be shorter than Simple:Mes:RetryDelay")]
     public void AnInvalidSettingIsNamed(string key, string value, string message)
     {
         var failures = Check((key, value));
@@ -53,7 +53,7 @@ public sealed class GatewaySettingsTests
     /// <summary>Runs the real gateway executable, as a person would, and reads what it says.</summary>
     [Theory]
     [InlineData("--urls=http://0.0.0.0:5190", "urls 'http://0.0.0.0:5190' is not a loopback address")]
-    [InlineData("--MesGateway:Source=Oracle", "MesGateway:Source 'Oracle' is not a known MES source")]
+    [InlineData("--Simple:Mes:Source=Oracle", "Simple:Mes:Source 'Oracle' is not a known MES source")]
     [InlineData("--Simple:SettingsFile=no-such-settings.json", "Simple:SettingsFile")]
     public async Task TheGatewayRefusesToStartAndNamesTheSetting(string argument, string message)
     {
