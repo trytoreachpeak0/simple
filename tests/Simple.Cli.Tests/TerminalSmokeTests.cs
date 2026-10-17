@@ -25,7 +25,10 @@ public sealed class TerminalSmokeTests
         var up = await cli.RunJsonAsync("up", "--instance", instance, "--terminals", "3");
         Assert.True(up.ExitCode == ExitCodes.Success, $"up exited with {up.ExitCode}: {up.Output}{Environment.NewLine}{up.Error}");
         var processes = up.Output.GetProperty("result").GetProperty("processes").EnumerateArray().ToList();
-        Assert.Equal(["server", "terminal-1", "terminal-2", "terminal-3"], processes.Select(p => p.GetProperty("name").GetString()));
+        // Other components (the MES gateway) come up too; this test is about the server and its terminals.
+        var names = processes.Select(p => p.GetProperty("name").GetString()).ToList();
+        Assert.Contains("server", names);
+        Assert.Equal(["terminal-1", "terminal-2", "terminal-3"], names.Where(n => n!.StartsWith("terminal", StringComparison.Ordinal)));
         // Pid and start time: after down, a pid alone could match a later process.
         var started = processes.Select(p => p.GetProperty("pid").GetInt32()).ToDictionary(pid => pid, StartTime);
 
