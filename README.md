@@ -15,11 +15,13 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 | `src/Simple.Server.Console` | 服务端控制台界面，随服务端进程运行 |
 | `src/Simple.Server.Riot` | 车队调度平台 RIoT 的适配 |
 | `src/Simple.OnboardTerminal` | 车载终端（WPF 界面外壳） |
-| `src/Simple.OnboardTerminal.Core` | 车载终端的核心，不依赖 WPF：连接服务端、收发消息、车旁操作 |
+| `src/Simple.OnboardTerminal.Core` | 车载终端的核心，不依赖 WPF：连接服务端、收发消息、车旁操作、读 IO 模块 |
 | `src/Simple.OnboardTerminal.Headless` | 无界面的车载终端，本机整套系统、测试和 CI 用它 |
 | `src/Simple.MesGateway` | MES 网关，独立的小进程 |
 | `src/Simple.FakeRiot` | 假 RIoT：只在回环地址上监听，按真实 RIoT 的样子回答 SIMPLE 用到的那部分接口，给本机整套系统、测试和 CI 用；它必须先通过 `Simple.Contracts.Tests` |
-| `src/Simple.IoSimulator` | 车上 IO 模块的模拟器 |
+| `src/Simple.IoSimulator` | 车上 IO 模块的模拟器（WPF 界面外壳，界面还没做） |
+| `src/Simple.IoSimulator.Core` | IO 模拟器的核心，不依赖 WPF：料柜物理模型、IO 模块的 Modbus TCP 服务端（FluentModbus）、通信故障、自动应答 |
+| `src/Simple.IoSimulator.Headless` | 无界面的 IO 模拟器，本机整套系统、测试和 CI 用它；Modbus 和控制接口都只听回环地址 |
 | `src/Simple.Protocol` | 服务端与车载终端之间的协议契约 |
 | `src/Simple.Logging` | 各程序共用的程序日志：写本机文件、限大小、脱敏、记下没接住的异常 |
 | `src/Simple.Cli` | `simple` 命令行：在本机一条命令起停整套系统、查看状态、事件和日志 |
@@ -89,7 +91,7 @@ dotnet test --solution simple.slnx
 
 从别的 shell 调用写成 `pwsh -File <clone>/simple.ps1 up`。每个命令都接受 `--json`：标准输出上只有一个 JSON 对象 `{exitCode, error, result}`，进度提示写在标准错误上。退出码是固定的，`./simple --help` 列出全表：0 成功；1 意外错误；`down` 之后仍有进程在跑；或进程停后程序目录里仍有文件被占用（`up`、`down`，state 文件保留，再跑一次即可）；2 参数或设置不对；3 编译失败；4 有部件没就绪（已起的会被停掉）；5 实例没在运行（`logs`：没有这份日志，或还没有程序日志）；6 实例不健康、只起了一半，或是从另一个 clone 起的；7 另一条 simple 命令正在操作这个实例；8 有进程超时没停下、被强杀；9 连不上 SQL Server，或删库、删服务端钥匙失败。
 
-目前系统里有四种部件，按这个顺序起：假 RIoT、MES 网关（背后接假 MES）、服务端（启动参数里带上假 RIoT 和网关的地址）、无界面车载终端（`--terminals N` 个，默认 0）。`simple status` 除了列出每个进程，还有一行写服务端最近从网关看到了什么（网关通不通、最近一轮是第几轮、几点读的、多少行），一行写服务端连不连得上 RIoT，以及服务端看到的每台车载终端。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪，以及起之前要准备什么；以后加 IO 模拟器，也是往这里加一项。部件按登记的顺序一个一个起，前一个全部就绪才起下一个，因为后面的部件可能要用前面的：服务端第一次去网关取数时网关已经在了，车载终端要先从服务端的状态接口读到证书指纹。
+目前系统里有五种部件，按这个顺序起：假 RIoT、MES 网关（背后接假 MES）、服务端（启动参数里带上假 RIoT 和网关的地址）、IO 模拟器（每个车载终端配一个）、无界面车载终端（`--terminals N` 个，默认 0）。`simple status` 除了列出每个进程，还有一行写服务端最近从网关看到了什么（网关通不通、最近一轮是第几轮、几点读的、多少行），一行写服务端连不连得上 RIoT，以及服务端看到的每台车载终端。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪，以及起之前要准备什么；以后加部件，也是往这里加一项。部件按登记的顺序一个一个起，前一个全部就绪才起下一个，因为后面的部件可能要用前面的：服务端第一次去网关取数时网关已经在了，车载终端要先从服务端的状态接口读到证书指纹。
 
 - **实例**：不写 `--instance` 时，实例名取 clone 所在文件夹的名字（例如 `29-simple-cli`），所以两个 worktree 各起一套互不干扰。库名是 `Simple_<实例名>`；端口按实例名在 20000～29999 之间选一段，被占用就往后挪，同一个实例每次拿到的端口一般不变。
 - **起**：`up` 先 `dotnet build` 各部件的项目，再把编译输出复制到 `artifacts/simple/<实例名>/` 下运行，所以系统起着的时候照样可以重新编译、跑测试，不会碰到文件被占用。部件是独立的进程，命令行返回后它们继续运行；每个进程都被告知自己的程序日志目录（`--Simple:Logs:Directory`，见"程序日志"一节），打到控制台上的输出另外写进一个文件。重复执行 `up` 不会起第二套。
@@ -102,9 +104,15 @@ dotnet test --solution simple.slnx
   - `POST /test/press`，正文 `{"button": "<按钮名>"}`：按屏上的一个按钮；
   - `GET /test/status`：连接状态和屏上文字；`GET /test/ready`：连着时 200。
   - 终端没连上服务端时，扫码和按键都返回 409 并被丢掉，和车上真屏一样。
+- **IO 模拟器**：`io-simulator-1`、`io-simulator-2`…和车载终端一一配对，`terminal-n` 经 Modbus TCP 读 `io-simulator-n`（`up` 把模拟器的 Modbus 地址写进终端的 `terminal.json`，字段 `ioModule`）。模拟的是车上那块 C2000 IO 模块加 8 仓料柜：只认 Unit ID 255，16 路输出（线圈地址 100 起）、16 路输入（离散量地址 200 起）；第 n 仓的开锁是输出 n，锁反馈是输入 n（锁上为 1），光幕是输入 n+8（有货为 0）。开锁输出按脉冲模式 500 ms 后自己回到 0，门随即弹开，100 ms 后锁反馈变开；关门 100 ms 后锁反馈变锁上；放货、取货 50 ms 后光幕翻转。车载终端每 200 ms 读一次全部 32 个点，把原始值、本次启动以来变了几次、距上次变化多久、能不能读到模块填进上报；`./simple status` 在每台终端下面多一行，列出它报的输入和输出。模拟器的控制接口就是 `status` 里该进程的 URL，只听回环地址，用来代替仓前的人和故障：
+  - `GET /api/v1/state`：16 路输出、16 路输入的原始值（从通道 1 起），每仓的门、货和被固定的传感器，当前通信故障，自动应答的进度；
+  - `POST /api/v1/slots/{n}/load`、`/unload`、`/close`：放货、取货、关门；门关着时放货取货返回 409 `door-not-open`。没有开门、开锁的接口：门只有车载终端写开锁输出才会开；
+  - `PUT /api/v1/slots/{n}/lock-feedback`、`/light-curtain`，正文 `{"value": 0}`、`{"value": 1}` 或 `{"value": null}`：把锁反馈或光幕固定成某个读数，不管门和货实际怎样，`null` 取消；
+  - `PUT /api/v1/modbus-fault`，正文 `{"mode": "no-response"}`、`{"mode": "disconnect"}`、`{"mode": "delay", "delayMs": 300}` 或 `{"mode": "none"}`：通信故障，分别是连着但不回应、断开并拒绝新连接、每个请求晚回、恢复；
+  - `POST /api/v1/auto-responder`，正文例如 `{"action": "load", "doors": 3, "actSeconds": 4, "closeSeconds": 4, "withinSeconds": 300}`：接下来开的 3 扇门，每扇开后 4 秒放一件货（`unload` 则取一件），再过 4 秒关门。门在动作前被人关了、往有货的仓放、从空仓取、到期没处理完，都算失败并停下；`POST /api/v1/auto-responder/wait?timeoutSeconds=60` 一直等到做完才返回 200，失败、被取消或等到超时都返回 409，并带上原因，脚本和场景据此判成败。`GET` 看进度，`DELETE` 停下。
 - **服务端钥匙**：本实例服务端的证书钥匙放在当前 Windows 用户的密钥存储里，名字是 `Simple-Server-<实例名>`。`down` 不动它，下次 `up` 指纹不变；`down --reset` 连库一起删掉它。`up` 把钥匙放在哪个存储记在实例目录的 `serverkey.txt` 里，`down --reset` 只按这份记录去删；没有记录时两种存储都查，删掉存在的那一把；删不掉就以退出码 9 报错并保留记录，下次还能再删。
 
-`Simple.Cli.Tests` 里的冒烟测试经编译好的命令行真起真停随机名字的实例：两套只有服务端的实例互不干扰；一套带 3 个车载终端的实例里，终端上报新鲜、经测试输入扫的码进了事件记录、被杀掉的终端 10 秒内记成上报过期、`down` 后不留进程。`dotnet test` 时随其他测试一起跑，CI 上也跑。
+`Simple.Cli.Tests` 里的冒烟测试经编译好的命令行真起真停随机名字的实例：两套只有服务端的实例互不干扰；一套带 3 个车载终端的实例里，终端上报新鲜、经测试输入扫的码进了事件记录、被杀掉的终端 10 秒内记成上报过期、`down` 后不留进程；一套带 2 个车载终端的实例里，服务端看到的每台终端的 16 路输入与它配对的模拟器一致，经控制接口固定一个光幕 2 秒内传到服务端、变化次数加 1，让模拟器不回应后 10 秒内终端报读不到 IO 模块、服务端记下 `onboard.io-unreadable`。`dotnet test` 时随其他测试一起跑，CI 上也跑。
 
 ## 把重活送到远端机器上跑
 
@@ -142,7 +150,7 @@ dotnet test --solution simple.slnx
 
 服务端、MES 网关、车载终端（WPF 外壳和无界面版）、IO 模拟器、假 RIoT 都用 Serilog 写程序日志（ADR 0034），接在 `Microsoft.Extensions.Logging` 后面，代码里照常用 `ILogger`。程序日志是程序自己的调试记录，不是事件记录：统计和"谁按了什么"仍然只查事件记录（ADR 0019）。
 
-- **写在哪**：本机的 `<目录>\<程序>.log`，满了另起 `<程序>_001.log`、`<程序>_002.log`……，超过保留个数就删最旧的。目录默认是 `%ProgramData%\Simple\<程序>\logs`（程序是 `Server`、`MesGateway`、`OnboardTerminal`、`IoSimulator`），每个文件默认 10 MB、保留 10 个，所以一个程序最多约占 100 MB。三项都能改：`Simple:Logs:Directory`、`Simple:Logs:FileSizeLimitBytes`、`Simple:Logs:RetainedFileCount`。服务端和 MES 网关和其他设置一样读（命令行、环境变量、`Simple:SettingsFile`）；车载终端和 IO 模拟器只从命令行读，例如 `--Simple:Logs:Directory=D:\logs`。一个文件写到上限时，正在写的那一条仍然完整写完。同一台机器上同一个程序跑两份时（例如上面"再起一套"服务端），给它们不同的目录，否则两份日志会交错在同一组文件里；`simple up` 已经给每个进程单独一个目录。
+- **写在哪**：本机的 `<目录>\<程序>.log`，满了另起 `<程序>_001.log`、`<程序>_002.log`……，超过保留个数就删最旧的。目录默认是 `%ProgramData%\Simple\<程序>\logs`（程序是 `Server`、`MesGateway`、`OnboardTerminal`、`IoSimulator`），每个文件默认 10 MB、保留 10 个，所以一个程序最多约占 100 MB。三项都能改：`Simple:Logs:Directory`、`Simple:Logs:FileSizeLimitBytes`、`Simple:Logs:RetainedFileCount`。服务端和 MES 网关和其他设置一样读（命令行、环境变量、`Simple:SettingsFile`）；车载终端和 IO 模拟器的界面版只从命令行读，例如 `--Simple:Logs:Directory=D:\logs`；无界面的 IO 模拟器和假 RIoT 一样读（命令行、环境变量、`appsettings.json`）。一个文件写到上限时，正在写的那一条仍然完整写完。同一台机器上同一个程序跑两份时（例如上面"再起一套"服务端），给它们不同的目录，否则两份日志会交错在同一组文件里；`simple up` 已经给每个进程单独一个目录。
 - **每次启动的第一行**：`<程序> started (version …, process …)`，即使程序别的什么都没说，也能从日志里看出它起过几次、是哪个版本。
 - **凭据不进日志**：脱敏在日志这一层统一做，控制台输出和文件都经过它。属性名表明是凭据的值（名字里含 `Password`、`Token`、`Secret`、`ApiKey`、`PairingCode` 等，或以 `Key` 结尾，例如 `SigningKey`；`ServerKeyName` 这种中间带 Key 的不算）整个换成 `***`。文字里的凭据只去掉值、保留名字：连接串的 `Password=`/`Pwd=`（带引号 `"a""b"`、ODBC 大括号 `{a;b}` 的整体去掉）、`--Simple:...:Password=x` 和 `--Simple:...:Password x`、查询串的 `api_key=`、JSON 的 `"password": "…"`、对象里的 `Password = …`、网址里的 `user:密码@`（密码里有没转义的 `@` 也一样）、`Authorization:` 后面的凭据（不论 Bearer、Basic、Token、ApiKey 哪种方案）、`Cookie:`/`Set-Cookie:` 的整个值、JWT、PEM 私钥（缺了 END 行的从 BEGIN 去到结尾）、GitHub 令牌、"配对码 123456"。异常的消息和内层异常也一样。值在连接串里取到下一个 `;`（可以含空格），在别处取到空格或 `&`、`,`、`;`、`)` 这类分隔符为止，所以 `password=x&user=y` 只去掉 `x`。配对码只在写明是配对码时去掉，不按"像不像 6 位数"去猜：批次号、机台号、站点号常常就是一串数字，要在日志里照常看得到；单独的 `Basic`、`Bearer` 后面跟的是普通单词时也不去掉。宁可多去掉一点：被去掉一个无害的值，这行日志照样能用；漏一个凭据就不行。
 - **不拖慢写日志的线程**：脱敏在写日志的那个线程上做（WPF 外壳里就是界面线程），所以每条规则都只从词首起匹配，耗时随文字长度线性增长，不会因为一个长值卡上几分钟。常见的 1 MB 长串在 1 秒左右做完；最费时的形状（例如 1 MB 的 `a=a=a=…`，每处都要查一次名字）在 1.5 秒左右。每条规则各有 1 秒的时限，所以一条日志最坏要等"规则条数 × 1 秒"；超时的那条日志，正文整段换成 `*** (not shown: redacting it took too long)`，宁可看不到也不漏。脱敏本身出了别的错时，正文换成 `*** (not shown: the log line could not be redacted)`，这一行照样写出、不和下一行粘在一起。

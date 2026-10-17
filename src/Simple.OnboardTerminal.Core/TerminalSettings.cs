@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using Simple.Protocol;
 
@@ -5,11 +6,17 @@ namespace Simple.OnboardTerminal.Core;
 
 /// <summary>
 /// What an onboard terminal keeps on disk (ADR 0024): which vehicle it is on,
-/// where its server is, and the pin of the server's certificate. A JSON file
-/// outside the repository, for example
-/// <c>{"vehicleId": "vehicle-1", "server": "https://127.0.0.1:5181", "serverCertificatePin": "&lt;64 hex digits&gt;"}</c>.
+/// where its server is, the pin of the server's certificate, and where the
+/// vehicle's IO module is. A JSON file outside the repository, for example
+/// <c>{"vehicleId": "vehicle-1", "server": "https://127.0.0.1:5181", "serverCertificatePin": "&lt;64 hex digits&gt;", "ioModule": "127.0.0.1:1502"}</c>.
 /// </summary>
-public sealed record TerminalSettings(string? VehicleId, string Server, string? ServerCertificatePin)
+/// <param name="IoModule">
+/// The IO module's address and port. ADR 0024 left open whether the terminal
+/// keeps it or the server sends it with the vehicle list; the terminal keeps
+/// it, next to the server's address (#70). Without it the terminal reads no
+/// IO module and reports that it cannot.
+/// </param>
+public sealed record TerminalSettings(string? VehicleId, string Server, string? ServerCertificatePin, string? IoModule = null)
 {
     /// <summary>Where the server is when the file does not say: this machine.</summary>
     public const string DefaultServer = "https://127.0.0.1:5181";
@@ -22,17 +29,20 @@ public sealed record TerminalSettings(string? VehicleId, string Server, string? 
 
     public Uri ServerUri => new(Server);
 
+    /// <summary>The IO module's endpoint; null when none is configured.</summary>
+    public IPEndPoint? IoModuleEndpoint => IoModule is { Length: > 0 } module ? IPEndPoint.Parse(module) : null;
+
     public static TerminalSettings Load(string path)
     {
         var file = JsonSerializer.Deserialize<File>(System.IO.File.ReadAllText(path), JsonOptions)
             ?? throw new InvalidDataException($"{path} is empty.");
-        return new TerminalSettings(file.VehicleId, file.Server is { Length: > 0 } server ? server : DefaultServer, file.ServerCertificatePin);
+        return new TerminalSettings(file.VehicleId, file.Server is { Length: > 0 } server ? server : DefaultServer, file.ServerCertificatePin, file.IoModule);
     }
 
     public void Save(string path)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        System.IO.File.WriteAllText(path, JsonSerializer.Serialize(new File(VehicleId, Server, ServerCertificatePin), JsonOptions));
+        System.IO.File.WriteAllText(path, JsonSerializer.Serialize(new File(VehicleId, Server, ServerCertificatePin, IoModule), JsonOptions));
     }
 
     /// <summary>What keeps the terminal from starting, one line each; empty when nothing does.</summary>
@@ -56,8 +66,13 @@ public sealed record TerminalSettings(string? VehicleId, string Server, string? 
                 + "the server's status (GET /api/v1/status, onboardTerminalEndpoint.certificatePin) shows it.");
         }
 
+        if (IoModule is { Length: > 0 } module && (!IPEndPoint.TryParse(module, out var endpoint) || endpoint.Port == 0))
+        {
+            problems.Add($"ioModule '{module}' is not an IP address and port, for example 192.168.71.150:502.");
+        }
+
         return problems;
     }
 
-    private sealed record File(string? VehicleId, string? Server, string? ServerCertificatePin);
+    private sealed record File(string? VehicleId, string? Server, string? ServerCertificatePin, string? IoModule);
 }

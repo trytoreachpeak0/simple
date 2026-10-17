@@ -6,8 +6,9 @@ namespace Simple.Cli;
 
 /// <summary>
 /// Writes a local onboard terminal's own settings file, as an installer would
-/// on a vehicle PC: the vehicle it is on, and where its server is and which
-/// certificate pin to trust, both read from the running server's status.
+/// on a vehicle PC: the vehicle it is on, where its server is and which
+/// certificate pin to trust, both read from the running server's status, and
+/// its IO module: the io-simulator with the same number.
 /// </summary>
 public static class OnboardTerminalSettings
 {
@@ -34,8 +35,17 @@ public static class OnboardTerminalSettings
             VehicleId = VehicleId(context.Index),
             Server = endpoint.GetProperty("url").GetString(),
             ServerCertificatePin = endpoint.GetProperty("certificatePin").GetString(),
+            IoModule = $"127.0.0.1:{IoSimulatorPorts(context)[Components.IoSimulatorModbusPort].ToString(CultureInfo.InvariantCulture)}",
         };
         await File.WriteAllTextAsync(
             Path.Combine(context.Directory, "terminal.json"), JsonSerializer.Serialize(settings, JsonOptions), cancellationToken);
+    }
+
+    /// <summary>The ports of the io-simulator paired with this terminal: as many simulators run as terminals, numbered alike.</summary>
+    private static IReadOnlyList<int> IoSimulatorPorts(ComponentContext context)
+    {
+        var name = Components.IoSimulator.Name;
+        var count = context.PortsOf.Keys.Count(k => k == name || k.StartsWith(name + "-", StringComparison.Ordinal));
+        return context.PortsOf[Components.ProcessNames(Components.IoSimulator, count).ElementAt(context.Index - 1)];
     }
 }

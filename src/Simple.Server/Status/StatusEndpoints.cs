@@ -54,6 +54,7 @@ public sealed record OnboardTerminalEndpointStatus(string Url, string Certificat
 /// <param name="Stale">Its freshest report is older than ten seconds, or none was fresh within ten seconds of its first report.</param>
 /// <param name="IoModuleReadable">Whether it reported that it can read its IO module.</param>
 /// <param name="ScreenText">The screen text of the latest desired state sent to it.</param>
+/// <param name="Io">The raw IO points of its latest report.</param>
 public sealed record OnboardTerminalStatus(
     string VehicleId,
     string TerminalVersion,
@@ -62,4 +63,24 @@ public sealed record OnboardTerminalStatus(
     double? FreshReportAgeSeconds,
     bool Stale,
     bool IoModuleReadable,
-    string? ScreenText);
+    string? ScreenText,
+    OnboardIoStatus Io);
+
+/// <summary>
+/// A terminal's IO module as its latest report gave it (ADR 0024): raw
+/// values, not yet read through the vehicle's IO point map. Ages are on the
+/// terminal's clock, as of when it wrote that report.
+/// </summary>
+/// <param name="ReadAgeMs">How long before the report the module was last read successfully; null when it has not been since the terminal started.</param>
+/// <param name="Inputs">DI1, DI2… as reported.</param>
+/// <param name="Outputs">DO1, DO2… as reported.</param>
+public sealed record OnboardIoStatus(ulong? ReadAgeMs, IReadOnlyList<OnboardIoPointStatus> Inputs, IReadOnlyList<OnboardIoPointStatus> Outputs)
+{
+    public static OnboardIoStatus None { get; } = new(null, [], []);
+}
+
+/// <param name="Number">The module's channel, from 1.</param>
+/// <param name="Value">The raw value, 0 or 1.</param>
+/// <param name="Changes">How often it changed since the terminal started.</param>
+/// <param name="MsSinceChange">How long before the report it last changed, or, if it never did, was first read.</param>
+public sealed record OnboardIoPointStatus(int Number, int Value, ulong Changes, ulong MsSinceChange);

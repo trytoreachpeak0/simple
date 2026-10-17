@@ -54,6 +54,16 @@ public static class EventTypes
     /// <summary>A stream was refused, for example for a protocol major the server does not serve (ADR 0026).</summary>
     public const string OnboardRefused = "onboard.refused";
 
+    /// <summary>
+    /// A terminal reports that it cannot read its IO module: in its first
+    /// report, or after it could. Recorded only, not acted on yet (ADR 0025:
+    /// no decision rests on onboard reports until terminals are paired).
+    /// </summary>
+    public const string OnboardIoUnreadable = "onboard.io-unreadable";
+
+    /// <summary>A terminal that reported it could not read its IO module reports that it can again.</summary>
+    public const string OnboardIoReadable = "onboard.io-readable";
+
     /// <summary>A person at the vehicle scanned or pressed a button. Recorded only, not acted on yet.</summary>
     public const string OnboardInputReceived = "onboard.input-received";
 }

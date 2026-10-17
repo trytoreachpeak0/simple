@@ -1,5 +1,9 @@
 using System.Collections.Concurrent;
+using System.Net;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Simple.IoSimulator.Core;
+using Simple.Protocol.V1;
 
 namespace Simple.OnboardTerminal.Core.Tests;
 
@@ -127,6 +131,44 @@ public sealed class TerminalConnectionTests
         Assert.InRange(server.MajorsAsked.Count, 1, 5);
     }
 
+    [Fact]
+    public async Task EveryReportCarriesTheIoModulesRawValuesAndAChangeGoesOutAtOnce()
+    {
+        using var cabinet = new Cabinet(TimeProvider.System, CabinetTiming.Default);
+        using var module = IoModuleServer.Start(cabinet, new IPEndPoint(IPAddress.Loopback, 0), NullLoggerFactory.Instance);
+        await using var server = new FakeServer();
+        await server.StartAsync();
+        await using var terminal = new Terminal(server.Url, server.Pin, ioModule: module.Endpoint);
+
+        await Until(() => server.Reports.Any(r => r.IoModuleReadable));
+        var report = server.Reports.Last();
+        Assert.Equal(32, report.IoPoints.Count);
+        Assert.Equal(16, report.IoPoints.Count(p => p.Kind == IoPointKind.Input && p.Value));
+        Assert.True(report.HasIoReadAgeMs);
+        Assert.InRange(report.IoReadAgeMs, 0UL, 1000UL);
+
+        // Slot 2's light curtain (DI10) reads cargo: a report says so within
+        // 2 s. That the change itself wakes a report is IoModuleReaderTests'
+        // to show: this fake server's states wake one every 200 ms anyway.
+        var before = server.Reports.Count;
+        cabinet.PinLightCurtain(2, false);
+        await Until(() => server.Reports.Skip(before).Any(r => r.IoPoints.Any(p => p is { Kind: IoPointKind.Input, Number: 10, Value: false, Changes: 1 })), seconds: 2);
+    }
+
+    [Fact]
+    public async Task WithoutAnIoModuleTheReportsSayItCannotBeRead()
+    {
+        await using var server = new FakeServer();
+        await server.StartAsync();
+        await using var terminal = new Terminal(server.Url, server.Pin);
+
+        await Until(() => server.Reports.Count >= 2);
+
+        Assert.All(server.Reports, r => Assert.False(r.IoModuleReadable));
+        Assert.All(server.Reports, r => Assert.Empty(r.IoPoints));
+        Assert.All(server.Reports, r => Assert.False(r.HasIoReadAgeMs));
+    }
+
     private static async Task Until(Func<bool> condition, double seconds = 10)
     {
         var deadline = DateTime.UtcNow.AddSeconds(seconds);
@@ -143,12 +185,18 @@ public sealed class TerminalConnectionTests
         private readonly CancellationTokenSource stop = new();
         private readonly ILoggerFactory loggers;
 
-        public Terminal(string url, string pin, TimeProvider? time = null)
+        public Terminal(string url, string pin, TimeProvider? time = null, IPEndPoint? ioModule = null)
         {
             loggers = LoggerFactory.Create(logging => logging.AddProvider(new ListLogger(Log)));
-            Connection = new TerminalConnection(new TerminalSettings("vehicle-7", url, pin), Inputs, time ?? TimeProvider.System, loggers);
+            Io = new IoModuleReader(ioModule, TimeProvider.System, loggers);
+            Connection = new TerminalConnection(new TerminalSettings("vehicle-7", url, pin), Inputs, time ?? TimeProvider.System, loggers, io: Io);
+            Reading = Io.RunAsync(stop.Token);
             Running = Connection.RunAsync(stop.Token);
         }
+
+        public IoModuleReader Io { get; }
+
+        public Task Reading { get; }
 
         public Task Running { get; }
 
@@ -164,7 +212,9 @@ public sealed class TerminalConnectionTests
         {
             await stop.CancelAsync();
             await Running;
+            await Reading;
             Connection.Dispose();
+            Io.Dispose();
             loggers.Dispose();
             stop.Dispose();
         }

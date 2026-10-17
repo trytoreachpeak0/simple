@@ -5,6 +5,7 @@ using Microsoft.Extensions.Time.Testing;
 using Simple.Protocol.V1;
 using Simple.Server.Events;
 using Simple.Server.OnboardTerminals;
+using Simple.Server.Status;
 
 namespace Simple.Server.Tests;
 
@@ -80,6 +81,8 @@ public sealed class OnboardTerminalRegistryTests
         Assert.Equal(
             [
                 EventTypes.OnboardConnected,
+                // Its reports never say the IO module can be read.
+                EventTypes.OnboardIoUnreadable,
                 // The first input was too long and the last two over the count: inputs 2 to 16.
                 .. Enumerable.Repeat(EventTypes.OnboardInputReceived, OnboardTerminalRegistry.MaxInputsPerReport - 1),
                 EventTypes.OnboardStale,
@@ -87,5 +90,75 @@ public sealed class OnboardTerminalRegistryTests
                 EventTypes.OnboardDisconnected,
             ],
             types);
+    }
+
+    [Fact]
+    public void TheLatestReportsIoPointsAreListedByKindAndNumberAsRawValues()
+    {
+        using var registry = Registry(new FakeTimeProvider(Start));
+        using var link = registry.Open("test");
+        var report = Report(1, 0);
+        report.IoModuleReadable = true;
+        report.IoReadAgeMs = 120;
+        report.IoPoints.Add(new IoPoint { Kind = IoPointKind.Output, Number = 1, Value = false, Changes = 0, MsSinceChange = 9000 });
+        report.IoPoints.Add(new IoPoint { Kind = IoPointKind.Input, Number = 2, Value = true, Changes = 0, MsSinceChange = 9000 });
+        report.IoPoints.Add(new IoPoint { Kind = IoPointKind.Input, Number = 1, Value = false, Changes = 3, MsSinceChange = 250 });
+
+        Assert.Null(registry.Receive(link, report));
+
+        var io = Assert.Single(registry.Snapshot()).Io;
+        Assert.Equal(120UL, io.ReadAgeMs);
+        Assert.Equal([new OnboardIoPointStatus(1, 0, 3, 250), new OnboardIoPointStatus(2, 1, 0, 9000)], io.Inputs);
+        Assert.Equal([new OnboardIoPointStatus(1, 0, 0, 9000)], io.Outputs);
+
+        var later = Report(2, 0);
+        Assert.Null(registry.Receive(link, later));
+        var none = Assert.Single(registry.Snapshot()).Io;
+        Assert.Null(none.ReadAgeMs);
+        Assert.Empty(none.Inputs);
+    }
+
+    [Fact]
+    public void IoPointsTheServerCannotUseAreSkipped()
+    {
+        using var registry = Registry(new FakeTimeProvider(Start));
+        using var link = registry.Open("test");
+        var report = Report(1, 0);
+        report.IoPoints.Add(new IoPoint { Kind = IoPointKind.Unspecified, Number = 1 });
+        report.IoPoints.Add(new IoPoint { Kind = IoPointKind.Input, Number = 0 });
+        report.IoPoints.Add(new IoPoint { Kind = IoPointKind.Input, Number = OnboardTerminalRegistry.MaxIoPointNumber + 1 });
+        report.IoPoints.Add(Enumerable.Range(1, OnboardTerminalRegistry.MaxIoPointsPerReport + 1)
+            .Select(i => new IoPoint { Kind = IoPointKind.Output, Number = (uint)((i % OnboardTerminalRegistry.MaxIoPointNumber) + 1) }));
+
+        Assert.Null(registry.Receive(link, report));
+
+        var io = Assert.Single(registry.Snapshot()).Io;
+        Assert.Empty(io.Inputs);
+        Assert.InRange(io.Outputs.Count, 1, OnboardTerminalRegistry.MaxIoPointsPerReport);
+    }
+
+    [Fact]
+    public async Task AnIoModuleTurningUnreadableOrReadableAgainIsRecorded()
+    {
+        var time = new FakeTimeProvider(Start);
+        await using var server = new ServerInstance();
+        using var _ = server.Start();
+        using var registry = new OnboardTerminalRegistry(
+            time, server.Services.GetRequiredService<IServiceScopeFactory>(), NullLogger<OnboardTerminalRegistry>.Instance);
+        using var link = registry.Open("test");
+
+        // Unreadable from the first report, readable, readable, unreadable.
+        foreach (var (seq, readable) in new[] { (1UL, false), (2UL, true), (3UL, true), (4UL, false) })
+        {
+            var report = Report(seq, 0);
+            report.IoModuleReadable = readable;
+            Assert.Null(registry.Receive(link, report));
+        }
+
+        await registry.FlushAsync(TestContext.Current.CancellationToken);
+
+        await using var db = server.CreateDbContext();
+        var types = await db.Events.Where(e => e.Type.StartsWith("onboard.io-")).OrderBy(e => e.Id).Select(e => e.Type).ToListAsync(TestContext.Current.CancellationToken);
+        Assert.Equal([EventTypes.OnboardIoUnreadable, EventTypes.OnboardIoReadable, EventTypes.OnboardIoUnreadable], types);
     }
 }
