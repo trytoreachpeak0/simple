@@ -26,7 +26,10 @@ public static class ProgramLog
 
     public const int DefaultRetainedFileCount = 10;
 
-    private const string Template = "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}";
+    // A line is the prefix, then the body; only the body is redacted (RedactingFormatter).
+    private const string Prefix = "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext}: ";
+
+    private const string Body = "{Message:lj}{NewLine}{Exception}";
 
     /// <summary>Where <paramref name="program"/> logs when its settings do not say: <c>%ProgramData%\Simple\&lt;program&gt;\logs</c>.</summary>
     public static string DefaultDirectory(string program) =>
@@ -68,7 +71,9 @@ public static class ProgramLog
     public static ProgramLogProvider CreateProvider(string program, ProgramLogSettings settings, bool console)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        var formatter = new RedactingFormatter(new MessageTemplateTextFormatter(Template, CultureInfo.InvariantCulture));
+        var formatter = new RedactingFormatter(
+            new MessageTemplateTextFormatter(Prefix, CultureInfo.InvariantCulture),
+            new MessageTemplateTextFormatter(Body, CultureInfo.InvariantCulture));
         var configuration = new LoggerConfiguration()
             // Microsoft.Extensions.Logging filters (Logging:LogLevel) decide what reaches this logger.
             .MinimumLevel.Verbose()

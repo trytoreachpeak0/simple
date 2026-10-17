@@ -94,6 +94,17 @@ public sealed partial class RedactionTests
     }
 
     [Fact]
+    public void ACategoryNamedLikeACredentialDoesNotHideTheMessage()
+    {
+        using var log = new TestLog();
+
+        var issuer = log.CreateLogger("Simple.Server.AccessTokenIssuer");
+        Said(issuer, "Issued for vehicle-2");
+
+        Assert.Contains("Simple.Server.AccessTokenIssuer: Issued for vehicle-2", log.Text(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ACredentialInsideALoggedObjectIsNotWritten()
     {
         using var log = new TestLog();

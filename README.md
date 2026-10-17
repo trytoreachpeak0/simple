@@ -140,7 +140,7 @@ dotnet test --solution simple.slnx
 
 服务端、MES 网关、车载终端（WPF 外壳和无界面版）、IO 模拟器都用 Serilog 写程序日志（ADR 0034），接在 `Microsoft.Extensions.Logging` 后面，代码里照常用 `ILogger`。程序日志是程序自己的调试记录，不是事件记录：统计和"谁按了什么"仍然只查事件记录（ADR 0019）。
 
-- **写在哪**：本机的 `<目录>\<程序>.log`，满了另起 `<程序>_001.log`、`<程序>_002.log`……，超过保留个数就删最旧的。目录默认是 `%ProgramData%\Simple\<程序>\logs`（程序是 `Server`、`MesGateway`、`OnboardTerminal`、`IoSimulator`），每个文件默认 10 MB、保留 10 个，所以一个程序最多约占 100 MB。三项都能改：`Simple:Logs:Directory`、`Simple:Logs:FileSizeLimitBytes`、`Simple:Logs:RetainedFileCount`。服务端和 MES 网关和其他设置一样读（命令行、环境变量、`Simple:SettingsFile`）；车载终端和 IO 模拟器只从命令行读，例如 `--Simple:Logs:Directory=D:\logs`。一个文件写到上限时，正在写的那一条仍然完整写完。
+- **写在哪**：本机的 `<目录>\<程序>.log`，满了另起 `<程序>_001.log`、`<程序>_002.log`……，超过保留个数就删最旧的。目录默认是 `%ProgramData%\Simple\<程序>\logs`（程序是 `Server`、`MesGateway`、`OnboardTerminal`、`IoSimulator`），每个文件默认 10 MB、保留 10 个，所以一个程序最多约占 100 MB。三项都能改：`Simple:Logs:Directory`、`Simple:Logs:FileSizeLimitBytes`、`Simple:Logs:RetainedFileCount`。服务端和 MES 网关和其他设置一样读（命令行、环境变量、`Simple:SettingsFile`）；车载终端和 IO 模拟器只从命令行读，例如 `--Simple:Logs:Directory=D:\logs`。一个文件写到上限时，正在写的那一条仍然完整写完。同一台机器上同一个程序跑两份时（例如上面"再起一套"服务端），给它们不同的目录，否则两份日志会交错在同一组文件里；`simple up` 已经给每个进程单独一个目录。
 - **每次启动的第一行**：`<程序> started (version …, process …)`，即使程序别的什么都没说，也能从日志里看出它起过几次、是哪个版本。
 - **凭据不进日志**：脱敏在日志这一层统一做，控制台输出和文件都经过它。属性名表明是凭据的值（`Password`、`Token`、`ApiKey`、`Secret`、`PairingCode` 等）整个换成 `***`；文字里的密码（连接串的 `Password=`/`Pwd=`、`--Simple:...:Password=`、查询串的 `api_key=`、JSON 的 `"password": "…"`、网址里的 `user:密码@`、`Bearer`/`Basic` 后面的令牌、JWT、PEM 私钥、GitHub 令牌、"配对码 123456"）只去掉值、保留名字，异常的消息和内层异常也一样。宁可多去掉一点：被去掉一个无害的值，这行日志照样能用；漏一个凭据就不行。
 - **没接住的异常**：进程级的未处理异常记成 `FTL` 后进程照常结束；没人等的失败任务记成 `ERR`，不改变它原来的处理；WPF 界面线程上没接住的异常记成 `FTL` 后照常交给 WPF（程序照常结束）。
