@@ -18,7 +18,8 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Windows.CsWin32" Version="0.3.363" />
-    <!-- Retries with backoff and jitter (ADR 0008): the MES gateway's rounds and the server's polling of the gateway. -->
+    <!-- Retries with backoff and jitter (ADR 0008): the MES gateway's rounds and
+         the server's polling of the gateway; tools/protocol-probe uses it too. -->
     <PackageVersion Include="Polly.Core" Version="8.8.0" />
     <PackageVersion Include="System.CommandLine" Version="2.0.13" />
     <!-- Transitive via Microsoft.Data.SqlClient 6.1.7 (EF Core SQL Server), which
@@ -29,7 +30,6 @@
     <PackageVersion Include="Grpc.AspNetCore" Version="2.84.0" />
     <PackageVersion Include="Grpc.Net.Client" Version="2.84.0" />
     <PackageVersion Include="Grpc.Tools" Version="2.84.0" />
-    <PackageVersion Include="Polly.Core" Version="8.8.0" />
     <PackageVersion Include="Serilog" Version="4.4.0" />
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageVersion Include="Serilog.Extensions.Logging" Version="10.0.0" />
