@@ -172,13 +172,21 @@ public static partial class ProgramLog
         var text = new System.Text.StringBuilder();
         foreach (var file in Files(directory))
         {
-            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(stream);
+            using var reader = OpenRead(file);
             text.Append(reader.ReadToEnd());
         }
 
         return text.ToString();
     }
+
+    /// <summary>
+    /// Opens a file for reading while another process may still have it open,
+    /// for writing or deleting too: the program writing its log, or a virus
+    /// scan or an indexer that holds a file a moment after it was written (#68).
+    /// <see cref="File.ReadAllText(string)"/> refuses such a file.
+    /// </summary>
+    public static StreamReader OpenRead(string path) =>
+        new(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
 
     private static int Sequence(string name)
     {

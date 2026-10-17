@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Simple.Cli.Remote;
+using Simple.Logging;
 
 namespace Simple.Cli.Tests.Remote;
 
@@ -134,8 +135,9 @@ public sealed class RemoteRunTests
 
         Assert.True(exitCode == 0, stderr);
         var run = Assert.Single(Directory.GetDirectories(Path.Combine(sandbox.Clone, "artifacts", "remote", sandbox.Instance)));
-        Assert.Equal("done", File.ReadAllText(Path.Combine(run, "result.txt")).Trim());
-        Assert.Contains("printed", File.ReadAllText(Path.Combine(run, "output.log")), StringComparison.Ordinal);
+        // Read sharing: a virus scan may still hold a file just fetched (#68).
+        Assert.Equal("done", ReadShared(Path.Combine(run, "result.txt")).Trim());
+        Assert.Contains("printed", ReadShared(Path.Combine(run, "output.log")), StringComparison.Ordinal);
         Assert.EndsWith((await Snapshot.TakeAsync(sandbox.Clone, Cancel)).Commit[..8], run, StringComparison.Ordinal);
     }
 
@@ -319,6 +321,8 @@ public sealed class RemoteRunTests
         sandbox.Write("new.txt", "new\n");
         await RunOkAsync(sandbox, machine);
         Assert.True(Directory.Exists(sandbox.RemoteWorktree()));
+        // The bundle built on origin/main made the empty cache fetch the origin.
+        Assert.NotNull(await RemoteRefAsync(sandbox, Snapshot.OriginRef(sandbox.Instance)));
 
         var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "forget");
 
@@ -329,8 +333,43 @@ public sealed class RemoteRunTests
         Assert.False(Directory.Exists(sandbox.RemoteWorktree()));
         Assert.False(Directory.Exists(Path.Combine(sandbox.RemoteRoot, "runs", sandbox.Instance)));
         Assert.NotEqual(0, (await Git.TryAsync(sandbox.Clone, ["rev-parse", "--verify", "--quiet", Snapshot.Ref(sandbox.Instance)], Cancel)).ExitCode);
-        Assert.NotEqual(0, (await Git.TryAsync(
-            sandbox.RemoteRoot, ["--git-dir", Path.Combine(sandbox.RemoteRoot, "repo.git"), "rev-parse", "--verify", "--quiet", Snapshot.Ref(sandbox.Instance)], Cancel)).ExitCode);
+        Assert.Null(await RemoteRefAsync(sandbox, Snapshot.Ref(sandbox.Instance)));
+        Assert.Null(await RemoteRefAsync(sandbox, Snapshot.OriginRef(sandbox.Instance)));
+    }
+
+    [Fact]
+    public async Task AFetchLockLeftBehindDoesNotStopLaterFetchesOfTheOrigin()
+    {
+        // A fetch of the origin killed by a cut leaves its ref's lock. On the
+        // ref all instances shared, refs/remotes/origin/main, no run could
+        // remove it, and every later fetch failed with "Another git process
+        // seems to be running" (review of #64). The instance's own ref's lock
+        // is removed under the instance's lock.
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+        await RunOkAsync(sandbox, machine);
+        var repo = Path.Combine(sandbox.RemoteRoot, "repo.git");
+        foreach (var reference in new[] { "refs/remotes/origin/main", Snapshot.OriginRef(sandbox.Instance) })
+        {
+            var lockFile = Path.Combine(repo, reference + ".lock");
+            Directory.CreateDirectory(Path.GetDirectoryName(lockFile)!);
+            File.WriteAllText(lockFile, string.Empty);
+        }
+
+        // Pushed: nothing is sent, and the remote side gets it from the origin.
+        sandbox.Write("pushed.txt", "pushed\n");
+        var pushed = await sandbox.CommitAsync("pushed", Cancel);
+        await sandbox.GitAsync(Cancel, "push", "--quiet", "origin", "main");
+        await sandbox.GitAsync(Cancel, "fetch", "--quiet", "origin");
+
+        var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "Get-Content pushed.txt");
+
+        Assert.True(exitCode == 0, $"exit code {exitCode}: {stderr}");
+        Assert.Equal(["pushed"], Lines(stdout));
+        Assert.DoesNotContain("Another git process", stderr, StringComparison.Ordinal);
+        // Fetched, not sent as the full history after a failed fetch.
+        Assert.Empty(Bundles(machine));
+        Assert.Equal(pushed, await RemoteRefAsync(sandbox, Snapshot.OriginRef(sandbox.Instance)));
     }
 
     [Theory]
@@ -410,6 +449,20 @@ public sealed class RemoteRunTests
         var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         File.WriteAllText(path + ".holder", "the test");
         return stream;
+    }
+
+    /// <summary>The commit a ref of the remote cache points at; null when there is no such ref.</summary>
+    private static async Task<string?> RemoteRefAsync(GitSandbox sandbox, string reference)
+    {
+        var result = await Git.TryAsync(
+            sandbox.RemoteRoot, ["--git-dir", Path.Combine(sandbox.RemoteRoot, "repo.git"), "rev-parse", "--verify", "--quiet", reference], Cancel);
+        return result.ExitCode == 0 ? result.Output.Trim() : null;
+    }
+
+    private static string ReadShared(string path)
+    {
+        using var reader = ProgramLog.OpenRead(path);
+        return reader.ReadToEnd();
     }
 
     private static List<string> Bundles(DirectoryMachine machine) => machine.Sent.Where(f => f.EndsWith(".bundle", StringComparison.Ordinal)).ToList();

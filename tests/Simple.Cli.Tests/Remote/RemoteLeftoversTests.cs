@@ -61,6 +61,18 @@ public sealed class RemoteLeftoversTests
     }
 
     [Fact]
+    public void CiDeletesTheSameTestKeysAsTheRemoteSide()
+    {
+        // The step "No test keys left behind" in ci.yml has the pattern as a
+        // literal: a key format added to one and not the other is either
+        // deleted from under a runner or left behind unnoticed.
+        var ci = File.ReadAllText(Path.Combine(CliEnvironment.FindRepository(AppContext.BaseDirectory), ".github", "workflows", "ci.yml"));
+
+        var pattern = Assert.Single(Regex.Matches(ci, @"^\s*\$tests = '(?<pattern>[^']*)'\s*$", RegexOptions.Multiline));
+        Assert.Equal(RemoteSweep.TestKeys, pattern.Groups["pattern"].Value);
+    }
+
+    [Fact]
     public async Task HeavyWorkFirstClearsLeftoverTestDatabasesAndKeysAndNothingElse()
     {
         await using var sandbox = await GitSandbox.CreateAsync(Cancel);
