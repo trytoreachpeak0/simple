@@ -26,9 +26,28 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 
 以后计划再加一个入口 `Simple.Mcp`：给 AI 用的一层薄包装，只调用命令行和服务端 API，不放业务逻辑。
 
+## 第一次还原之前
+
+RIoT 客户端库 `RIoT.Sdk.*` 来自 `trytoreachpeak0/riot-sdk`，发布在 GitHub Packages（`https://nuget.pkg.github.com/trytoreachpeak0/index.json`），其余包来自 nuget.org，见仓库根的 `nuget.config`。GitHub Packages 连读取也要令牌，所以每台开发机第一次还原（`dotnet restore`、`dotnet build`、`./simple up` 都会还原）之前，要在本机用户级的 NuGet 配置里存一次令牌：
+
+1. 在 GitHub 的 Settings → Developer settings → Personal access tokens → Tokens (classic) 新建一个令牌，只勾 `read:packages`。GitHub Packages 只认 classic 令牌。
+2. 在 PowerShell 7 里执行下面这条命令，把 `<令牌>` 换成刚建的令牌。源的名字必须是 `github`，和 `nuget.config` 里的一致：
+
+   ```
+   dotnet nuget add source https://nuget.pkg.github.com/trytoreachpeak0/index.json --name github --username trytoreachpeak0 --password <令牌> --configfile "$env:APPDATA/NuGet/NuGet.Config"
+   ```
+
+   Windows 上令牌按当前用户加密后存进 `%APPDATA%\NuGet\NuGet.Config`，不是明文；仓库里不放任何令牌。这条命令同时会在用户级配置里登记这个源，别的项目还原时也会查它，不影响本仓库（`nuget.config` 先清掉了机器上的源）。用户级配置里已经有名为 `github` 的源时，这条命令会报已存在；令牌过期或换了新令牌时也一样。这两种情况改用：
+
+   ```
+   dotnet nuget update source github --source https://nuget.pkg.github.com/trytoreachpeak0/index.json --username trytoreachpeak0 --password <令牌> --configfile "$env:APPDATA/NuGet/NuGet.Config"
+   ```
+
+没做这一步时，还原 `RIoT.Sdk.*` 会因为 401 失败。CI 不用这一步：它用每次运行自带的 `GITHUB_TOKEN`。
+
 ## 构建与测试
 
-需要 .NET 10 SDK（版本见 `global.json`）和 SQL Server 2022 LocalDB（实例 `MSSQLLocalDB`）。
+需要 .NET 10 SDK（版本见 `global.json`）和 SQL Server 2022 LocalDB（实例 `MSSQLLocalDB`）。还原之前先做完上一节那一步。
 
 ```
 dotnet build simple.slnx

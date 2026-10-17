@@ -28,6 +28,9 @@ permissions:
   contents: read
   # The timing summary reads this run's job and step times from the API.
   actions: read
+  # Restore reads RIoT.Sdk.* from GitHub Packages (nuget.config). The package
+  # settings grant this repository read access; see docs/adr/0027.
+  packages: read
 
 defaults:
   run:
@@ -98,8 +101,13 @@ jobs:
           }
           Write-Output "SDK $resolved"
 
+      # GitHub Packages needs a token even to read. NuGet takes the credential of
+      # the source named "github" in nuget.config from this variable; the token
+      # is this run's own and expires with it.
       - name: Restore (locked mode)
         timeout-minutes: 10
+        env:
+          NuGetPackageSourceCredentials_github: Username=simple-ci;Password=${{ github.token }}
         run: dotnet restore simple.slnx --locked-mode
 
       # With CentralPackageTransitivePinningEnabled a stale packages.lock.json
@@ -108,6 +116,8 @@ jobs:
       # changes or a new one appears.
       - name: Lock files up to date
         timeout-minutes: 10
+        env:
+          NuGetPackageSourceCredentials_github: Username=simple-ci;Password=${{ github.token }}
         run: |
           dotnet restore simple.slnx --force-evaluate -p:RestoreLockedMode=false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
