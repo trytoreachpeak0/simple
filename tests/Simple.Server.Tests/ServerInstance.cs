@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Simple.Server.Accounts;
 using Simple.Server.Configuration;
 using Simple.Server.Mes;
 using Simple.Server.OnboardTerminals;
@@ -30,7 +31,13 @@ namespace Simple.Server.Tests;
 /// </param>
 /// <param name="time">Replaces the server's clock, for example with a FakeTimeProvider.</param>
 /// <param name="riot">Configure a fleet manager, the <see cref="StubRiot"/>; false leaves <c>Simple:Riot:Url</c> empty.</param>
-public sealed class ServerInstance(string? instance = null, bool kestrel = false, TimeProvider? time = null, bool riot = true) : IAsyncDisposable
+/// <param name="extraSettings">Settings that override the test defaults, for example a lower login rate limit.</param>
+public sealed class ServerInstance(
+    string? instance = null,
+    bool kestrel = false,
+    TimeProvider? time = null,
+    bool riot = true,
+    IReadOnlyDictionary<string, string?>? extraSettings = null) : IAsyncDisposable
 {
     /// <summary>
     /// The SQL Server instance the test databases are created on, without a
@@ -61,8 +68,89 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
     /// <summary>With <c>kestrel</c>: where the API listens.</summary>
     public Uri ApiAddress => Addresses().Single(a => a.Scheme == Uri.UriSchemeHttp);
 
-    /// <summary>Starts the server (migrating its database) and returns a client for its API.</summary>
+    /// <summary>The administrator's password in every test server, set the way the server command sets it.</summary>
+    public const string AdminPassword = "admin-password-for-tests";
+
+    private bool adminPasswordSet;
+
+    /// <summary>
+    /// Starts the server (migrating its database) and returns a client for its
+    /// API, logged in as the administrator through the console entry. The
+    /// administrator's password is set on the first start only, so a restart
+    /// keeps every login.
+    /// </summary>
     public HttpClient Start()
+    {
+        StartServer();
+        if (!adminPasswordSet)
+        {
+            AdminPasswordCommand.SetAsync(Services, AdminPassword, CancellationToken.None).GetAwaiter().GetResult();
+            adminPasswordSet = true;
+        }
+
+        return LogInAsync("admin", AdminPassword).GetAwaiter().GetResult().Client
+            ?? throw new InvalidOperationException("The test administrator could not log in.");
+    }
+
+    /// <summary>A client for the API that is not logged in and sends no request header.</summary>
+    public HttpClient CreateClient()
+    {
+        if (factory is null)
+        {
+            throw new InvalidOperationException("The server is not running.");
+        }
+
+        return kestrel
+            ? new HttpClient { BaseAddress = ApiAddress }
+            : factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false, AllowAutoRedirect = false });
+    }
+
+    /// <summary>
+    /// Logs in through the login API. The client of a successful login carries
+    /// its cookie and the request header every changing request needs, the way
+    /// the console's browser would; the cookie is sent by hand because it is
+    /// <c>Secure</c> and the test API is plain HTTP on loopback.
+    /// </summary>
+    /// <param name="remoteAddress">The address the request seems to come from (in-memory server only, <see cref="TestRemoteAddress"/>).</param>
+    public async Task<TestLogin> LogInAsync(string name, string password, string entry = "console", string? remoteAddress = null)
+    {
+        using var anonymous = CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/login")
+        {
+            Content = System.Net.Http.Json.JsonContent.Create(new { name, password, entry }),
+        };
+        request.Headers.Add(RequestHeader.Name, "1");
+        if (remoteAddress is not null)
+        {
+            request.Headers.Add(TestRemoteAddress.Header, remoteAddress);
+        }
+
+        var response = await anonymous.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            return new TestLogin(response, null, null);
+        }
+
+        var cookie = TestLogin.CookieOf(response)
+            ?? throw new InvalidOperationException("A successful login set no login cookie.");
+        return new TestLogin(response, cookie, WithCookie(cookie, remoteAddress));
+    }
+
+    /// <summary>A client that sends the given login cookie and the request header.</summary>
+    public HttpClient WithCookie(string cookie, string? remoteAddress = null)
+    {
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Add("Cookie", $"{LoginSetup.CookieName}={cookie}");
+        client.DefaultRequestHeaders.Add(RequestHeader.Name, "1");
+        if (remoteAddress is not null)
+        {
+            client.DefaultRequestHeaders.Add(TestRemoteAddress.Header, remoteAddress);
+        }
+
+        return client;
+    }
+
+    private void StartServer()
     {
         if (factory is not null)
         {
@@ -84,7 +172,13 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
             [$"{RiotSettings.Section}:CallApiKey"] = StubRiot.CallApiKey,
             [$"{RiotSettings.Section}:PollInterval"] = "00:00:00.1",
             [$"{RiotSettings.Section}:RetryMaxDelay"] = "00:00:00.3",
+            // Tests log in often; LoginRateLimitTests sets its own limit.
+            [$"{LoginSettings.Section}:AttemptsPerWindow"] = "1000",
         };
+        foreach (var (key, value) in extraSettings ?? new Dictionary<string, string?>())
+        {
+            settings[key] = value;
+        }
         // Without real sockets there is no terminal endpoint to reach, so none
         // is configured, and no server key is made for the test.
         settings[ServerSettings.OnboardTerminalsUrlKey] = kestrel ? "https://127.0.0.1:0" : "";
@@ -97,21 +191,18 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
         var created = new Factory(settings, time, MesGateway, Riot);
         try
         {
-            HttpClient client;
             if (kestrel)
             {
                 created.UseKestrel();
                 created.StartServer();
-                factory = created;
-                client = new HttpClient { BaseAddress = ApiAddress };
             }
             else
             {
-                client = created.CreateClient();
-                factory = created;
+                // Starts the in-memory test server; StartServer would listen on real sockets.
+                _ = created.Server;
             }
 
-            return client;
+            factory = created;
         }
         catch
         {
@@ -138,6 +229,8 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
     {
         await using var db = CreateDbContext();
         await db.Database.EnsureDeletedAsync();
+        // The administrator went with the database: the next start makes it again.
+        adminPasswordSet = false;
     }
 
     public async ValueTask DisposeAsync()
@@ -181,6 +274,7 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
         {
             builder
                 .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(settings))
+                .ConfigureTestServices(services => services.AddTransient<IStartupFilter, TestRemoteAddress>())
                 .ConfigureTestServices(services => services
                     .AddHttpClient(MesGatewayPoller.HttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(mesGateway.CreateHandler))

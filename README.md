@@ -96,6 +96,7 @@ dotnet test --solution simple.slnx
 - **停**：`down` 只停本实例的状态文件里记下的进程（按进程号和进程启动时间核对，绝不按进程名），用 Ctrl+Break 让它们正常退出，服务端因此会在事件记录里留下 `server.stopped`；30 秒还没退出才强杀，并以退出码 8 报告。
 - **库**：默认用本机 LocalDB `(localdb)\MSSQLLocalDB`。要用本机别的命名实例（CI 用 `.\SQLEXPRESS`），把不带库名的连接串放进 `SIMPLE_SQLSERVER`。命令行拒绝别的机器上的 SQL Server、本机的默认实例（`.`、`localhost`、`MSSQLSERVER`）、带端口的写法（带端口时 SqlClient 不看实例名，本机 1433 上通常是默认实例）、故障转移伙伴，以及带 SQL 登录用户名或密码的连接串（连接串会记在状态文件里，所以本机只用 Windows 集成认证）；起服务端和删库之前，还会连上去问服务器自己是谁（`SERVERPROPERTY` 的 `IsLocalDB`、`InstanceName`、`MachineName`），只接受 LocalDB，或本机上名字不是 `MSSQLSERVER` 的命名实例，这样别名和端口转发也绕不过去。`down --reset` 只删 `Simple_<实例名>` 这一个库，删在 `up` 当时用的那个 SQL Server 上。
 - **只起本机的假系统**：命令行没有任何指向真实系统的开关。起部件时会去掉环境里以 `Simple__`、`ConnectionStrings__`、`ASPNETCORE_`、`Kestrel__` 开头的变量和 `DOTNET_ENVIRONMENT`，免得外面设好的真实地址、连接串、监听地址或运行环境被带进本机系统；部件总是以 Production 运行。
+- **管理员密码**：服务端的接口要登录（见"只运行服务端"一节的"登录"）。第一次 `up` 给这个实例随机生成一个管理员密码，存在 clone 之外的 `%LOCALAPPDATA%\simple\instances\<实例名>\admin-password.txt`；每次起服务端之前，`up` 先用服务端命令 `set-admin-password` 把它设进库里。`status`、`events`、判服务端就绪、给车载终端写配置时，命令行都用它经控制台入口登录，用完退出。`down --reset` 删库时一起删掉它，下次 `up` 再生成新的。自己调接口时也用这个密码登录（账号名 `admin`）。
 - **文件放在哪**：状态文件和日志在 `%LOCALAPPDATA%\simple\instances\<实例名>\`（可用环境变量 `SIMPLE_HOME` 换位置）。每个进程的程序日志在 `logs\<进程名>\`，由程序自己限制大小，跨多次 `up` 保留，`simple logs <进程名>` 显示它（还没有程序日志或日志是空的，例如进程在日志起来之前就拒绝启动了，命令以退出码 5 说明这一点，并提示改用 `--output`）；控制台输出在 `logs\<进程名>.log`，`down` 之后保留，下次 `up` 时覆盖，`simple logs <进程名> --output` 显示它（`simple logs build --output` 是最近一次编译的输出）。每个车载终端的本机配置在同一目录的 `processes\terminal-<n>\terminal.json`，`up` 时按服务端的状态重新写。
 - **车载终端**：`terminal-1`、`terminal-2`…分别自报车辆 `vehicle-1`、`vehicle-2`…，连本实例服务端的终端端点。`./simple status` 末尾按服务端看到的样子列出每台车载终端：连着没有、上报新不新鲜、最新鲜的那份上报最多是几秒前写的、版本、屏上文字。每个终端在测试模式下开一个只听回环地址的测试输入（地址就是 `status` 里该进程的 URL），用来代替车旁的人：
   - `POST /test/keyboard`，正文 `{"text": "LOT123\r"}`：像扫码枪那样敲键盘，每个回车结束一次扫码；
@@ -157,13 +158,17 @@ dotnet run --project src/Simple.Server
 
 默认接口只监听 `http://127.0.0.1:5180`，车载终端端点监听 `https://127.0.0.1:5181`，连本机 LocalDB，库名是 `Simple_<实例名>`（默认实例名 `dev`，即 `Simple_dev`）；第一次启动时自动建库并执行迁移。
 
-| 接口 | 用途 |
-| --- | --- |
-| `GET /health/live` | 进程活着 |
-| `GET /health/ready` | 能连上自己的数据库 |
-| `GET /api/v1/status` | 版本、启动时间、实例名、库名；车载终端端点的地址和证书指纹；每台车载终端的版本、连着没有、最新鲜的上报最多是几秒前写的、是否已过期、最近下发的屏上文字；RIoT 一栏（连不连得上：`not-configured`、`connecting`、`connected` 或 `unreachable`，地址、最近一次问和最近一次连上的时刻、出错原因、地图数）；MES 网关一栏（见下一节） |
-| `GET /api/v1/events` | 事件记录，按提交顺序（顺着游标一直往后读不会漏事件）；参数 `after`（游标，即上一页的 `nextCursor`）、`since`、`until`、`limit`（1～1000，默认 100） |
-| `GET /openapi/v1.json` | 接口描述 |
+除了"进程活着"的健康检查和登录接口，每个接口都要先登录（ADR 0045），"谁能用"一列见下面的"登录"。
+
+| 接口 | 谁能用 | 用途 |
+| --- | --- | --- |
+| `GET /health/live` | 不用登录 | 进程活着 |
+| `GET /health/ready` | 看 | 能连上自己的数据库 |
+| `GET /api/v1/status` | 看 | 版本、启动时间、实例名、库名；车载终端端点的地址和证书指纹；每台车载终端的版本、连着没有、最新鲜的上报最多是几秒前写的、是否已过期、最近下发的屏上文字；RIoT 一栏（连不连得上：`not-configured`、`connecting`、`connected` 或 `unreachable`，地址、最近一次问和最近一次连上的时刻、出错原因、地图数）；MES 网关一栏（见下一节） |
+| `GET /api/v1/events` | 看 | 事件记录，按提交顺序（顺着游标一直往后读不会漏事件）；参数 `after`（游标，即上一页的 `nextCursor`）、`since`、`until`、`limit`（1～1000，默认 100） |
+| `GET /openapi/v1.json` | 看 | 接口描述 |
+| `POST /api/v1/login`、`POST /api/v1/logout`、`GET /api/v1/session`、`PUT /api/v1/session/password` | 见"登录" | 登录、退出、我是谁、改自己的密码 |
+| `GET`、`POST /api/v1/accounts`，`DELETE /api/v1/accounts/{name}`，`PUT /api/v1/accounts/{name}/password`，`PUT /api/v1/accounts/{name}/paused` | 管账号 | 账号列表（每个账号最后一次来的时间、此刻在几台电脑上登录着）、建账号、删账号、给别的账号设密码、值守账号的"暂停值守" |
 
 在同一台机器上再起一套，换实例名和端口：
 
@@ -173,7 +178,38 @@ dotnet run --project src/Simple.Server -- --Simple:Instance=wt25 --urls=http://1
 
 服务端默认连 `http://127.0.0.1:5200` 上的假 RIoT（`Simple:Riot:Url`、`Simple:Riot:CallApiKey`，仓库里的密钥是假 RIoT 认的占位串）。每 10 秒读一次 RIoT 的地图列表，看连不连得上；连不上时按逐步拉长、最长 30 秒的间隔一直重试（ADR 0008），不会因为 RIoT 掉线而退出。`Simple:Riot:Url` 留空时不连 RIoT，状态里写 `not-configured`。这里只读，不建单、不发命令。
 
-仓库里的配置只指向回环地址和 LocalDB。真实的连接串和地址放在仓库外：用 `--Simple:SettingsFile=<路径>` 指定一个 JSON 配置文件，或用环境变量（例如 `ConnectionStrings__Simple`、`Simple__Instance`）。连接串里不写库名，库名由实例名决定。配置不合法时服务端拒绝启动，退出码为 2，并逐项说明是哪一项不对；接口还没有鉴权，所以接口的监听地址（`urls`）不是回环地址、或不是 `http://` 时也拒绝启动。
+仓库里的配置只指向回环地址和 LocalDB。真实的连接串和地址放在仓库外：用 `--Simple:SettingsFile=<路径>` 指定一个 JSON 配置文件，或用环境变量（例如 `ConnectionStrings__Simple`、`Simple__Instance`）。连接串里不写库名，库名由实例名决定。配置不合法时服务端拒绝启动，退出码为 2，并逐项说明是哪一项不对；控制台的 HTTPS 地址（ADR 0046）做好之前，接口只听回环，所以接口的监听地址（`urls`）不是回环地址、或不是 `http://` 时也拒绝启动。
+
+### 登录
+
+做法见 ADR 0045，要点如下。
+
+- **管理员密码只有一个设法**：在服务端那台机器上运行服务端命令，密码从标准输入读（不写在命令行上，命令行别人看得到），用和服务端相同的设置（实例名、连接串、`Simple:SettingsFile`）：
+
+  ```
+  dotnet run --project src/Simple.Server -- set-admin-password
+  ```
+
+  第一次运行时建管理员账号 `admin`，以后运行是重设它的密码；先执行迁移，再设密码，管理员在所有电脑上的登录随之作废（正在运行的服务端最多 10 秒后发现）。网页和接口上没有这个功能。管理员记得旧密码时，用 `PUT /api/v1/session/password` 改自己的密码。
+- **登录**：`POST /api/v1/login`，内容 `{"name": "...", "password": "...", "entry": "console" 或 "mcp"}`。成功时回账号、角色、项目和入口，并设一个登录 Cookie `__Host-simple`（`Secure`、`HttpOnly`、`SameSite=Strict`，7 天有效）；账号名或密码不对一律回 401，不说是哪一样不对。Cookie 里只有一把加密的随机钥匙，谁登录着、从哪台电脑、经哪个入口、什么时候来过，都记在服务端库里的登录记录上，每个请求按服务端内存里那一份核对，库短暂连不上也不把人踢出去。
+- **多久失效**：每天第一次使用时，Cookie 续成新的 7 天；7 天没用过的登录作废。退出（`POST /api/v1/logout`）删掉这一次登录，复制走的 Cookie 也不能再用；改密码、删账号让这个账号在所有电脑上的登录立刻作废。服务端重启不掉登录：加密 Cookie 的钥匙存在库里（`DataProtectionKeys` 表），每把钥匙再用本机的 DPAPI 加密，所以库搬到别的机器上恢复后，所有人要重新登录一次。
+- **改东西的请求要带请求头** `X-Simple-Request: 1`（POST、PUT、PATCH、DELETE，登录也算），没带回 400。服务端不开跨域访问（CORS），别的网站的网页发不出带这个头的请求，借已登录的浏览器偷偷发请求就做不到。服务端也不发 HSTS（ADR 0046）。
+- **防猜密码**：同一台电脑（按来源 IP）每分钟最多 5 次登录或改自己密码的尝试，多了回 429 并在 `Retry-After` 里说多少秒后再试；不锁账号。登录成功也算一次（框架的限速器按请求数），一次登录管 7 天，正常使用碰不到。上限可以改：`Simple:Login:AttemptsPerWindow`、`Simple:Login:AttemptWindow`；`simple up` 起的本机系统把它调大，因为命令行每次查状态都从回环登录。
+- **谁能用**：每个接口在代码里标明一个"谁能用"（`src/Simple.Server/Accounts/Access.cs`），没标的接口谁都用不了，并有测试逐个检查。
+
+  | 谁能用 | 班组长 | 工程师 | 管理员 | 值守账号 | 经 MCP 的登录 |
+  | --- | --- | --- | --- | --- | --- |
+  | 看 | 能（只看本项目，按业务核对） | 能 | 能 | 能 | 能 |
+  | 看全部项目 | | | 能 | 能 | 管理员、值守能 |
+  | 班组长的动作 | 能 | 能 | 能 | | |
+  | 工程师的动作 | | 能 | 能 | | |
+  | 改参数配置 | | | 能 | | 管理员能（事件记录保存天数除外） |
+  | 管账号 | | | 能 | | |
+  | 改自己的密码 | 能 | 能 | 能 | | |
+
+  "暂停值守"开着时，值守账号的每个请求（包括登录）都回 403，问题类型 `watch-paused`。
+- **账号**：班组长、工程师账号必须写所属项目，值守账号不写；值守账号整个系统只有一个；管理员账号只能由服务端命令建，不能经接口建、删或设密码。服务端里还没有项目表，项目先按名字存，以后有了项目再改成引用（ADR 0015、0017）。密码只有一条规则：至少 8 个字符；只存哈希（PBKDF2-HMAC-SHA512，22 万次），旧的弱哈希在下次登录时自动升级。
+- **记在哪**：建账号、删账号、设密码、开关暂停值守进事件记录，写账号、入口和来源 IP，不写密码。登录、退出、登录失败只进程序日志（写来源 IP），不进事件记录。
 
 ### 车载终端端点
 
