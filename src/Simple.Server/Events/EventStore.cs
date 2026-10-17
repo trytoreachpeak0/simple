@@ -21,6 +21,23 @@ public sealed class EventStore(SimpleDbContext db, TimeProvider time)
             },
             cancellationToken);
 
+    /// <summary>Appends a person's action: who did it, through which entry and from which computer (ADR 0019, 0045).</summary>
+    public Task<EventRecord> AppendAsync(string type, Actor actor, object? data, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        return AppendAsync(
+            new EventRecord
+            {
+                OccurredAt = time.GetUtcNow(),
+                Type = type,
+                Source = actor.Entry,
+                Data = data is null ? null : JsonSerializer.Serialize(data, JsonSerializerOptions.Web),
+                Account = actor.Account,
+                RemoteAddress = actor.RemoteAddress,
+            },
+            cancellationToken);
+    }
+
     /// <summary>
     /// Appends one event. Appends take an exclusive application lock that is
     /// held until commit, so ids are assigned in commit order: a reader
@@ -84,10 +101,15 @@ public sealed class EventStore(SimpleDbContext db, TimeProvider time)
     }
 }
 
+/// <summary>Who did an action: the account (null for a server command), the entry (<see cref="EventSources"/>) and the computer.</summary>
+public sealed record Actor(string? Account, string Entry, string? RemoteAddress);
+
 /// <param name="NextCursor">Pass as <c>after</c> to read on; null when nothing has been read yet.</param>
 public sealed record EventPage(IReadOnlyList<EventView> Items, long? NextCursor, bool HasMore);
 
-public sealed record EventView(long Id, DateTimeOffset OccurredAt, string Type, string Source, JsonElement? Data)
+/// <param name="Account">For a person's action, the account that did it.</param>
+/// <param name="RemoteAddress">For a person's action through the console or MCP, the computer it came from.</param>
+public sealed record EventView(long Id, DateTimeOffset OccurredAt, string Type, string Source, JsonElement? Data, string? Account = null, string? RemoteAddress = null)
 {
     public static EventView From(EventRecord record)
     {
@@ -99,6 +121,6 @@ public sealed record EventView(long Id, DateTimeOffset OccurredAt, string Type, 
             data = document.RootElement.Clone();
         }
 
-        return new EventView(record.Id, record.OccurredAt, record.Type, record.Source, data);
+        return new EventView(record.Id, record.OccurredAt, record.Type, record.Source, data, record.Account, record.RemoteAddress);
     }
 }

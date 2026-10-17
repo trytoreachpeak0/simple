@@ -1,3 +1,4 @@
+using Simple.Server.Accounts;
 using Microsoft.AspNetCore.Http.HttpResults;
 
 namespace Simple.Server.Events;
@@ -7,6 +8,7 @@ public static class EventEndpoints
     public static void MapEventEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/events", GetEvents)
+            .RequireAccess(Access.View)
             .WithName("GetEvents")
             .WithSummary("Reads the event record in insertion order. Follow nextCursor with 'after' to page or to poll.");
     }
