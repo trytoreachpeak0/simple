@@ -20,9 +20,15 @@ public sealed class FakeRiotTimingTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(logDirectory))
+        try
         {
             Directory.Delete(logDirectory, recursive: true);
+        }
+        catch (IOException)
+        {
+            // Not created, or the fake hosted in process has not let go of its
+            // log yet when the factory returns (#80, as in #69); a folder left
+            // in %TEMP% harms nothing.
         }
     }
 
