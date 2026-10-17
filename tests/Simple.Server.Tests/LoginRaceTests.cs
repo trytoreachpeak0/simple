@@ -120,6 +120,32 @@ public sealed class LoginRaceTests : IAsyncLifetime
         Assert.Equal(stale.CredentialVersion + 1, current);
         Assert.Equal(current, registry.Account(stale.Id)!.CredentialVersion);
     }
+
+    /// <summary>
+    /// The pause read the watch account just before its password changed: the
+    /// pause still takes effect at once, not at the next flush (#80).
+    /// </summary>
+    [Fact]
+    public async Task APauseSetAsTheWatchAccountsPasswordChangesTakesEffectAtOnce()
+    {
+        var created = await admin.PostAsJsonAsync(
+            new Uri("/api/v1/accounts", UriKind.Relative), new { name = "watch", role = "watch", password = Password }, Cancel);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var registry = server.Services.GetRequiredService<LoginRegistry>();
+        await using var scope = server.Services.CreateAsyncScope();
+        // The pause's own context has read the account (and keeps what it read)...
+        var read = scope.ServiceProvider.GetRequiredService<Simple.Server.Persistence.SimpleDbContext>().Accounts.Single(a => a.Name == "watch");
+
+        // ...when the password changes.
+        var set = await admin.PutAsJsonAsync(new Uri("/api/v1/accounts/watch/password", UriKind.Relative), new { password = "new-password-1" }, Cancel);
+        var change = await scope.ServiceProvider.GetRequiredService<AccountChanges>()
+            .SetPausedAsync("watch", paused: true, new Simple.Server.Events.Actor("admin", "test", null), Cancel);
+
+        Assert.Equal(HttpStatusCode.NoContent, set.StatusCode);
+        Assert.Equal(Microsoft.AspNetCore.Http.StatusCodes.Status200OK, change.Status);
+        Assert.True(registry.Account(read.Id)!.Paused);
+        Assert.Equal(read.CredentialVersion + 1, registry.Account(read.Id)!.CredentialVersion);
+    }
 }
 
 /// <summary>

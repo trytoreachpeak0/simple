@@ -227,17 +227,28 @@ public sealed partial class LocalSystem(
             {
                 var stopped = await StopAllAsync(state, cancellationToken);
                 var stillHeld = await ForgetAsync(state, cancellationToken);
-                var tail = Tail(failure.Value.Process.Log, 20);
-                return Outcome.Fail(
-                    ExitCodes.NotReady,
-                    $"{failure.Value.Process.Name} {failure.Value.Reason}. Its log: {failure.Value.Process.Log}{Kept(stillHeld, instance)}",
-                    new { failure.Value.Process.Name, failure.Value.Reason, failure.Value.Process.Log, LogTail = tail, Stopped = stopped },
-                    ["Last lines of the log:", .. tail]);
+                return NotReady(instance, failure.Value.Process, failure.Value.Reason, stopped, Kept(stillHeld, instance));
             }
         }
 
         var ready = await ReportAsync(state, cancellationToken);
         return Outcome.Ok(ready, [$"Instance {instance} is up.", .. ready.Lines()]);
+    }
+
+    /// <summary>
+    /// A process that did not get ready: its console output, whose last lines
+    /// are shown (it may have stopped before its program log started), and
+    /// its program log directory (ADR 0034), each named as what it is (#80).
+    /// </summary>
+    internal Outcome NotReady(string instance, ProcessRecord process, string reason, IReadOnlyList<StopReport> stopped, string kept)
+    {
+        var programLog = store.ProgramLogDirectory(instance, process.Name);
+        var tail = Tail(process.Log, 20);
+        return Outcome.Fail(
+            ExitCodes.NotReady,
+            $"{process.Name} {reason}. Its console output: {process.Log} (simple logs {process.Name} --output); its program log: {programLog} (simple logs {process.Name}).{kept}",
+            new { process.Name, Reason = reason, ProgramLog = programLog, Output = process.Log, OutputTail = tail, Stopped = stopped },
+            ["Last lines of its console output:", .. tail]);
     }
 
     public async Task<Outcome> DownAsync(string instance, string sqlServer, bool reset, CancellationToken cancellationToken)
@@ -688,7 +699,8 @@ public sealed partial class LocalSystem(
         {
             var alive = IsAlive(process);
             var ready = alive && await IsReadyAsync(state, process, cancellationToken);
-            processes.Add(new ProcessReport(process.Name, process.Component, process.Pid, alive, ready, ApiUri(process), process.Log));
+            processes.Add(new ProcessReport(
+                process.Name, process.Component, process.Pid, alive, ready, ApiUri(process), store.ProgramLogDirectory(state.Instance, process.Name), process.Log));
             if (alive && process.Component == Components.Server.Name)
             {
                 try
@@ -826,7 +838,9 @@ public enum StopOutcome
 
 public sealed record StopReport(string Name, int Pid, StopOutcome Outcome);
 
-public sealed record ProcessReport(string Name, string Component, int Pid, bool Alive, bool Ready, Uri Url, string Log);
+/// <param name="ProgramLog">The process's program log directory (ADR 0034), shown by <c>simple logs &lt;name&gt;</c>.</param>
+/// <param name="Output">What it wrote to its console, shown by <c>simple logs &lt;name&gt; --output</c>.</param>
+public sealed record ProcessReport(string Name, string Component, int Pid, bool Alive, bool Ready, Uri Url, string ProgramLog, string Output);
 
 /// <param name="Server">The server's own <c>/api/v1/status</c>, or null when it does not answer.</param>
 public sealed record InstanceReport(
@@ -844,7 +858,7 @@ public sealed record InstanceReport(
     public IReadOnlyList<string> Lines() =>
     [
         $"Instance {Instance} from {Repository}, database {Database} on {SqlServer}",
-        .. Processes.Select(p => $"  {p.Name,-12} {(p.Ready ? "ready" : p.Alive ? "not ready" : "gone"),-10} pid {p.Pid,-7} {p.Url}  log {p.Log}"),
+        .. Processes.Select(p => $"  {p.Name,-12} {(p.Ready ? "ready" : p.Alive ? "not ready" : "gone"),-10} pid {p.Pid,-7} {p.Url}  log {p.ProgramLog}  output {p.Output}"),
         .. MesLine(),
         .. RiotLine(),
         .. TerminalLines(),

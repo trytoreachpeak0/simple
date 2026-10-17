@@ -159,15 +159,8 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
             await TryAsync(failures, () => DirectoryTree.DeleteAsync(InstanceStore.RunDirectory(Repository, instance), store.DeleteWait, CancellationToken.None));
         }
 
-        await TryAsync(failures, () =>
-        {
-            if (Directory.Exists(Home))
-            {
-                Directory.Delete(Home, recursive: true);
-            }
-
-            return Task.CompletedTask;
-        });
+        // Home holds the program logs of the processes just killed (#80).
+        await TryAsync(failures, () => DirectoryTree.DeleteAsync(Home, store.DeleteWait, CancellationToken.None));
 
         if (failures.Count > 0)
         {

@@ -116,6 +116,26 @@ public sealed class TerminalConnectionTests
         Assert.DoesNotContain(after, l => l.StartsWith("Retry ", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task ARetryAfterAFailureNobodyForesawSaysWhatFailed()
+    {
+        await using var server = new FakeServer();
+        await server.StartAsync();
+        var time = new StillClock();
+        await using var terminal = new Terminal(server.Url, server.Pin, time);
+        await Until(() => terminal.Connection.Status.State == TerminalState.Connected);
+
+        // The reading that asks whether the failed stream settled throws
+        // instead: a type the session does not catch, so only the retry sees it.
+        var before = terminal.Log.Count;
+        time.OnNextReading = () => throw new InvalidOperationException("the clock broke");
+        await server.StopAsync();
+        await Until(() => terminal.Log.Skip(before).Any(l => l.StartsWith("Retry 1 ", StringComparison.Ordinal)));
+
+        var retry = terminal.Log.Skip(before).First(l => l.StartsWith("Retry 1 ", StringComparison.Ordinal));
+        Assert.EndsWith("after InvalidOperationException: the clock broke", retry, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("2,3", "车载终端版本需要更新，请联系系统维护人员")]
     [InlineData("0", "车载终端与服务端版本不一致，请联系系统维护人员")]

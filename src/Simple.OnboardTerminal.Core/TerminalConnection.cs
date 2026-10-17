@@ -133,7 +133,11 @@ public sealed partial class TerminalConnection : IDisposable
     public async Task RunAsync(CancellationToken stopping)
     {
         LogStarting(logger, settings.VehicleId!, settings.Server, Version);
-        var pipeline = ReconnectPolicy.Create(time, (attempt, delay, _) => LogRetry(logger, attempt, delay.TotalSeconds));
+        // What failed goes with the retry: a failure of a type nobody
+        // foresaw is logged nowhere else (#80). The program log redacts it (ADR 0034).
+        var pipeline = ReconnectPolicy.Create(
+            time,
+            (attempt, delay, failure) => LogRetry(logger, attempt, delay.TotalSeconds, failure is null ? "nothing" : $"{failure.GetType().Name}: {failure.Message}"));
         while (!stopping.IsCancellationRequested)
         {
             try
@@ -393,8 +397,8 @@ public sealed partial class TerminalConnection : IDisposable
     [LoggerMessage(Level = LogLevel.Information, Message = "Disconnected ({Code}): {Detail} {Debug}")]
     private static partial void LogDisconnected(ILogger logger, string code, string detail, string debug);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Retry {Attempt} in {Seconds:F1} s")]
-    private static partial void LogRetry(ILogger logger, int attempt, double seconds);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Retry {Attempt} in {Seconds:F1} s after {Failure}")]
+    private static partial void LogRetry(ILogger logger, int attempt, double seconds, string failure);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "State {State}: {ScreenText}")]
     private static partial void LogState(ILogger logger, TerminalState state, string screenText);

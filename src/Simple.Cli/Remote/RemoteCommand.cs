@@ -66,6 +66,8 @@ public static class RemoteCommand
             $"Run a command on the remote machine named by {SshMachine.Variable} (an alias in your SSH configuration), against exactly this clone's "
             + "working tree: uncommitted changes and new files are sent as a snapshot commit, nothing is pushed. The instance there is the same "
             + "as here. Like simple itself it starts a local system only: on that machine, on loopback, with its own SQL Server instance. "
+            + "Commands run there with CI=true, so restore is locked as on CI: a packages.lock.json that does not match its project fails with NU1004 "
+            + "(CI's separate check that the lock files are up to date is not run there). "
             + "It ends with the exit code of the command it ran there, or: " + SimpleCommand.ExitCodesOf("remote"));
         foreach (var name in RemotePlan.Commands)
         {

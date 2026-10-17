@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using Polly;
 using Polly.Retry;
 using Simple.MesGateway.Configuration;
+using Simple.Logging;
 using Simple.MesGateway.Sources;
 
 namespace Simple.MesGateway.Rounds;
@@ -88,6 +89,9 @@ public sealed partial class RoundReader(
 
     private void Fail(long round, DateTimeOffset readAt, MesReadFailure failure, Exception? exception)
     {
+        // The snapshot is served to anyone who asks, and a driver's error can
+        // carry its connection string (#80).
+        failure = failure with { Message = Redaction.Redact(failure.Message) };
         snapshots.Publish(new MesSnapshot(round, readAt, false, failure, null));
         LogFailed(logger, exception, round, failure.Kind, failure.Message);
     }

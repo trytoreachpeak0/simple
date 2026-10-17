@@ -136,6 +136,24 @@ public sealed class RoundReaderTests : IDisposable
         Assert.Equal(3, snapshots.Latest.Round);
     }
 
+    /// <summary>The snapshot is served to anyone who asks, and a driver's error can carry its connection string (#80).</summary>
+    [Fact]
+    public async Task AFailedReadIsServedWithItsCredentialsTakenOut()
+    {
+        source.FailuresLeft = 1;
+        source.FailureText = "ORA-01017: invalid username/password; logon denied (User Id=SIMPLE_RO;Password=not-a-real-password;Data Source=mes)";
+
+        await reader.StartAsync(Cancel);
+        await AdvanceUntilAsync(() => snapshots.Latest.Round >= 1);
+        var failed = snapshots.Latest;
+        await reader.StopAsync(Cancel);
+
+        Assert.Equal(MesReadFailure.Read, failed.Failure!.Kind);
+        Assert.DoesNotContain("not-a-real-password", failed.Failure.Message, StringComparison.Ordinal);
+        Assert.Contains("ORA-01017", failed.Failure.Message, StringComparison.Ordinal);
+        Assert.Contains($"Password={Simple.Logging.Redaction.Mask}", failed.Failure.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task RetryWaitsAreJittered()
     {
@@ -222,6 +240,8 @@ public sealed class RoundReaderTests : IDisposable
 
         public int FailuresLeft { get; set; }
 
+        public string FailureText { get; set; } = FailureMessage;
+
         public int MalformedLeft { get; set; }
 
         public int ReturnNothingLeft { get; set; }
@@ -250,7 +270,7 @@ public sealed class RoundReaderTests : IDisposable
             if (FailuresLeft > 0)
             {
                 FailuresLeft--;
-                throw new IOException(FailureMessage);
+                throw new IOException(FailureText);
             }
 
             if (ReturnNothingLeft > 0)

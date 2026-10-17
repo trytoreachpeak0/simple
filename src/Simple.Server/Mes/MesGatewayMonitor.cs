@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Simple.Logging;
 using Simple.Server.Events;
 
 namespace Simple.Server.Mes;
@@ -43,7 +44,7 @@ public sealed partial class MesGatewayMonitor(
 
     /// <summary>The gateway did not answer, or not with a snapshot.</summary>
     public Task GatewayUnreachableAsync(string error, CancellationToken cancellationToken) =>
-        ObserveAsync(o => o with { Reachable = false, CheckedAt = time.GetUtcNow(), GatewayError = error }, cancellationToken);
+        ObserveAsync(o => o with { Reachable = false, CheckedAt = time.GetUtcNow(), GatewayError = Redaction.Redact(error) }, cancellationToken);
 
     /// <summary>
     /// The gateway answered with its latest round. Round 0 (a gateway that
@@ -53,6 +54,13 @@ public sealed partial class MesGatewayMonitor(
     public Task SnapshotReceivedAsync(MesSnapshot snapshot, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        // Errors go into the status API and the event record redacted, as in
+        // a program log, whatever the gateway sent (#80).
+        if (snapshot.Failure is { } failure)
+        {
+            snapshot = snapshot with { Failure = failure with { Message = Redaction.Redact(failure.Message) } };
+        }
+
         var now = time.GetUtcNow();
         return ObserveAsync(
             o => o with
