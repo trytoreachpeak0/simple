@@ -65,7 +65,9 @@ reviewed in pull requests like the code is.
 | `src/Simple.Server` | Server host: domain logic, dispatch, API, event record |
 | `src/Simple.Server.Console` | Server console; runs in the server process |
 | `src/Simple.Server.Riot` | Fleet-manager (RIoT) adapter; runs in the server process |
-| `src/Simple.OnboardTerminal` | Onboard terminal (WPF, `net10.0-windows`) |
+| `src/Simple.OnboardTerminal` | Onboard terminal: the WPF shell (`net10.0-windows`) |
+| `src/Simple.OnboardTerminal.Core` | Onboard terminal core without WPF: connection to the server, messages, onboard inputs |
+| `src/Simple.OnboardTerminal.Headless` | The onboard terminal without a window, for the local system, tests and CI; its test input listens on loopback only |
 | `src/Simple.MesGateway` | MES gateway, a small separate process |
 | `src/Simple.IoSimulator` | Simulator for the vehicle's IO module |
 | `src/Simple.Protocol` | Server ↔ onboard protocol contracts |
@@ -238,10 +240,15 @@ single-context layout). Do not start a parallel set of these by hand.
   install packages) may point at a real fleet manager, a real vehicle or a
   production MES, or enable real work by default. Only placeholder values
   or loopback addresses of fakes appear in these defaults.
-- Until the server API has authentication, the server listens on
-  loopback only and refuses to start on any other address.
-  `Simple.Server.Tests` checks every `appsettings*.json` in the repository
-  for hosts that are neither loopback nor LocalDB.
+- Until the server API has authentication, the API listens on loopback
+  only, over plain HTTP, and the server refuses to start on any other API
+  address. The onboard terminal endpoint (`Simple:OnboardTerminals:Url`)
+  is the one exception (ADR 0025): it may listen on the address of one
+  named network interface, never a wildcard, serves only the terminal
+  protocol over TLS 1.2 with the certificate the terminals pin, and
+  answers nothing else. `Simple.Server.Tests` checks every
+  `appsettings*.json` in the repository for hosts that are neither
+  loopback nor LocalDB.
 - `sites/<site>/` holds a site's starting business configuration: areas,
   maps, task types, the vehicle list and similar settings, with real
   values. It holds no endpoints the product connects to and no
