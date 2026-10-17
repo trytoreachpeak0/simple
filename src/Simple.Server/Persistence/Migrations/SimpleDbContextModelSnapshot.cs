@@ -170,6 +170,26 @@ namespace Simple.Server.Persistence.Migrations
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("Simple.Server.Listeners.ConsoleCertificateRecord", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("int");
+
+                    b.Property<byte[]>("Certificate")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ConsoleCertificates", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ConsoleCertificates_TheOne", "[Id] = 1");
+                        });
+                });
+
             modelBuilder.Entity("Simple.Server.Accounts.LoginRecord", b =>
                 {
                     b.HasOne("Simple.Server.Accounts.Account", null)

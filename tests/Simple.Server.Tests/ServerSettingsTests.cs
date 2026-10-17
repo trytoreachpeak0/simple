@@ -30,6 +30,50 @@ public sealed class ServerSettingsTests
     public void TheDevelopmentDefaultsAreValid() => Assert.Empty(Check());
 
     [Theory]
+    [InlineData("https://172.19.205.222:5443")]
+    [InlineData("https://127.0.0.1:5443")]
+    [InlineData("https://[fe80::1]:5443")]
+    public void TheConsoleMayListenOverHttpsOnTheAddressOfOneInterface(string url) =>
+        Assert.Empty(Check((ServerSettings.ConsoleUrlKey, url)));
+
+    [Theory]
+    [InlineData("http://172.19.205.222:5443", "is not an https:// address")]
+    [InlineData("https://0.0.0.0:5443", "listens on every network interface")]
+    [InlineData("https://[::]:5443", "listens on every network interface")]
+    [InlineData("https://*:5443", "does not name an IP address")]
+    [InlineData("https://localhost:5443", "does not name an IP address")]
+    [InlineData("https://factory01:5443", "does not name an IP address")]
+    public void AConsoleAddressOnEveryInterfaceWithoutTlsOrWithoutAnIpIsRefusedByName(string url, string reason)
+    {
+        var failure = Assert.Single(Check((ServerSettings.ConsoleUrlKey, url)));
+        Assert.Contains(ServerSettings.ConsoleUrlKey, failure, StringComparison.Ordinal);
+        Assert.Contains(reason, failure, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("http://172.19.205.222:5080")]
+    [InlineData("http://127.0.0.1:5080")]
+    public void TheOverviewMayListenInPlainHttpOnTheAddressOfOneInterface(string url) =>
+        Assert.Empty(Check((ServerSettings.OverviewUrlKey, url)));
+
+    [Theory]
+    [InlineData("https://172.19.205.222:5080", "is not an http:// address")]
+    [InlineData("http://0.0.0.0:5080", "listens on every network interface")]
+    [InlineData("http://[::]:5080", "listens on every network interface")]
+    [InlineData("http://*:5080", "does not name an IP address")]
+    [InlineData("http://factory01:5080", "does not name an IP address")]
+    public void AnOverviewAddressOnEveryInterfaceOrOverTlsIsRefusedByName(string url, string reason)
+    {
+        var failure = Assert.Single(Check((ServerSettings.OverviewUrlKey, url)));
+        Assert.Contains(ServerSettings.OverviewUrlKey, failure, StringComparison.Ordinal);
+        Assert.Contains(reason, failure, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AConsoleAddressOffLoopbackDoesNotLetTheApiOffLoopback() =>
+        Assert.NotEmpty(Check((ServerSettings.ConsoleUrlKey, "https://172.19.205.222:5443"), ("urls", "http://172.19.205.222:5180")));
+
+    [Theory]
     [InlineData("http://127.0.0.1:5180;http://[::1]:5180")]
     [InlineData("http://localhost:5180")]
     [InlineData("http://127.0.0.2:5181")]

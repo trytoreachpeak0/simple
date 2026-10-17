@@ -5,18 +5,28 @@ using Simple.Logging;
 using Simple.Server.Accounts;
 using Simple.Server.Configuration;
 using Simple.Server.Events;
+using Simple.Server.Listeners;
 using Simple.Server.Mes;
 using Simple.Server.OnboardTerminals;
 using Simple.Server.Persistence;
 using Simple.Server.Riot;
 using Simple.Server.Status;
 
-// Simple.Server set-admin-password: the one way to set the administrator's
-// password (ADR 0045). It runs with the server's own settings and exits.
-var command = args.FirstOrDefault() == AdminPasswordCommand.Name ? AdminPasswordCommand.Name : null;
+// Server commands run with the server's own settings and exit:
+// set-admin-password, the one way to set the administrator's password
+// (ADR 0045); export-console-certificate <file> and
+// discard-console-certificate (ADR 0046).
+string[] commands = [AdminPasswordCommand.Name, ConsoleCertificateCommands.ExportName, ConsoleCertificateCommands.DiscardName];
+var command = commands.Contains(args.FirstOrDefault()) ? args[0] : null;
+string? commandFile = null;
 if (command is not null)
 {
     args = args[1..];
+    if (command == ConsoleCertificateCommands.ExportName && args.Length > 0 && !args[0].StartsWith('-'))
+    {
+        commandFile = args[0];
+        args = args[1..];
+    }
 }
 
 var builder = WebApplication.CreateBuilder(args);
@@ -63,8 +73,11 @@ builder.Services.AddDbContext<SimpleDbContext>((services, options) =>
 builder.Services.AddScoped<EventStore>();
 builder.Services.AddSingleton<ServerInfo>();
 builder.Services.AddHostedService<ServerLifecycleRecorder>();
-// After the recorder, which migrates the database: the logins are read from it.
+// After the recorder, which migrates the database: the logins and the console
+// certificate are read from it.
 builder.Services.AddLogin();
+builder.Services.AddSingleton<ConsoleEndpoint>();
+builder.Services.AddHostedService<ConsoleCertificateLoader>();
 builder.Services.AddScoped<AccountChanges>();
 builder.Services.AddOptions<MesGatewaySettings>()
     .BindConfiguration(MesGatewaySettings.Section)
@@ -85,7 +98,11 @@ builder.Services.AddGrpc(options => options.IgnoreUnknownServices = true);
 // certificate's key, in the key store of whoever runs the command.
 if (command is null)
 {
-    builder.WebHost.ConfigureKestrel(kestrel => kestrel.ApplicationServices.GetRequiredService<OnboardEndpoint>().Configure(kestrel));
+    builder.WebHost.ConfigureKestrel(kestrel =>
+    {
+        kestrel.ApplicationServices.GetRequiredService<OnboardEndpoint>().Configure(kestrel);
+        kestrel.ApplicationServices.GetRequiredService<ConsoleEndpoint>().Configure(kestrel);
+    });
 }
 
 builder.Services.AddHealthChecks().AddDbContextCheck<SimpleDbContext>(tags: ["ready"]);
@@ -101,11 +118,16 @@ try
     app = builder.Build();
     if (command is not null)
     {
-        return await AdminPasswordCommand.RunAsync(app.Services, AdminPasswordCommand.Input(), Console.Out, CancellationToken.None);
+        return command switch
+        {
+            ConsoleCertificateCommands.ExportName => await ConsoleCertificateCommands.ExportAsync(app.Services, commandFile, Console.Out, CancellationToken.None),
+            ConsoleCertificateCommands.DiscardName => await ConsoleCertificateCommands.DiscardAsync(app.Services, Console.Out, CancellationToken.None),
+            _ => await AdminPasswordCommand.RunAsync(app.Services, AdminPasswordCommand.Input(), Console.Out, CancellationToken.None),
+        };
     }
 
     app.UseRouting();
-    app.Use(OnboardEndpoint.KeepToOwnListener);
+    app.Use(Listener.KeepToOwnListener);
     app.UseLogin();
     // Every endpoint names who may use it (Access, ADR 0014, 0045); one that
     // names nobody is closed to everyone.
@@ -119,6 +141,10 @@ try
     app.MapStatusEndpoints();
     app.MapEventEndpoints();
 
+    // Builds every endpoint now, so that a misuse caught while they are built
+    // (Access.OnboardTerminal on a non-terminal endpoint, ServedOnOverview on
+    // one that needs login) refuses the start instead of failing requests.
+    _ = app.Services.GetRequiredService<Microsoft.AspNetCore.Routing.EndpointDataSource>().Endpoints;
     await app.StartAsync();
     await app.WaitForShutdownAsync();
     return 0;

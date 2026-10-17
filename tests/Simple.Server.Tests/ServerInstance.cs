@@ -68,7 +68,7 @@ public sealed class ServerInstance(
         factory?.Services ?? throw new InvalidOperationException("The server is not running.");
 
     /// <summary>With <c>kestrel</c>: where the API listens.</summary>
-    public Uri ApiAddress => Addresses().Single(a => a.Scheme == Uri.UriSchemeHttp);
+    public Uri ApiAddress => Addresses().Single(a => a.Scheme == Uri.UriSchemeHttp && a.Host == "127.0.0.1");
 
     /// <summary>The administrator's password in every test server, set the way the server command sets it.</summary>
     public const string AdminPassword = "admin-password-for-tests";
@@ -252,6 +252,7 @@ public sealed class ServerInstance(
                 if (OperatingSystem.IsWindows())
                 {
                     ServerCertificate.Delete(Database.ServerKeyName, TestKeyStore.IsMachine);
+                    ServerCertificate.Delete(Database.ConsoleKeyName, TestKeyStore.IsMachine);
                 }
 
                 try
