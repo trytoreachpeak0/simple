@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Simple.Cli.Instances;
 using Simple.Cli.Processes;
+using Simple.Logging;
 
 namespace Simple.Cli;
 
@@ -96,7 +97,13 @@ public sealed partial class LocalSystem(
             }
 
             progress.WriteLine($"Instance {instance} was not stopped with simple down last time; its processes are gone. Starting afresh.");
-            store.Delete(existing);
+            if (await ForgetAsync(existing, cancellationToken) is { } stillHeld)
+            {
+                return Outcome.Fail(
+                    ExitCodes.Unexpected,
+                    $"{stillHeld.Message} The state file {store.StatePath(instance)} is kept: run simple up again once they are released.",
+                    new { Instance = instance, Held = stillHeld.Files });
+            }
         }
 
         if (await VerifySqlServerAsync(sqlServer, cancellationToken) is { } refused)
@@ -169,7 +176,7 @@ public sealed partial class LocalSystem(
                     index++;
                     portsOf[name] = ports.Skip(next).Take(component.PortsPerProcess).ToList();
                     next += component.PortsPerProcess;
-                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name), options.KeyStore)));
+                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name), store.ProgramLogDirectory(instance, name), options.KeyStore)));
                 }
             }
         }
@@ -200,8 +207,8 @@ public sealed partial class LocalSystem(
                     || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
                 {
                     var stopped = await StopAllAsync(state, cancellationToken);
-                    store.Delete(state);
-                    return Outcome.Fail(ExitCodes.NotReady, $"{name} could not be started: {e.Message}", stopped);
+                    var stillHeld = await ForgetAsync(state, cancellationToken);
+                    return Outcome.Fail(ExitCodes.NotReady, $"{name} could not be started: {e.Message}{Kept(stillHeld, instance)}", stopped);
                 }
 
                 processes.Add(new ProcessRecord(name, component.Name, context.Index, started.Pid, started.StartedAt, executable, context.Ports, log));
@@ -212,11 +219,11 @@ public sealed partial class LocalSystem(
             if (failure is not null)
             {
                 var stopped = await StopAllAsync(state, cancellationToken);
-                store.Delete(state);
+                var stillHeld = await ForgetAsync(state, cancellationToken);
                 var tail = Tail(failure.Value.Process.Log, 20);
                 return Outcome.Fail(
                     ExitCodes.NotReady,
-                    $"{failure.Value.Process.Name} {failure.Value.Reason}. Its log: {failure.Value.Process.Log}",
+                    $"{failure.Value.Process.Name} {failure.Value.Reason}. Its log: {failure.Value.Process.Log}{Kept(stillHeld, instance)}",
                     new { failure.Value.Process.Name, failure.Value.Reason, failure.Value.Process.Log, LogTail = tail, Stopped = stopped },
                     ["Last lines of the log:", .. tail]);
             }
@@ -255,7 +262,13 @@ public sealed partial class LocalSystem(
                     new { Instance = instance, Stopped = stopped });
             }
 
-            store.Delete(state);
+            if (await ForgetAsync(state, cancellationToken) is { } stillHeld)
+            {
+                return Outcome.Fail(
+                    ExitCodes.Unexpected,
+                    $"{stillHeld.Message} The state file {store.StatePath(instance)} is kept: run simple down{(reset ? " --reset" : string.Empty)} again once they are released.",
+                    new { Instance = instance, Stopped = stopped, Held = stillHeld.Files });
+            }
         }
 
         sqlServer = state?.SqlServer ?? store.ReadSqlServer(instance) ?? sqlServer;
@@ -385,22 +398,47 @@ public sealed partial class LocalSystem(
         return Outcome.Ok(new { Instance = instance, Events = events }, events.Select(FormatEvent).ToList());
     }
 
-    public Outcome Logs(string instance, string name, int? tail)
+    /// <summary>
+    /// A process's program log (ADR 0034), its files oldest first; with
+    /// <paramref name="output"/>, what it wrote to its console instead (or,
+    /// for <c>build</c>, the last build's output). A process with console
+    /// output but no program log, or an empty one, is pointed to
+    /// <c>--output</c>: it may have stopped before its log started.
+    /// </summary>
+    public Outcome Logs(string instance, string name, int? tail, bool output)
     {
-        var path = store.LogPath(instance, name);
-        if (!LogName().IsMatch(name) || !File.Exists(path))
+        IReadOnlyList<string> files = !LogName().IsMatch(name) ? []
+            : output ? (File.Exists(store.LogPath(instance, name)) ? [store.LogPath(instance, name)] : [])
+            : ProgramLog.Files(store.ProgramLogDirectory(instance, name));
+        var lines = tail is { } count ? TailOf(files, count) : files.SelectMany(ReadLines).ToList();
+        if (!output && lines.Count == 0 && LogName().IsMatch(name) && File.Exists(store.LogPath(instance, name)))
         {
-            var known = Directory.Exists(store.LogDirectory(instance))
-                ? Directory.EnumerateFiles(store.LogDirectory(instance), "*.log").Select(Path.GetFileNameWithoutExtension).Order().ToList()
+            return Outcome.Fail(
+                ExitCodes.NotRunning,
+                $"{name} of instance {instance} has no program log yet: it may have stopped before its log started. "
+                + $"What it printed to its console: simple logs {name} --output");
+        }
+
+        if (files.Count == 0)
+        {
+            var logs = store.LogDirectory(instance);
+            var programLogs = Directory.Exists(logs)
+                ? Directory.EnumerateDirectories(logs).Where(d => ProgramLog.Files(d).Count > 0).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToList()
+                : [];
+            var outputs = Directory.Exists(logs)
+                ? Directory.EnumerateFiles(logs, "*.log").Select(Path.GetFileNameWithoutExtension).Order(StringComparer.Ordinal).ToList()
                 : [];
             return Outcome.Fail(
                 ExitCodes.NotRunning,
-                $"Instance {instance} has no log '{name}'. "
-                + (known.Count > 0 ? $"Logs: {string.Join(", ", known)}." : "It has never been started here."));
+                $"Instance {instance} has no {(output ? "console output" : "program log")} '{name}'. "
+                + (programLogs.Count + outputs.Count > 0
+                    ? $"Program logs: {Names(programLogs)}. Console output (--output): {Names(outputs)}."
+                    : "It has never been started here."));
         }
 
-        var lines = tail is { } count ? Tail(path, count) : ReadLines(path);
-        return Outcome.Ok(new { Instance = instance, Name = name, Path = path, Lines = lines }, lines);
+        return Outcome.Ok(new { Instance = instance, Name = name, Output = output, Paths = files, Lines = lines }, lines);
+
+        static string Names(List<string?> names) => names.Count > 0 ? string.Join(", ", names) : "none";
     }
 
     /// <summary>Asks the SQL Server which instance it is (<see cref="SqlServerTarget.VerifyAsync"/>); null when it may be used.</summary>
@@ -424,6 +462,23 @@ public sealed partial class LocalSystem(
 
     private static Outcome NotRunning(string instance) =>
         Outcome.Fail(ExitCodes.NotRunning, $"Instance {instance} is not running. Run simple up.");
+
+    /// <summary>Forgets a stopped instance (<see cref="InstanceStore.DeleteAsync"/>); null when done, otherwise what is still held.</summary>
+    private async Task<FilesHeldException?> ForgetAsync(InstanceState state, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await store.DeleteAsync(state, cancellationToken);
+            return null;
+        }
+        catch (FilesHeldException e)
+        {
+            return e;
+        }
+    }
+
+    private string Kept(FilesHeldException? held, string instance) =>
+        held is null ? string.Empty : $" {held.Message} The state file {store.StatePath(instance)} is kept: simple down deletes them once they are released.";
 
     private static bool IsAlive(ProcessRecord process)
     {
@@ -490,9 +545,13 @@ public sealed partial class LocalSystem(
         var targetPath = lines[^1];
         var source = Path.GetDirectoryName(targetPath)!;
         var bin = InstanceStore.BinDirectory(Repository, instance, component.Name);
-        if (Directory.Exists(bin))
+        try
         {
-            Directory.Delete(bin, recursive: true);
+            await DirectoryTree.DeleteAsync(bin, store.DeleteWait, cancellationToken);
+        }
+        catch (FilesHeldException e)
+        {
+            return (null, Outcome.Fail(ExitCodes.Unexpected, $"The previous copy of {component.Name} could not be replaced: {e.Message}", new { component.Project, Held = e.Files }));
         }
 
         CopyDirectory(source, bin);
@@ -553,7 +612,7 @@ public sealed partial class LocalSystem(
         var component = Components.All.First(c => c.Name == process.Component);
         var portsOf = state.Processes.ToDictionary(p => p.Name, p => p.Ports);
         var context = new ComponentContext(
-            state.Instance, state.SqlServer, process.Index, process.Ports, portsOf, store.ProcessDirectory(state.Instance, process.Name));
+            state.Instance, state.SqlServer, process.Index, process.Ports, portsOf, store.ProcessDirectory(state.Instance, process.Name), store.ProgramLogDirectory(state.Instance, process.Name));
         return component.IsReady(context, Http, cancellationToken);
     }
 
@@ -647,6 +706,18 @@ public sealed partial class LocalSystem(
         while (reader.ReadLine() is { } line)
         {
             lines.Add(line);
+        }
+
+        return lines;
+    }
+
+    /// <summary>The last <paramref name="count"/> lines of the files together, read newest file first until there are enough.</summary>
+    private static List<string> TailOf(IReadOnlyList<string> files, int count)
+    {
+        var lines = new List<string>();
+        for (var i = files.Count - 1; i >= 0 && lines.Count < count; i--)
+        {
+            lines.InsertRange(0, ReadLines(files[i]).TakeLast(count - lines.Count));
         }
 
         return lines;

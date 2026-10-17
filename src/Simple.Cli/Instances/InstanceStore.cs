@@ -17,6 +17,9 @@ public sealed class InstanceStore(string home)
 
     public string Home { get; } = Path.GetFullPath(home);
 
+    /// <summary>How long deleting an instance's build output waits for files that are still held.</summary>
+    public TimeSpan DeleteWait { get; init; } = TimeSpan.FromSeconds(10);
+
     public static string DefaultHome() =>
         Environment.GetEnvironmentVariable(HomeVariable) is { Length: > 0 } configured
             ? configured
@@ -74,7 +77,15 @@ public sealed class InstanceStore(string home)
 
     public string LogDirectory(string instance) => Path.Combine(InstanceDirectory(instance), "logs");
 
+    /// <summary>What a process wrote to its console (stdout and stderr), or the last build's output; written anew at each up.</summary>
     public string LogPath(string instance, string processName) => Path.Combine(LogDirectory(instance), $"{processName}.log");
+
+    /// <summary>
+    /// A process's program log directory (ADR 0034), given to it as
+    /// <c>--Simple:Logs:Directory</c>. The program limits its size itself and
+    /// keeps it from one up to the next.
+    /// </summary>
+    public string ProgramLogDirectory(string instance, string processName) => Path.Combine(LogDirectory(instance), processName);
 
     /// <summary>A process's own files, for example an onboard terminal's settings. Kept after down; up writes them anew.</summary>
     public string ProcessDirectory(string instance, string processName) => Path.Combine(InstanceDirectory(instance), "processes", processName);
@@ -108,16 +119,17 @@ public sealed class InstanceStore(string home)
         File.Move(temporary, path, overwrite: true);
     }
 
-    /// <summary>Forgets a stopped instance: its state file and the build output it ran from. Its logs stay.</summary>
-    public void Delete(InstanceState state)
+    /// <summary>
+    /// Forgets a stopped instance: the build output it ran from, then its
+    /// state file. Its logs stay. The state file goes last, so an instance
+    /// whose files are still held stays recorded and the next down tries again.
+    /// </summary>
+    /// <exception cref="FilesHeldException">Files in the build output were still held after <see cref="DeleteWait"/>; the state file is kept.</exception>
+    public async Task DeleteAsync(InstanceState state, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(state);
+        await DirectoryTree.DeleteAsync(RunDirectory(state.Repository, state.Instance), DeleteWait, cancellationToken);
         File.Delete(StatePath(state.Instance));
-        var run = RunDirectory(state.Repository, state.Instance);
-        if (Directory.Exists(run))
-        {
-            Directory.Delete(run, recursive: true);
-        }
     }
 
     /// <summary>Ports recorded by every other instance with a state file, running or not.</summary>

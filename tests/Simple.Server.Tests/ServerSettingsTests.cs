@@ -165,6 +165,7 @@ public sealed class ServerSettingsTests
     public async Task TheServerRefusesToStartAndNamesTheSetting(string argument, string message)
     {
         var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var logDirectory = Path.Combine(Path.GetTempPath(), "simple-server-tests", instance);
         var start = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Simple.Server.exe" : "Simple.Server"))
         {
             WorkingDirectory = AppContext.BaseDirectory,
@@ -176,6 +177,7 @@ public sealed class ServerSettingsTests
                 $"--{ServerSettings.InstanceKey}={instance}",
                 $"--{ServerSettings.ConnectionStringKey}=Server=tcp:127.0.0.1,1;Integrated Security=true;Connect Timeout=1",
                 $"--{ServerSettings.ServerKeyStoreKey}={TestKeyStore.Name}",
+                $"--Simple:Logs:Directory={logDirectory}",
                 argument,
             },
         };
@@ -192,6 +194,10 @@ public sealed class ServerSettingsTests
             Assert.Equal(2, process.ExitCode);
             Assert.Contains("The server refuses to start", error, StringComparison.Ordinal);
             Assert.Contains(message, error, StringComparison.Ordinal);
+            // Run as a service, nobody reads standard error: the reason is in the program log too.
+            var log = string.Concat(Simple.Logging.ProgramLog.Files(logDirectory).Select(File.ReadAllText));
+            Assert.Contains("[FTL] Simple.Logging.ProgramLog: The server refuses to start", log, StringComparison.Ordinal);
+            Assert.Contains(message, log, StringComparison.Ordinal);
         }
         finally
         {
@@ -204,6 +210,16 @@ public sealed class ServerSettingsTests
             if (OperatingSystem.IsWindows())
             {
                 Simple.Server.OnboardTerminals.ServerCertificate.Delete(new ServerSettings { Instance = instance }.ServerKeyName, TestKeyStore.IsMachine);
+            }
+
+            try
+            {
+                Directory.Delete(logDirectory, recursive: true);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Best effort: a file just closed can still be held for a moment
+                // (a virus scan, or a process that has it loaded), and a leftover temp folder does no harm.
             }
         }
     }

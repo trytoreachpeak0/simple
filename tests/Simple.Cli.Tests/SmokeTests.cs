@@ -50,9 +50,15 @@ public sealed class SmokeTests
             e => e.GetProperty("type").GetString() == "server.started"
                 && e.GetProperty("data").GetProperty("processId").GetInt32() == serverA.Pid);
 
+        // Each process writes its own program log (ADR 0034), beginning with a line saying it started.
         var log = await cli.RunAsync("logs", "server", "--instance", a);
         Assert.Equal(ExitCodes.Success, log.ExitCode);
+        Assert.Contains("Simple.Logging.ProgramLog: Server started (version ", log.Output, StringComparison.Ordinal);
+        Assert.Contains($", process {serverA.Pid})", log.Output, StringComparison.Ordinal);
         Assert.Contains("Application started", log.Output, StringComparison.Ordinal);
+        var gatewayLog = await cli.RunAsync("logs", "mes-gateway", "--instance", a);
+        Assert.Equal(ExitCodes.Success, gatewayLog.ExitCode);
+        Assert.Contains("Simple.Logging.ProgramLog: MesGateway started (version ", gatewayLog.Output, StringComparison.Ordinal);
 
         // down stops a gracefully: its processes are gone and the server recorded its stop.
         var gatewayA = Process(ups[0].Output, "mes-gateway");
@@ -83,13 +89,13 @@ public sealed class SmokeTests
         // --reset drops a's database and no other.
         Assert.True(await cli.DatabaseExistsAsync(a));
         var reset = await cli.RunJsonAsync("down", "--reset", "--instance", a);
-        Assert.Equal(ExitCodes.Success, reset.ExitCode);
+        Assert.True(reset.ExitCode == ExitCodes.Success, $"down --reset exited with {reset.ExitCode}: {reset.Output}{Environment.NewLine}{reset.Error}");
         Assert.True(reset.Output.GetProperty("result").GetProperty("databaseDropped").GetBoolean());
         Assert.False(await cli.DatabaseExistsAsync(a));
         Assert.True(await cli.DatabaseExistsAsync(b));
 
         var downB = await cli.RunJsonAsync("down", "--reset", "--instance", b);
-        Assert.Equal(ExitCodes.Success, downB.ExitCode);
+        Assert.True(downB.ExitCode == ExitCodes.Success, $"down --reset exited with {downB.ExitCode}: {downB.Output}{Environment.NewLine}{downB.Error}");
         Assert.False(await cli.DatabaseExistsAsync(b));
     }
 

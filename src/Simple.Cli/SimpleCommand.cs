@@ -95,7 +95,7 @@ public static partial class SimpleCommand
 
         var logName = new Argument<string>("name")
         {
-            Description = "A process of the instance as status lists it (server), or build for the last build's output.",
+            Description = "A process of the instance as status lists it (server), or build (with --output) for the last build's output.",
         };
 
         var tail = new Option<int?>("--tail")
@@ -172,13 +172,22 @@ public static partial class SimpleCommand
         events.SetAction((parse, cancellationToken) => RunAsync(parse, environment, (system, instance) =>
             system.EventsAsync(instance, parse.GetValue(since), cancellationToken)));
 
-        var logs = new Command("logs", "Print a process's log. Logs stay after down, until the next up. " + ExitCodesOf("logs"))
+        var output = new Option<bool>("--output")
+        {
+            Description = "What the process wrote to its console instead: startup refusals and crashes the runtime printed. Written anew at each up.",
+        };
+
+        var logs = new Command(
+            "logs",
+            "Print a process's program log, oldest first. The program writes it itself, credentials redacted, and keeps it size-limited from one up to the next. "
+            + ExitCodesOf("logs"))
         {
             logName,
             tail,
+            output,
         };
         logs.SetAction((parse, _) => RunAsync(parse, environment, (system, instance) =>
-            Task.FromResult(system.Logs(instance, parse.GetValue(logName)!, parse.GetValue(tail)))));
+            Task.FromResult(system.Logs(instance, parse.GetValue(logName)!, parse.GetValue(tail), parse.GetValue(output)))));
 
         var signal = new Command(SignalStopCommand.Name, "Internal: sends Ctrl+Break to a process's console.") { Hidden = true };
         var pid = new Argument<int>("pid");
