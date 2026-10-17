@@ -147,7 +147,23 @@ public sealed class RealRiotSettingsTests : IDisposable
     [InlineData("POST", "/api/order/v1/orderRecordPriorityExec", false)]
     [InlineData("PUT", "/api/auth/v1/admin/refreshToken", false)]
     [InlineData("DELETE", "/api/task/v1/route/", false)]
+    [InlineData("GET", "/api/task/v1/task/execActionCommand/BROKERX-1/1/2/3", false)]
+    [InlineData("GET", "/api/task/v1/task/clearVehicleAndCancelOrderTask/BROKERX-1", false)]
+    [InlineData("GET", "/api/task/v1/task/clearVehicle/BROKERX-1", false)]
+    [InlineData("GET", "/api/task/v1/task/clearAllVehicle", false)]
+    [InlineData("GET", "/api/task/v1/task/clearOrderSequence/BROKERX-1", false)]
+    [InlineData("GET", "/api/task/vehicles/setting/get", false)]
+    [InlineData("GET", "/api/order/v1/orderRecord/detailByUpperId/x/extra", false)]
     [InlineData("GET", "/api/order/v1/orderRecord/detailByUpperId/x", true)]
+    [InlineData("GET", "/api/order/v1/orderRecord/detailByOrderId/order-1", true)]
+    [InlineData("GET", "/api/order/v1/orderRecord", true)]
+    [InlineData("GET", "/api/imap/v1/mapInfo/getALLMapInfoExcludeMapJson", true)]
+    [InlineData("GET", "/api/imap/v1/mapInfo/stations/26", true)]
+    [InlineData("GET", "/api/imap/v1/mapInfo/edges/26", true)]
+    [InlineData("GET", "/api/imap/v1/mapResource/removedEdge/26", true)]
+    [InlineData("GET", "/api/imap/v1/mapResource/removedStation/26", true)]
+    [InlineData("GET", "/api/task/vehicles/getVehicleInfoByDeviceKey", true)]
+    [InlineData("GET", "/api/task/v1/task/getVehicleInfo/BROKERX-1", true)]
     [InlineData("POST", "/api/auth/v1/admin/login", true)]
     [InlineData("POST", "/api/task/v1/route/getRouteCostsBy", true)]
     [InlineData("POST", "/api/task/v1/route/queryNearEnd", true)]
@@ -168,6 +184,18 @@ public sealed class RealRiotSettingsTests : IDisposable
         }
 
         Assert.Equal(allowed ? 1 : 0, inner.Sent);
+    }
+
+    /// <summary>The synchronous send goes through the guard too.</summary>
+    [Fact]
+    public void TheGuardAlsoStopsASynchronousSend()
+    {
+        var inner = new Recording();
+        using var client = new HttpClient(new ReadOnlyGuard(inner)) { BaseAddress = new Uri("http://riot.invalid") };
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/order/v1/add/byDefaultMissions");
+
+        Assert.Throws<RealRiotWriteRefusedException>(() => client.Send(request, TestContext.Current.CancellationToken));
+        Assert.Equal(0, inner.Sent);
     }
 
     private static Exception Innermost(Exception e) => e.InnerException is { } inner ? Innermost(inner) : e;
@@ -206,10 +234,13 @@ public sealed class RealRiotSettingsTests : IDisposable
     {
         public int Sent { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(Send(request, cancellationToken));
+
+        protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Sent++;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            return new HttpResponseMessage(HttpStatusCode.OK);
         }
     }
 }

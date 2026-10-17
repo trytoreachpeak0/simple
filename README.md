@@ -303,6 +303,6 @@ dotnet test --project tests/Simple.Contracts.Tests --filter-trait "Contract=BC-O
 
 拒绝的情形：`CI=true`；文件在某个 git 克隆里面（不只是本仓库，任何上层目录有 `.git` 都算，经符号链接或目录联接指进去的也算）；`runUntil` 过期或太远；缺 `url`、`callApiKey`、`vehicleKey`、`mapId`、`vehicleStation`、`reachableStation`、`runUntil`。会建单、发订单命令、急停或上下线的契约在真 RIoT 上一律跳过，理由写在跳过信息里：这些操作要产品负责人逐次授权、现场有人。需要控制面的契约在真 RIoT 上也跳过，故意用错口令登录的那一条也跳过（可能锁账号）。跳过不算通过。
 
-跳过只是第一道。对真 RIoT 发出的每个请求还要经过一层白名单：只放行 GET，以及登录和三个路线查询这四个只读的 POST，别的请求在发出前就被拦下，测试报错。所以哪条契约忘了写跳过，也只会失败，不会让车动。
+跳过只是第一道。对真 RIoT 发出的每个请求还要经过一层白名单（`tests/Simple.Contracts.Tests/Targets/ReadOnlyGuard.cs`）：只放行契约用到的读接口，逐个列名，即读地图、站点、边表、车辆信息、订单详情和订单列表的 GET，以及登录和三个路线查询这四个只读的 POST。不是"GET 都放行"：RIoT 有会动作的 GET，例如发动作指令的 `execActionCommand`、清车并取消订单的 `clearVehicleAndCancelOrderTask`。不在名单上的请求，包括同步发送的，都在发出前被拦下，测试报错。所以哪条契约忘了写跳过，也只会失败，不会让车动；要读一个新接口，先把它加进名单。
 
 **加一条契约**：先找到出处，即行为实验室（`8005-agv-program` 仓库的 `rcs/riot-behavior-lab/`，`knowledge/behavioral-contracts.md` 里的 `BC-…` 编号、`hypotheses/open-questions.md` 里的 `Q-…` 编号、`evidence/` 下的轮次）或上一代的现场记录（`cs#…`）；写成测试，写明出处，只是有人这样说、没测过的另标 `[NotVerifiedOnRealRiot]`；对假 RIoT 跑，红了就改假 RIoT，直到绿。只读的契约在真 RIoT 上也能跑，写操作的开头调 `Target.RequireWrites()`。
