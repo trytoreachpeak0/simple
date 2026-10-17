@@ -50,9 +50,12 @@ public sealed class MesGatewayPoller(
             using var client = clients.CreateClient(HttpClientName);
             snapshot = await client.GetFromJsonAsync<MesSnapshot>(new Uri(settings.Value.Url!, "/api/v1/snapshot"), cancellationToken);
         }
-        catch (Exception e) when (e is HttpRequestException or JsonException
-            || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
+        catch (Exception e) when (!cancellationToken.IsCancellationRequested)
         {
+            // Whatever the fetch throws, the gateway did not answer with a
+            // snapshot: a refused connection, a timeout, a body cut off
+            // midway (HttpIOException, an IOException), bad JSON. Letting one
+            // through would end the poller and, by default, the whole host.
             await monitor.GatewayUnreachableAsync(e is TaskCanceledException ? $"No answer within {settings.Value.RequestTimeout}." : e.Message, cancellationToken);
             throw new GatewayUnreachableException();
         }

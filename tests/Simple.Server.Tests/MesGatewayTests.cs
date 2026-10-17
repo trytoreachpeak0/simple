@@ -150,6 +150,39 @@ public sealed class MesGatewayTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ABodyCutOffMidwayIsAGatewayCauseAndThePollerGoesOn()
+    {
+        server.MesGateway.Answer(Row);
+        await StatusUntilAsync(m => m.Available == true);
+
+        server.MesGateway.CutOffMidBody();
+        var cut = await StatusUntilAsync(m => m.Reachable == false);
+        server.MesGateway.Answer(Row);
+        await StatusUntilAsync(m => m.Available == true);
+
+        Assert.Contains("The response ended prematurely. (stub)", cut.GatewayError, StringComparison.Ordinal);
+        var events = await MesEventsAsync();
+        Assert.Equal([EventTypes.MesUnreachable, EventTypes.MesRecovered], events.Select(e => e.Type));
+        Assert.Equal(MesGatewayMonitor.CauseGateway, events[0].Data!.Value.GetProperty("cause").GetString());
+    }
+
+    [Fact]
+    public async Task AGatewayRestartWhoseRoundsStartOverIsNotAStoppedRound()
+    {
+        // A gateway that has been up a while: far ahead of where a restarted one starts.
+        server.MesGateway.ContinueFrom(100_000);
+        server.MesGateway.Answer(Row);
+        await StatusUntilAsync(m => m.LastRound?.Round >= 100_000);
+
+        server.MesGateway.RestartCounter();
+        await StatusUntilAsync(m => m.LastRound?.Round < 100_000);
+
+        // Longer than StaleAfter (2 s here): the rounds still count as moving.
+        await StaysAsync(TimeSpan.FromSeconds(3), m => m.Available == true);
+        Assert.Empty(await MesEventsAsync());
+    }
+
+    [Fact]
     public async Task AGatewayUnreachableFromTheStartIsRecordedAndARoundZeroIsNotData()
     {
         await server.StopAsync();
@@ -216,6 +249,18 @@ public sealed class MesGatewayTests : IAsyncLifetime
 
             Assert.True(DateTime.UtcNow < deadline, $"The MES status did not get there within 10 s; it is {status.MesGateway}.");
             await Task.Delay(20, Cancel);
+        }
+    }
+
+    /// <summary>Samples the status for the whole of <paramref name="period"/>; the condition must hold every time.</summary>
+    private async Task StaysAsync(TimeSpan period, Func<MesGatewayStatus, bool> condition)
+    {
+        var until = DateTime.UtcNow + period;
+        while (DateTime.UtcNow < until)
+        {
+            var status = await client.GetFromJsonAsync<StatusResponse>(new Uri("/api/v1/status", UriKind.Relative), Cancel);
+            Assert.True(condition(status!.MesGateway), $"The MES status did not stay as expected; it became {status.MesGateway}.");
+            await Task.Delay(50, Cancel);
         }
     }
 

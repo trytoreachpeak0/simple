@@ -20,11 +20,22 @@ public sealed class StubMesGateway
     private string? unreachable;
     private bool notReadYet;
     private bool frozen;
+    private bool cutOff;
 
     public int Fetches { get; private set; }
 
     /// <summary>Good rounds with these rows.</summary>
-    public void Answer(params MesRow[] answer) => Set(() => (rows, failure, unreachable, notReadYet, frozen) = (answer, null, null, false, false));
+    public void Answer(params MesRow[] answer) =>
+        Set(() => (rows, failure, unreachable, notReadYet, frozen, cutOff) = (answer, null, null, false, false, false));
+
+    /// <summary>The gateway restarted: its rounds start over from 1.</summary>
+    public void RestartCounter() => Set(() => round = 0);
+
+    /// <summary>The next round is <paramref name="next"/>, as for a gateway that has been up a while.</summary>
+    public void ContinueFrom(long next) => Set(() => round = next - 1);
+
+    /// <summary>The gateway sends the headers and part of the body, then the connection ends, as when it is killed mid-answer.</summary>
+    public void CutOffMidBody() => Set(() => cutOff = true);
 
     /// <summary>The gateway answers, but its round stays where it is, as when a read hangs.</summary>
     public void Freeze() => Set(() => frozen = true);
@@ -67,8 +78,36 @@ public sealed class StubMesGateway
             var snapshot = notReadYet
                 ? new MesSnapshot(0, null, false, null, null)
                 : new MesSnapshot(frozen ? round : ++round, DateTimeOffset.UtcNow, failure is null, failure, rows);
+            if (cutOff)
+            {
+                var json = JsonSerializer.SerializeToUtf8Bytes(snapshot, JsonSerializerOptions.Web);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StreamContent(new EndsPrematurely(json[..(json.Length / 2)])),
+                };
+            }
+
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(snapshot, options: JsonSerializerOptions.Web) };
         }
+    }
+
+    /// <summary>Gives the bytes it has, then fails the way SocketsHttpHandler does when the connection ends early.</summary>
+    private sealed class EndsPrematurely(byte[] head) : MemoryStream(head)
+    {
+        public override int Read(byte[] buffer, int offset, int count) =>
+            base.Read(buffer, offset, count) is > 0 and var read ? read : throw Ended();
+
+        public override int Read(Span<byte> buffer) =>
+            base.Read(buffer) is > 0 and var read ? read : throw Ended();
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(Read(buffer.Span));
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.FromResult(Read(buffer, offset, count));
+
+        private static HttpIOException Ended() =>
+            new(HttpRequestError.ResponseEnded, "The response ended prematurely. (stub)");
     }
 
     private sealed class Handler(StubMesGateway stub) : HttpMessageHandler
