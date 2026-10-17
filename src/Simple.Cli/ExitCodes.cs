@@ -31,6 +31,7 @@ public static class ExitCodes
              instance is partly running or was started from another clone (up)
           7  another simple command is still working on this instance or building in this clone
           8  a component did not stop within the timeout and was killed (down)
-          9  the database could not be dropped (down --reset)
+          9  the SQL Server could not be reached (up, down --reset), or the database could
+             not be dropped (down --reset)
         """;
 }

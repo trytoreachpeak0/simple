@@ -112,33 +112,66 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
 
     public async ValueTask DisposeAsync()
     {
+        // Every step is tried even when an earlier one fails, so one instance
+        // that cannot be cleaned up never leaves the others running. The
+        // failures are reported together at the end.
+        var failures = new List<Exception>();
         var store = new InstanceStore(Home);
         foreach (var instance in instances)
         {
-            if (store.Read(instance) is { } state)
+            await TryAsync(failures, async () =>
             {
-                foreach (var record in state.Processes)
+                if (store.Read(instance) is { } state)
                 {
-                    using var process = ChildProcess.Find(record.Pid, record.ProcessStartedAt);
-                    if (process is not null)
+                    foreach (var record in state.Processes)
                     {
-                        process.Kill(entireProcessTree: true);
-                        await process.WaitForExitAsync();
+                        using var process = ChildProcess.Find(record.Pid, record.ProcessStartedAt);
+                        if (process is not null)
+                        {
+                            process.Kill(entireProcessTree: true);
+                            await process.WaitForExitAsync();
+                        }
                     }
                 }
-            }
-
-            await SqlServerTarget.DropDatabaseAsync(SqlServer, instance, CancellationToken.None);
-            var run = InstanceStore.RunDirectory(Repository, instance);
-            if (Directory.Exists(run))
+            });
+            await TryAsync(failures, () => SqlServerTarget.DropDatabaseAsync(SqlServer, instance, CancellationToken.None));
+            await TryAsync(failures, () =>
             {
-                Directory.Delete(run, recursive: true);
-            }
+                var run = InstanceStore.RunDirectory(Repository, instance);
+                if (Directory.Exists(run))
+                {
+                    Directory.Delete(run, recursive: true);
+                }
+
+                return Task.CompletedTask;
+            });
         }
 
-        if (Directory.Exists(Home))
+        await TryAsync(failures, () =>
         {
-            Directory.Delete(Home, recursive: true);
+            if (Directory.Exists(Home))
+            {
+                Directory.Delete(Home, recursive: true);
+            }
+
+            return Task.CompletedTask;
+        });
+
+        if (failures.Count > 0)
+        {
+            throw new AggregateException("Cleaning up after the command line failed.", failures);
+        }
+    }
+
+    private static async Task TryAsync(List<Exception> failures, Func<Task> step)
+    {
+        try
+        {
+            await step();
+        }
+        catch (Exception e)
+        {
+            failures.Add(e);
         }
     }
 }

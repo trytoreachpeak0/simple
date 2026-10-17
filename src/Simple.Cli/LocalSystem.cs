@@ -20,7 +20,12 @@ public sealed partial class LocalSystem(string repository, InstanceStore store, 
     /// </summary>
     private static readonly string[] ScrubbedPrefixes = ["Simple__", "ConnectionStrings__", "ASPNETCORE_"];
 
-    private static readonly string[] ScrubbedNames = ["urls", "http_ports", "https_ports", "DOTNET_URLS", "DOTNET_HTTP_PORTS", "DOTNET_HTTPS_PORTS"];
+    private static readonly string[] ScrubbedNames =
+    [
+        "urls", "http_ports", "https_ports", "DOTNET_URLS", "DOTNET_HTTP_PORTS", "DOTNET_HTTPS_PORTS",
+        // The components run as Production, whatever the caller's shell says.
+        "DOTNET_ENVIRONMENT",
+    ];
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(5) };
 
@@ -89,6 +94,14 @@ public sealed partial class LocalSystem(string repository, InstanceStore store, 
             store.Delete(existing);
         }
 
+        if (await VerifySqlServerAsync(sqlServer, cancellationToken) is { } refused)
+        {
+            return refused;
+        }
+
+        // Kept after down, so down --reset finds the database where up made it
+        // even when the caller's SIMPLE_SQLSERVER has changed since.
+        store.WriteSqlServer(instance, sqlServer);
         Directory.CreateDirectory(store.LogDirectory(instance));
         File.Delete(store.LogPath(instance, "build"));
         var executables = new Dictionary<string, string>();
@@ -191,6 +204,13 @@ public sealed partial class LocalSystem(string repository, InstanceStore store, 
         }
 
         var state = store.Read(instance);
+        if (state is not null && !SamePath(state.Repository, Repository))
+        {
+            return Outcome.Fail(
+                ExitCodes.Unhealthy,
+                $"Instance {instance} was started from another clone, {state.Repository}. Run simple down there, or use --instance.");
+        }
+
         var stopped = new List<StopReport>();
         if (state is not null)
         {
@@ -205,8 +225,9 @@ public sealed partial class LocalSystem(string repository, InstanceStore store, 
             }
 
             store.Delete(state);
-            sqlServer = state.SqlServer;
         }
+
+        sqlServer = state?.SqlServer ?? store.ReadSqlServer(instance) ?? sqlServer;
 
         var lines = new List<string>();
         lines.AddRange(state is null
@@ -216,9 +237,15 @@ public sealed partial class LocalSystem(string repository, InstanceStore store, 
         bool? dropped = null;
         if (reset)
         {
+            if (await VerifySqlServerAsync(sqlServer, cancellationToken) is { } refused)
+            {
+                return refused with { Result = new { Instance = instance, Stopped = stopped }, Lines = lines };
+            }
+
             try
             {
                 dropped = await SqlServerTarget.DropDatabaseAsync(sqlServer, instance, cancellationToken);
+                store.ForgetSqlServer(instance);
             }
             catch (Exception e) when (e is Microsoft.Data.SqlClient.SqlException or InvalidOperationException)
             {
@@ -308,6 +335,22 @@ public sealed partial class LocalSystem(string repository, InstanceStore store, 
 
         var lines = tail is { } count ? Tail(path, count) : ReadLines(path);
         return Outcome.Ok(new { Instance = instance, Name = name, Path = path, Lines = lines }, lines);
+    }
+
+    /// <summary>Asks the SQL Server which instance it is (<see cref="SqlServerTarget.VerifyAsync"/>); null when it may be used.</summary>
+    private static async Task<Outcome?> VerifySqlServerAsync(string sqlServer, CancellationToken cancellationToken)
+    {
+        string? refusal;
+        try
+        {
+            refusal = await SqlServerTarget.VerifyAsync(sqlServer, cancellationToken);
+        }
+        catch (Microsoft.Data.SqlClient.SqlException e)
+        {
+            return Outcome.Fail(ExitCodes.DatabaseFailed, $"Could not reach the SQL Server {SqlServerTarget.DataSource(sqlServer)}: {e.Message}");
+        }
+
+        return refusal is null ? null : Outcome.Fail(ExitCodes.Usage, refusal);
     }
 
     private static Outcome Busy(string instance) =>

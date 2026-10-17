@@ -26,6 +26,23 @@ public sealed class InstanceStore(string home)
 
     public string StatePath(string instance) => Path.Combine(InstanceDirectory(instance), "state.json");
 
+    private string SqlServerPath(string instance) => Path.Combine(InstanceDirectory(instance), "sqlserver.txt");
+
+    /// <summary>The SQL Server the instance's database was created on, written at up and kept until down --reset drops it.</summary>
+    public string? ReadSqlServer(string instance)
+    {
+        var path = SqlServerPath(instance);
+        return File.Exists(path) ? File.ReadAllText(path) : null;
+    }
+
+    public void WriteSqlServer(string instance, string sqlServer)
+    {
+        Directory.CreateDirectory(InstanceDirectory(instance));
+        File.WriteAllText(SqlServerPath(instance), sqlServer);
+    }
+
+    public void ForgetSqlServer(string instance) => File.Delete(SqlServerPath(instance));
+
     public string LogDirectory(string instance) => Path.Combine(InstanceDirectory(instance), "logs");
 
     public string LogPath(string instance, string processName) => Path.Combine(LogDirectory(instance), $"{processName}.log");
