@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Simple.Cli.Instances;
 using Simple.Cli.Processes;
 
 namespace Simple.Cli.Tests;
@@ -42,6 +43,18 @@ public sealed class SmokeTests
         var server = status.Output.GetProperty("result").GetProperty("server");
         Assert.Equal(a, server.GetProperty("instance").GetString());
         Assert.Equal($"Simple_{a}", server.GetProperty("database").GetString());
+
+        // The command line logged in with the administrator password up made,
+        // kept outside the clone (ADR 0045); without a login the server answers nothing.
+        var store = new InstanceStore(cli.Home);
+        Assert.True(File.Exists(store.AdminPasswordPath(a)));
+        Assert.False(store.AdminPasswordPath(a).StartsWith(cli.Repository, StringComparison.OrdinalIgnoreCase));
+        Assert.NotEqual(store.ReadAdminPassword(a), store.ReadAdminPassword(b));
+        using (var http = new HttpClient())
+        using (var anonymous = await http.GetAsync(new Uri(new Uri(serverA.Url), "/api/v1/status"), TestContext.Current.CancellationToken))
+        {
+            Assert.Equal(System.Net.HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        }
 
         // The server reaches the fake fleet manager up started (it checks every 10 s).
         var fakeRiot = Process(ups[0].Output, "fake-riot");

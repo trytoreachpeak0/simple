@@ -52,6 +52,10 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
         {
             await DriveAsync(system, run, instance, cancellationToken);
             await CollectAsync(system, run, instance, evidence, cancellationToken);
+            if (run.Observer is { } observer)
+            {
+                await observer.DisposeAsync();
+            }
         }
         else
         {
@@ -186,7 +190,7 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
     private async Task DriveAsync(LocalSystem system, Run run, string instance, CancellationToken cancellationToken)
     {
         var urls = system.Urls(instance);
-        var observer = new Observer(Http, urls[Components.Server.Name], run.Evidence);
+        var observer = new Observer(Http, urls[Components.Server.Name], store.ReadAdminPassword(instance), run.Evidence);
         run.Observer = observer;
         var start = DateTimeOffset.UtcNow;
         run.Evidence.Write("started", new { Terminals = run.Scenario.Initial.Terminals });

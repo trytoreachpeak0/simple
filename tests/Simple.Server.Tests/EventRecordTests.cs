@@ -36,7 +36,7 @@ public sealed class EventRecordTests : IAsyncLifetime
 
         Assert.Equal(
             [EventTypes.ServerStarted, "test.tick", "test.tick", "test.tick", "test.tick", "test.tick"],
-            seen.Select(e => e.Type));
+            seen.Where(NotTheTestAdministrator).Select(e => e.Type));
         Assert.Equal(seen.Select(e => e.Id).Order(), seen.Select(e => e.Id));
         Assert.Equal(seen.Count, seen.Select(e => e.Id).Distinct().Count());
 
@@ -95,19 +95,19 @@ public sealed class EventRecordTests : IAsyncLifetime
         await server.StopAsync();
         var client = server.Start();
 
-        var afterRestart = await GetPageAsync(client, "");
+        var afterRestart = (await GetPageAsync(client, "")).Items.Where(NotTheTestAdministrator).ToList();
         Assert.Equal(
             [EventTypes.ServerStarted, EventTypes.ServerStopped, EventTypes.ServerStarted],
-            afterRestart.Items.Select(e => e.Type));
-        Assert.All(afterRestart.Items, e => Assert.Equal(EventSources.Server, e.Source));
-        Assert.Equal(server.Instance, afterRestart.Items[0].Data!.Value.GetProperty("instance").GetString());
+            afterRestart.Select(e => e.Type));
+        Assert.All(afterRestart, e => Assert.Equal(EventSources.Server, e.Source));
+        Assert.Equal(server.Instance, afterRestart[0].Data!.Value.GetProperty("instance").GetString());
 
         await server.StopAsync();
         await server.DropDatabaseAsync();
         client = server.Start();
 
         var afterDrop = await GetPageAsync(client, "");
-        Assert.Equal([EventTypes.ServerStarted], afterDrop.Items.Select(e => e.Type));
+        Assert.Equal([EventTypes.ServerStarted], afterDrop.Items.Where(NotTheTestAdministrator).Select(e => e.Type));
     }
 
     [Fact]
@@ -134,6 +134,9 @@ public sealed class EventRecordTests : IAsyncLifetime
         await using var fresh = server.CreateDbContext();
         Assert.Equal(count, await fresh.Events.CountAsync(e => e.Type != "changed", Cancel));
     }
+
+    /// <summary>Whether an event is not the test server's administrator being made by the server command (ServerInstance.Start).</summary>
+    private static bool NotTheTestAdministrator(EventView e) => e.Source != EventSources.ServerCommand;
 
     /// <summary>Adds events "test.tick" n = 0..count-1, one minute apart; returns the time of n = 0.</summary>
     private async Task<DateTimeOffset> AddTicksAsync(int count)

@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Net.Http.Json;
 using System.Text.Json;
 
 namespace Simple.Cli.Scenarios;
@@ -7,11 +6,14 @@ namespace Simple.Cli.Scenarios;
 /// <summary>
 /// Looks at the system through its one observation surface, the server's
 /// API: GET /api/v1/status, and GET /api/v1/events from where the last look
-/// stopped. Every new entry of the event record goes to the timeline.
+/// stopped, logged in as the instance's administrator like simple status
+/// (ADR 0045). Every new entry of the event record goes to the timeline.
 /// </summary>
-public sealed class Observer(HttpClient http, Uri server, Evidence evidence)
+/// <param name="password">The instance's administrator password, which up keeps outside the clone.</param>
+public sealed class Observer(HttpClient http, Uri server, string? password, Evidence evidence) : IAsyncDisposable
 {
     private readonly List<RecordedEvent> events = [];
+    private ServerApi? api;
     private long? cursor;
     private string? lastStatusError;
     private string? lastEventsError;
@@ -25,12 +27,14 @@ public sealed class Observer(HttpClient http, Uri server, Evidence evidence)
         string? statusError = null;
         try
         {
-            status = await http.GetFromJsonAsync<JsonElement>(new Uri(server, "/api/v1/status"), cancellationToken);
+            status = await (await ApiAsync(cancellationToken)).GetJsonAsync("/api/v1/status", cancellationToken);
         }
         catch (Exception e) when (e is HttpRequestException or JsonException
             || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
             statusError = e.Message;
+            // Logged in again at the next look: the server may have restarted.
+            api = null;
         }
 
         string? eventsError = null;
@@ -39,7 +43,7 @@ public sealed class Observer(HttpClient http, Uri server, Evidence evidence)
             while (true)
             {
                 var query = "limit=1000" + (cursor is { } after ? $"&after={after.ToString(CultureInfo.InvariantCulture)}" : string.Empty);
-                var page = await http.GetFromJsonAsync<JsonElement>(new Uri(server, $"/api/v1/events?{query}"), cancellationToken);
+                var page = await (await ApiAsync(cancellationToken)).GetJsonAsync($"/api/v1/events?{query}", cancellationToken);
                 foreach (var item in page.GetProperty("items").EnumerateArray())
                 {
                     var recorded = new RecordedEvent(
@@ -64,6 +68,7 @@ public sealed class Observer(HttpClient http, Uri server, Evidence evidence)
             || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
             eventsError = e.Message;
+            api = null;
         }
 
         // Only changes go to the timeline: when a look first fails, and when it works again.
@@ -81,4 +86,20 @@ public sealed class Observer(HttpClient http, Uri server, Evidence evidence)
 
         return new Snapshot(DateTimeOffset.UtcNow, status, statusError, eventsError is null ? [.. events] : null, eventsError);
     }
+
+    /// <summary>Logs out the last login, so the run leaves none behind.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (api is not null)
+        {
+            await api.DisposeAsync();
+            api = null;
+        }
+    }
+
+    private async Task<ServerApi> ApiAsync(CancellationToken cancellationToken) =>
+        api ??= password is null
+            ? throw new HttpRequestException("the instance has no administrator password: it was not brought up by simple up")
+            : await ServerApi.LogInAsync(http, server, password, cancellationToken)
+                ?? throw new HttpRequestException("the server refused the instance's administrator password");
 }

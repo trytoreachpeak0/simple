@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Simple.Cli.Instances;
 using Simple.Cli.Processes;
 
 namespace Simple.Cli.Tests;
@@ -32,7 +33,7 @@ public sealed class MesGatewaySmokeTests
         var gatewayStarted = SmokeTests.StartTime(gateway.Pid);
         var serverStarted = SmokeTests.StartTime(server.Pid);
         var gatewayUrl = new Uri(gateway.Url);
-        var serverUrl = new Uri(server.Url);
+        await using var serverApi = (await ServerApi.LogInAsync(Http, new Uri(server.Url), new InstanceStore(cli.Home).ReadAdminPassword(instance)!, Cancel))!;
 
         // A row added through the control API is in the server's status within one poll cycle.
         var row = new { taskType = "SAMPLE_TO_OVEN", sublot = "SMP0500.01", area = "S1-5", eqp = "SMP-DA-05", step = "SMP-CURE", dates = "2026-01-07T07:00:00", package = "SMP-PKG-A" };
@@ -40,7 +41,7 @@ public sealed class MesGatewaySmokeTests
         var added = Stopwatch.StartNew();
         await UntilAsync(OnePollCycle, "the added row in the server's status", async () =>
         {
-            var mes = await MesStatusAsync(serverUrl);
+            var mes = await MesStatusAsync(serverApi);
             return mes.GetProperty("rows").ValueKind == JsonValueKind.Array
                 && mes.GetProperty("rows").EnumerateArray().Any(r => r.GetProperty("sublot").GetString() == "SMP0500.01");
         });
@@ -55,7 +56,7 @@ public sealed class MesGatewaySmokeTests
         // Only what follows the injection counts: whether the server's first
         // fetch came before the gateway was ready (an early unreachable and
         // recovered pair) depends on start-up timing, not on what is tested here.
-        var before = (await MesEventsAsync(serverUrl)).Select(e => e.GetProperty("id").GetInt64()).DefaultIfEmpty(0).Max();
+        var before = (await MesEventsAsync(serverApi)).Select(e => e.GetProperty("id").GetInt64()).DefaultIfEmpty(0).Max();
         (await Http.PostAsJsonAsync(new Uri(gatewayUrl, "/fake-mes/failures"), new { count = 5, message = failure }, Cancel)).EnsureSuccessStatusCode();
         await UntilAsync(OnePollCycle, "a failed round in the gateway's snapshot", async () =>
         {
@@ -67,7 +68,7 @@ public sealed class MesGatewaySmokeTests
         // Five failed reads with waits growing from 1 s take well under a minute.
         await UntilAsync(TimeSpan.FromSeconds(90), "mes.unreachable and then mes.recovered in the event record", async () =>
         {
-            mesEvents = [.. (await MesEventsAsync(serverUrl)).Where(e => e.GetProperty("id").GetInt64() > before)];
+            mesEvents = [.. (await MesEventsAsync(serverApi)).Where(e => e.GetProperty("id").GetInt64() > before)];
             return mesEvents.Length >= 2;
         });
         Assert.Equal(["mes.unreachable", "mes.recovered"], mesEvents.Select(e => e.GetProperty("type").GetString()));
@@ -88,12 +89,12 @@ public sealed class MesGatewaySmokeTests
         }
     }
 
-    private static async Task<JsonElement> MesStatusAsync(Uri server) =>
-        (await Http.GetFromJsonAsync<JsonElement>(new Uri(server, "/api/v1/status"), Cancel)).GetProperty("mesGateway");
+    private static async Task<JsonElement> MesStatusAsync(ServerApi server) =>
+        (await server.GetJsonAsync("/api/v1/status", Cancel)).GetProperty("mesGateway");
 
-    private static async Task<JsonElement[]> MesEventsAsync(Uri server)
+    private static async Task<JsonElement[]> MesEventsAsync(ServerApi server)
     {
-        var page = await Http.GetFromJsonAsync<JsonElement>(new Uri(server, "/api/v1/events?limit=1000"), Cancel);
+        var page = await server.GetJsonAsync("/api/v1/events?limit=1000", Cancel);
         return page.GetProperty("items").EnumerateArray()
             .Where(e => e.GetProperty("type").GetString()!.StartsWith("mes.", StringComparison.Ordinal))
             .ToArray();

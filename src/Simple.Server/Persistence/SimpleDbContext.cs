@@ -1,9 +1,11 @@
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Simple.Server.Accounts;
 using Simple.Server.Events;
 
 namespace Simple.Server.Persistence;
 
-public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) : DbContext(options)
+public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) : DbContext(options), IDataProtectionKeyContext
 {
     /// <summary>
     /// Database trigger that rejects every UPDATE and DELETE on the event
@@ -22,6 +24,13 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
 
     public DbSet<EventRecord> Events => Set<EventRecord>();
 
+    public DbSet<Account> Accounts => Set<Account>();
+
+    public DbSet<LoginRecord> Logins => Set<LoginRecord>();
+
+    /// <summary>The keys that encrypt login cookies, each itself encrypted (see LoginSetup).</summary>
+    public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
@@ -38,7 +47,28 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
             e.Property(x => x.Id).UseIdentityColumn();
             e.Property(x => x.Type).HasMaxLength(100);
             e.Property(x => x.Source).HasMaxLength(50);
+            e.Property(x => x.Account).HasMaxLength(Account.NameMaxLength);
+            e.Property(x => x.RemoteAddress).HasMaxLength(64);
             e.HasIndex(x => x.OccurredAt);
+        });
+        modelBuilder.Entity<Account>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(Account.NameMaxLength);
+            e.HasIndex(x => x.Name).IsUnique();
+            e.Property(x => x.Role).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Project).HasMaxLength(Account.NameMaxLength);
+            e.Property(x => x.PasswordHash).HasMaxLength(200);
+        });
+        modelBuilder.Entity<LoginRecord>(e =>
+        {
+            e.ToTable("Logins");
+            e.HasKey(x => x.KeyHash);
+            // Hex compares exactly; a case-insensitive collation would not hurt it, but says the wrong thing.
+            e.Property(x => x.KeyHash).HasMaxLength(64).IsUnicode(false).UseCollation("Latin1_General_BIN2");
+            e.Property(x => x.Entry).HasMaxLength(20);
+            e.Property(x => x.RemoteAddress).HasMaxLength(64);
+            e.HasOne<Account>().WithMany().HasForeignKey(x => x.AccountId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

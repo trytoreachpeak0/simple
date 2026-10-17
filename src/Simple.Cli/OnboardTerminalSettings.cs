@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Net.Http.Json;
 using System.Text.Json;
 
 namespace Simple.Cli;
@@ -22,8 +21,13 @@ public static class OnboardTerminalSettings
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(http);
         var server = context.PortsOf[Components.Server.Name][Components.Server.ApiPort ?? 0];
-        var status = await http.GetFromJsonAsync<JsonElement>(
-            new Uri($"http://127.0.0.1:{server.ToString(CultureInfo.InvariantCulture)}/api/v1/status"), cancellationToken);
+        await using var api = await ServerApi.LogInAsync(
+                http,
+                new Uri($"http://127.0.0.1:{server.ToString(CultureInfo.InvariantCulture)}"),
+                context.AdminPassword ?? throw new InvalidOperationException("The instance has no administrator password."),
+                cancellationToken)
+            ?? throw new InvalidOperationException("The server refused the instance's administrator password.");
+        var status = await api.GetJsonAsync("/api/v1/status", cancellationToken);
         if (!status.TryGetProperty("onboardTerminalEndpoint", out var endpoint) || endpoint.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException("The server reports no onboard terminal endpoint.");
