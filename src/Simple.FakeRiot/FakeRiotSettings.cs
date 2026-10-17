@@ -26,6 +26,21 @@ public sealed class FakeRiotSettings
 
     public FakeRiotTiming Timing { get; set; } = new();
 
+    /// <summary>At this battery level or below RIoT gives the vehicle no order: 10 % (the product owner, BC-VEH-007).</summary>
+    public int NoOrdersAtOrBelowBattery { get; set; } = 10;
+
+    /// <summary>Charging stops at this battery level: the battery management may stop at 97 to 99 % (a guess, ADR 0020).</summary>
+    public int ChargingStopsAtBattery { get; set; } = 98;
+
+    /// <summary>
+    /// How long every read (a GET under /api, or one of the three route
+    /// queries) waits before it is answered,
+    /// in real time; not compressed by <see cref="FakeRiotTiming.Speedup"/>.
+    /// Real RIoT's reads took about 168 ms at p95 (research/riot-review.md R39).
+    /// Zero by default; the control API changes it while the fake runs.
+    /// </summary>
+    public TimeSpan ReadDelay { get; set; }
+
     /// <summary>Every address the fake is configured to listen on, keyed by where it came from.</summary>
     public IList<KeyValuePair<string, string>> ListenAddresses { get; } = [];
 
@@ -60,10 +75,20 @@ public sealed class FakeRiotSettings
 
 /// <summary>
 /// How fast the fake's vehicles and orders move on. The defaults are near
-/// what real RIoT showed; tests shorten them.
+/// what real RIoT showed; tests shorten them, or compress them all at once
+/// with <see cref="Speedup"/>.
 /// </summary>
 public sealed class FakeRiotTiming
 {
+    /// <summary>
+    /// How many times faster than real RIoT the fake's world runs: every
+    /// duration below is divided by it, travel included. 1 is real time;
+    /// 100 runs a 20-second trip in a fifth of a second. <see cref="Tick"/>
+    /// is not divided: it is how often the fake looks, in real time.
+    /// Timestamps on the wire (createTime, updateTime) stay real.
+    /// </summary>
+    public double Speedup { get; set; } = 1;
+
     /// <summary>How often the fake moves its world on.</summary>
     public TimeSpan Tick { get; set; } = TimeSpan.FromMilliseconds(100);
 
@@ -86,6 +111,20 @@ public sealed class FakeRiotTiming
 
     /// <summary>From cancelEmergency to <c>OK</c>: 4 to 5 seconds on real RIoT (BC-VEH-005).</summary>
     public TimeSpan EmergencyRelease { get; set; } = TimeSpan.FromSeconds(4.5);
+
+    /// <summary>How long some fault codes stay listed after <c>OK</c>: real RIoT cleared them 3 to 4 seconds later (BC-ORDER-020 item 7).</summary>
+    public TimeSpan FaultCodeResidue { get; set; } = TimeSpan.FromSeconds(3.5);
+
+    /// <summary>
+    /// From CONTINUE_FROM_HELD to the vehicle moving, when the vehicle was
+    /// emergency stopped while the order was held: the order is executing at
+    /// once but real RIoT's vehicle started about 16 seconds later
+    /// (BC-ORDER-020 item 3). Without a stop no delay is added.
+    /// </summary>
+    public TimeSpan ContinueStartDelay { get; set; } = TimeSpan.FromSeconds(16);
+
+    /// <summary>How long charging takes for one percent; never measured on real RIoT, about an hour from empty to full.</summary>
+    public TimeSpan ChargingTimePerPercent { get; set; } = TimeSpan.FromSeconds(36);
 }
 
 /// <summary>Refuses to start the fake on settings that would make it reachable from another machine or leave it without a key.</summary>
@@ -111,6 +150,7 @@ public sealed class FakeRiotSettingsValidator : IValidateOptions<FakeRiotSetting
                  {
                      ("Tick", timing.Tick),
                      ("MinimumTravel", timing.MinimumTravel),
+                     ("ChargingTimePerPercent", timing.ChargingTimePerPercent),
                  })
         {
             if (value <= TimeSpan.Zero)
@@ -125,12 +165,29 @@ public sealed class FakeRiotSettingsValidator : IValidateOptions<FakeRiotSetting
                      ("ArrivalToSuccess", timing.ArrivalToSuccess),
                      ("EmergencyLock", timing.EmergencyLock),
                      ("EmergencyRelease", timing.EmergencyRelease),
+                     ("FaultCodeResidue", timing.FaultCodeResidue),
+                     ("ContinueStartDelay", timing.ContinueStartDelay),
                  })
         {
             if (value < TimeSpan.Zero)
             {
                 failures.Add($"{section}:Timing:{key} must not be negative.");
             }
+        }
+
+        if (options.NoOrdersAtOrBelowBattery is < 0 or > 100 || options.ChargingStopsAtBattery is < 0 or > 100)
+        {
+            failures.Add($"{section}:NoOrdersAtOrBelowBattery and {section}:ChargingStopsAtBattery are percentages, 0 to 100.");
+        }
+
+        if (options.ReadDelay < TimeSpan.Zero)
+        {
+            failures.Add($"{section}:ReadDelay must not be negative.");
+        }
+
+        if (timing.Speedup is <= 0 or double.NaN or double.PositiveInfinity)
+        {
+            failures.Add($"{section}:Timing:Speedup must be above zero.");
         }
 
         if (timing.SpeedMillimetresPerSecond <= 0)
