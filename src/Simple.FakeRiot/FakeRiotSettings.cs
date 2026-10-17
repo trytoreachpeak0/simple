@@ -104,6 +104,15 @@ public sealed class FakeRiotTiming
 
     /// <summary>From cancelEmergency to <c>OK</c>: 4 to 5 seconds on real RIoT (BC-VEH-005).</summary>
     public TimeSpan EmergencyRelease { get; set; } = TimeSpan.FromSeconds(4.5);
+
+    /// <summary>How long some fault codes stay listed after <c>OK</c>: real RIoT cleared them 3 to 4 seconds later (BC-ORDER-020 item 7).</summary>
+    public TimeSpan FaultCodeResidue { get; set; } = TimeSpan.FromSeconds(3.5);
+
+    /// <summary>
+    /// From CONTINUE_FROM_HELD to the vehicle moving: the order is executing at
+    /// once but real RIoT's vehicle started about 16 seconds later (BC-ORDER-020 item 3).
+    /// </summary>
+    public TimeSpan ContinueStartDelay { get; set; } = TimeSpan.FromSeconds(16);
 }
 
 /// <summary>Refuses to start the fake on settings that would make it reachable from another machine or leave it without a key.</summary>
@@ -143,6 +152,8 @@ public sealed class FakeRiotSettingsValidator : IValidateOptions<FakeRiotSetting
                      ("ArrivalToSuccess", timing.ArrivalToSuccess),
                      ("EmergencyLock", timing.EmergencyLock),
                      ("EmergencyRelease", timing.EmergencyRelease),
+                     ("FaultCodeResidue", timing.FaultCodeResidue),
+                     ("ContinueStartDelay", timing.ContinueStartDelay),
                  })
         {
             if (value < TimeSpan.Zero)

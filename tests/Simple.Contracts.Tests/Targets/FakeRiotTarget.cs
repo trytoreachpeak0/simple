@@ -68,12 +68,16 @@ public sealed class FakeRiotTarget : RiotTarget
             host.UseSetting("FakeRiot:Password", FakePassword);
             host.UseSetting("FakeRiot:Timing:Tick", "00:00:00.010");
             host.UseSetting("FakeRiot:Timing:QueueToStart", "00:00:00.050");
-            host.UseSetting("FakeRiot:Timing:MinimumTravel", "00:00:00.300");
+            // Long enough that a contract that has just read EXECUTING can still catch the vehicle on its way.
+            host.UseSetting("FakeRiot:Timing:MinimumTravel", "00:00:01");
             host.UseSetting("FakeRiot:Timing:SpeedMillimetresPerSecond", "1000000");
             // As on real RIoT (BC-STATE-003): long enough that a reading between arrival and SUCCESS is not a race.
             host.UseSetting("FakeRiot:Timing:ArrivalToSuccess", "00:00:01");
             host.UseSetting("FakeRiot:Timing:EmergencyLock", "00:00:00.050");
             host.UseSetting("FakeRiot:Timing:EmergencyRelease", "00:00:00.200");
+            host.UseSetting("FakeRiot:Timing:FaultCodeResidue", "00:00:00.300");
+            // Longer than the quiet window, so a contract can watch the vehicle not start.
+            host.UseSetting("FakeRiot:Timing:ContinueStartDelay", "00:00:01");
         });
         return Task.FromResult<RiotTarget>(new FakeRiotTarget(factory, logDirectory));
     }
@@ -117,5 +121,53 @@ public sealed class FakeRiotControl(HttpClient client)
             System.Net.Http.Json.JsonContent.Create(new { connected }),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>The next byDefaultMissions answers 00002, with or without making the order.</summary>
+    public Task InjectCreate00002Async(bool orderMade) => PostAsync("/fake-riot/faults/create-00002", new { orderMade, times = 1 });
+
+    /// <summary>Before each read of the order list, other lines make this many orders, so the total changes while a caller pages through it.</summary>
+    public Task SetOrderListChurnAsync(int ordersPerRead) => PutAsync("/fake-riot/order-list/churn", new { ordersPerRead });
+
+    /// <summary>An order dispatched by hand on RIoT's web page: its upperId is empty (Q-043). Returns its orderId.</summary>
+    public async Task<string> CreateWebOrderAsync(string vehicleKey, int mapId, int station) =>
+        (await PostAsync("/fake-riot/orders/web", new { vehicleKey, mapId, station, orderName = "web" })).GetProperty("orderId").GetString()!;
+
+    /// <summary>Makes a queued order FAILED, which the fake never does by itself.</summary>
+    public async Task FailAsync(string orderId)
+    {
+        if (!await TryFailAsync(orderId))
+        {
+            throw new InvalidOperationException($"假 RIoT 不肯让订单 {orderId} 失败。");
+        }
+    }
+
+    public async Task<bool> TryFailAsync(string orderId)
+    {
+        using var response = await client.PostAsync(
+            new Uri($"/fake-riot/orders/{Uri.EscapeDataString(orderId)}/fail", UriKind.Relative),
+            content: null,
+            TestContext.Current.CancellationToken);
+        return response.IsSuccessStatusCode;
+    }
+
+    private async Task PutAsync(string path, object body)
+    {
+        using var response = await client.PutAsync(
+            new Uri(path, UriKind.Relative),
+            System.Net.Http.Json.JsonContent.Create(body),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private async Task<System.Text.Json.JsonElement> PostAsync(string path, object body)
+    {
+        using var response = await client.PostAsync(
+            new Uri(path, UriKind.Relative),
+            System.Net.Http.Json.JsonContent.Create(body),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        return text.Length == 0 ? default : System.Text.Json.JsonDocument.Parse(text).RootElement.Clone();
     }
 }

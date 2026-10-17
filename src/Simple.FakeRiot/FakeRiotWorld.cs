@@ -26,6 +26,11 @@ public sealed class FakeRiotWorld
 
     private const string TimeFormat = "yyyy-MM-dd HH:mm:ss";
 
+    /// <summary>Codes real RIoT listed while a software stop held the vehicle, and those still listed at the first OK (BC-ORDER-020 item 7).</summary>
+    private static readonly int[] StoppedFaultCodes = [11323, 211416, 212416, 11327, 11329];
+
+    private static readonly int[] ResidualFaultCodes = [211416, 212416];
+
     private readonly Lock gate = new();
     private readonly TimeProvider time;
     private readonly FakeRiotSettings settings;
@@ -38,6 +43,9 @@ public sealed class FakeRiotWorld
     private long nextOrderNumber = 2_110_000_000_000_000_000;
     private long nextMissionId = 21_000_001;
     private long promotions;
+    private int create00002Left;
+    private int churnPerRead;
+    private bool create00002MakesOrder;
 
     public FakeRiotWorld(Seed seed, IOptions<FakeRiotSettings> settings, TimeProvider time)
     {
@@ -231,8 +239,10 @@ public sealed class FakeRiotWorld
                     // finish, emergency stop or not (BC-VEH-005 item 8).
                     ["controlState"] = v.Current is not null || v.Emergency != EmergencyStates.Ok ? "CONTROL_STATE_ERR" : "CONTROL_STATE_OK",
                     ["emergencyState"] = v.Emergency,
-                    // Non-empty while stopped; real RIoT leaves some codes for 3 to 4 s after OK (BC-ORDER-020 item 7).
-                    ["faultCodesList"] = v.Emergency == EmergencyStates.Ok ? Array.Empty<int>() : [11323, 11327, 11329],
+                    // Non-empty while stopped; some codes stay listed for 3 to 4 s after OK (BC-ORDER-020 item 7).
+                    ["faultCodesList"] = v.Emergency != EmergencyStates.Ok ? StoppedFaultCodes
+                        : time.GetUtcNow() < v.FaultCodesClearAt ? ResidualFaultCodes
+                        : Array.Empty<int>(),
                     ["locationState"] = "LOCATION_STATE_RUNNING",
                     ["mode"] = "MODE_AUTO",
                     ["movementState"] = MovementState(v),
@@ -409,6 +419,17 @@ public sealed class FakeRiotWorld
 
         lock (gate)
         {
+            // An injected 00002 (R6): the order is made or not, as the test asked.
+            var injected00002 = create00002Left > 0;
+            if (injected00002)
+            {
+                create00002Left--;
+                if (!create00002MakesOrder)
+                {
+                    return Answer.InternalError();
+                }
+            }
+
             // A repeated upperId is refused and the first order is not returned (BC-ORDER-004).
             if (orders.Any(o => o.UpperId == upperId))
             {
@@ -451,7 +472,7 @@ public sealed class FakeRiotWorld
             }
 
             orders.Add(order);
-            return Answer.Ok(OrderWire(order));
+            return injected00002 ? Answer.InternalError() : Answer.Ok(OrderWire(order));
         }
     }
 
@@ -481,6 +502,11 @@ public sealed class FakeRiotWorld
     {
         lock (gate)
         {
+            for (var i = 0; i < churnPerRead; i++)
+            {
+                OtherLinesOrder();
+            }
+
             var matching = orders.Where(o => states.Count == 0 || states.Contains(o.State)).OrderByDescending(o => o.Id).ToList();
             var page = Math.Max(pageNum, 1);
             var size = Math.Max(pageSize, 1);
@@ -523,7 +549,9 @@ public sealed class FakeRiotWorld
                 case ("CMD_ORDER_CONTINUE_FROM_HELD", OrderStates.Held):
                     // Accepted even while the vehicle is emergency stopped; the
                     // order is executing again but the stop holds the vehicle (BC-ORDER-020 item 4).
+                    // The vehicle starts about 16 s later (item 3).
                     order.State = OrderStates.Executing;
+                    order.StartDelayLeft = Timing.ContinueStartDelay;
                     order.Touch(time.GetUtcNow());
                     return Answer.OkWithoutResult();
                 case ("CMD_ORDER_CONTINUE_FROM_HELD", OrderStates.Executing):
@@ -562,6 +590,20 @@ public sealed class FakeRiotWorld
 
     // ---- What only the fake can do: things a person does at the vehicle ----
 
+    /// <summary>
+    /// The next <paramref name="times"/> creates answer <c>00002</c>; with
+    /// <paramref name="orderMade"/> the order is made all the same. Real RIoT's
+    /// 00002 is "result unknown" (R6): seen without an order (BC-ORDER-022),
+    /// and elsewhere with a side effect (BC-VEH-003).
+    /// </summary>
+    public void InjectCreate00002(bool orderMade, int times)
+    {
+        lock (gate)
+        {
+            (create00002Left, create00002MakesOrder) = (times, orderMade);
+        }
+    }
+
     /// <summary>Puts an executing or held order into HANG, as a cancel on the vehicle's own screen or a brake release would (BC-ORDER-015).</summary>
     public bool Hang(string orderId, int resultCode)
     {
@@ -579,6 +621,84 @@ public sealed class FakeRiotWorld
             }
 
             order.Touch(time.GetUtcNow());
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Before every read of the order list, other lines make
+    /// <paramref name="ordersPerRead"/> orders, so the total changes while a
+    /// caller pages through it (cs#573). 0 stops it.
+    /// </summary>
+    public void SetOrderListChurn(int ordersPerRead)
+    {
+        lock (gate)
+        {
+            churnPerRead = ordersPerRead;
+        }
+    }
+
+    /// <summary>An order of another line, for a vehicle the fake does not have: it stays queued.</summary>
+    private void OtherLinesOrder()
+    {
+        var id = nextId++;
+        var name = $"other-line-{id.ToString(CultureInfo.InvariantCulture)}";
+        orders.Add(new OrderState(
+            id,
+            $"order-{(nextOrderNumber += 4096).ToString(CultureInfo.InvariantCulture)}",
+            name,
+            name,
+            "BROKERX-0000000000000000000000000000ffff",
+            [new Mission("move", 1, 1, 0, 0, 0, null) { Id = nextMissionId++ }],
+            time.GetUtcNow()));
+    }
+
+    /// <summary>
+    /// An order a person dispatched by hand on RIoT's web page: upperId is the
+    /// empty string, createdBy <c>admin</c> (Q-043, cs#617). It runs like any
+    /// other order. Null when the vehicle or station is unknown.
+    /// </summary>
+    public string? CreateWebOrder(string vehicleKey, int mapId, int station, string orderName)
+    {
+        lock (gate)
+        {
+            if (!vehicles.ContainsKey(vehicleKey) || !maps.TryGetValue(mapId, out var map) || map.Station(station) is null)
+            {
+                return null;
+            }
+
+            var order = new OrderState(
+                nextId++,
+                $"order-{(nextOrderNumber += 4096).ToString(CultureInfo.InvariantCulture)}",
+                upperId: "",
+                orderName,
+                vehicleKey,
+                [new Mission("move", mapId, station, 0, 0, 0, null) { Id = nextMissionId++ }],
+                time.GetUtcNow())
+            {
+                CreatedBy = "admin",
+            };
+            orders.Add(order);
+            return order.OrderId;
+        }
+    }
+
+    /// <summary>
+    /// Makes a queued order FAILED, as real RIoT is said to do only to an
+    /// order just made and not yet started, the vehicle where it was (the
+    /// product owner, ADR 0010; never seen in the lab, Q-024). False for any
+    /// other order.
+    /// </summary>
+    public bool Fail(string orderId)
+    {
+        lock (gate)
+        {
+            if (Find(orderId) is not { State: OrderStates.Queueing } order)
+            {
+                return false;
+            }
+
+            Finish(order, OrderStates.Failed);
             return true;
         }
     }
@@ -630,6 +750,10 @@ public sealed class FakeRiotWorld
                 {
                     v.Emergency = target;
                     v.EmergencyTarget = null;
+                    if (target == EmergencyStates.Ok)
+                    {
+                        v.FaultCodesClearAt = now + Real(Timing.FaultCodeResidue);
+                    }
                 }
 
                 // An emergency stop holds the vehicle; it does not put the
@@ -692,6 +816,17 @@ public sealed class FakeRiotWorld
     private void Advance(VehicleState v, OrderState order, TimeSpan elapsed, DateTimeOffset now)
     {
         var budget = elapsed;
+        if (order.StartDelayLeft > TimeSpan.Zero)
+        {
+            var waited = budget < order.StartDelayLeft ? budget : order.StartDelayLeft;
+            order.StartDelayLeft -= waited;
+            budget -= waited;
+            if (order.StartDelayLeft > TimeSpan.Zero)
+            {
+                return;
+            }
+        }
+
         while (order.State == OrderStates.Executing)
         {
             if (order.ExecutingIndex >= order.Missions.Count)
@@ -810,7 +945,7 @@ public sealed class FakeRiotWorld
     };
 
     private double Speed(VehicleState v) =>
-        v.Current is { State: OrderStates.Executing } && v.TravelNeeded > TimeSpan.Zero && v.Emergency == EmergencyStates.Ok
+        v.Current is { State: OrderStates.Executing } order && order.StartDelayLeft <= TimeSpan.Zero && v.TravelNeeded > TimeSpan.Zero && v.Emergency == EmergencyStates.Ok
             ? Timing.SpeedMillimetresPerSecond / 1000
             : 0;
 
@@ -857,7 +992,7 @@ public sealed class FakeRiotWorld
             // Jumps to 100 as soon as the order executes; useless as progress (R16).
             ["progress"] = o.State == OrderStates.Queueing ? 0 : 100,
             ["source"] = "FMS",
-            ["createdBy"] = "fake-riot",
+            ["createdBy"] = o.CreatedBy,
             ["failReason"] = "",
             ["createTime"] = Local(o.CreatedAt),
             ["updateTime"] = Local(o.UpdatedAt),
@@ -939,6 +1074,9 @@ public sealed class FakeRiotWorld
 
         public DateTimeOffset EmergencyChangeAt { get; set; }
 
+        /// <summary>Until when the residual fault codes stay listed after the stop was released.</summary>
+        public DateTimeOffset FaultCodesClearAt { get; set; }
+
         /// <summary>Its executing, held or hung order.</summary>
         public OrderState? Current { get; set; }
     }
@@ -961,6 +1099,9 @@ public sealed class FakeRiotWorld
 
         public DateTimeOffset UpdatedAt { get; private set; } = createdAt;
 
+        /// <summary>Who made it: the call key's orders say <c>fake-riot</c>, a web-page order <c>admin</c>.</summary>
+        public string CreatedBy { get; init; } = "fake-riot";
+
         public int State { get; set; } = OrderStates.Queueing;
 
         public string? ExecuteVehicleKey { get; set; }
@@ -974,6 +1115,9 @@ public sealed class FakeRiotWorld
         public TimeSpan Finishing { get; set; }
 
         public long Promotion { get; set; }
+
+        /// <summary>World time left before a continued order's vehicle starts (BC-ORDER-020 item 3).</summary>
+        public TimeSpan StartDelayLeft { get; set; }
 
         public Mission? CurrentMission => ExecutingIndex >= 0 && ExecutingIndex < Missions.Count ? Missions[ExecutingIndex] : null;
 
