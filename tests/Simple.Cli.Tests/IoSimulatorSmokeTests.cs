@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using Simple.Cli.Instances;
 
 namespace Simple.Cli.Tests;
 
@@ -29,9 +30,11 @@ public sealed class IoSimulatorSmokeTests
         var names = processes.Select(p => p.GetProperty("name").GetString()).ToList();
         Assert.Equal(["io-simulator-1", "io-simulator-2"], names.Where(n => n!.StartsWith("io-simulator", StringComparison.Ordinal)));
         var simulators = new[] { Url(processes, "io-simulator-1"), Url(processes, "io-simulator-2") };
-        // The server's status is read directly, not through simple status,
-        // so that the 2 s below are the system's and not the command line's.
-        var status = new Uri(new Uri(Url(processes, "server")), "/api/v1/status");
+        // The server's status is read directly, logged in as the instance's
+        // administrator (ADR 0045), not through simple status, so that the
+        // 2 s below are the system's and not the command line's.
+        await using var status = (await ServerApi.LogInAsync(
+            http, new Uri(Url(processes, "server")), new InstanceStore(cli.Home).ReadAdminPassword(instance)!, Cancel))!;
 
         try
         {
@@ -42,7 +45,7 @@ public sealed class IoSimulatorSmokeTests
             {
                 var expected = await InputsAsync(http, simulators[i]);
                 var vehicle = $"vehicle-{i + 1}";
-                var terminal = await UntilTerminalAsync(http, status, vehicle, t => ReportedInputs(t).SequenceEqual(expected), TimeSpan.FromSeconds(10));
+                var terminal = await UntilTerminalAsync(status, vehicle, t => ReportedInputs(t).SequenceEqual(expected), TimeSpan.FromSeconds(10));
                 Assert.True(terminal.GetProperty("ioModuleReadable").GetBoolean());
             }
 
@@ -52,21 +55,21 @@ public sealed class IoSimulatorSmokeTests
             // Slot 4's light curtain (DI12) of the first simulator reads cargo:
             // the server sees it within 2 s, counted as one change.
             await PutAsync(http, simulators[0], "/api/v1/slots/4/light-curtain", new { value = 0 });
-            var changed = await UntilTerminalAsync(http, status, "vehicle-1", t => Input(t, 12).GetProperty("value").GetInt32() == 0, TimeSpan.FromSeconds(2));
+            var changed = await UntilTerminalAsync(status, "vehicle-1", t => Input(t, 12).GetProperty("value").GetInt32() == 0, TimeSpan.FromSeconds(2));
             Assert.Equal(1UL, Input(changed, 12).GetProperty("changes").GetUInt64());
 
             // The second simulator stops answering: within 10 s its terminal
             // reports the IO module unreadable and the server records it.
             var stoppedAt = DateTimeOffset.UtcNow;
             await PutAsync(http, simulators[1], "/api/v1/modbus-fault", new { mode = "no-response" });
-            await UntilTerminalAsync(http, status, "vehicle-2", t => !t.GetProperty("ioModuleReadable").GetBoolean(), TimeSpan.FromSeconds(10));
+            await UntilTerminalAsync(status, "vehicle-2", t => !t.GetProperty("ioModuleReadable").GetBoolean(), TimeSpan.FromSeconds(10));
             var unreadable = await UntilEventAsync(
                 cli,
                 instance,
                 e => e.GetProperty("type").GetString() == "onboard.io-unreadable" && e.GetProperty("data").GetProperty("vehicleId").GetString() == "vehicle-2",
                 TimeSpan.FromSeconds(5));
             Assert.InRange(unreadable.GetProperty("occurredAt").GetDateTimeOffset() - stoppedAt, TimeSpan.FromSeconds(-1), TimeSpan.FromSeconds(10));
-            var vehicle1 = await UntilTerminalAsync(http, status, "vehicle-1", _ => true, TimeSpan.FromSeconds(1));
+            var vehicle1 = await UntilTerminalAsync(status, "vehicle-1", _ => true, TimeSpan.FromSeconds(1));
             Assert.True(vehicle1.GetProperty("ioModuleReadable").GetBoolean());
 
             var text = await cli.RunAsync("status", "--instance", instance);
@@ -102,12 +105,12 @@ public sealed class IoSimulatorSmokeTests
     private static JsonElement Input(JsonElement terminal, int number) =>
         terminal.GetProperty("io").GetProperty("inputs").EnumerateArray().Single(p => p.GetProperty("number").GetInt32() == number);
 
-    private static async Task<JsonElement> UntilTerminalAsync(HttpClient http, Uri status, string vehicle, Func<JsonElement, bool> match, TimeSpan wait)
+    private static async Task<JsonElement> UntilTerminalAsync(ServerApi status, string vehicle, Func<JsonElement, bool> match, TimeSpan wait)
     {
         var deadline = DateTime.UtcNow + wait;
         while (true)
         {
-            var server = await http.GetFromJsonAsync<JsonElement>(status, Cancel);
+            var server = await status.GetJsonAsync("/api/v1/status", Cancel);
             var terminal = server.GetProperty("onboardTerminals").EnumerateArray()
                 .Where(t => t.GetProperty("vehicleId").GetString() == vehicle)
                 .ToList();

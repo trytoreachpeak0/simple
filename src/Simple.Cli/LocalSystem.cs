@@ -125,6 +125,7 @@ public sealed partial class LocalSystem(
         // server key in the store it was made in.
         store.WriteSqlServer(instance, sqlServer);
         store.WriteServerKeyStore(instance, options.KeyStore);
+        var adminPassword = store.ReadOrCreateAdminPassword(instance);
         Directory.CreateDirectory(store.LogDirectory(instance));
         File.Delete(store.LogPath(instance, "build"));
         var executables = new Dictionary<string, string>();
@@ -176,7 +177,7 @@ public sealed partial class LocalSystem(
                     index++;
                     portsOf[name] = ports.Skip(next).Take(component.PortsPerProcess).ToList();
                     next += component.PortsPerProcess;
-                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name), store.ProgramLogDirectory(instance, name), options.KeyStore)));
+                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name), store.ProgramLogDirectory(instance, name), options.KeyStore, adminPassword)));
                 }
             }
         }
@@ -196,6 +197,12 @@ public sealed partial class LocalSystem(
                 (int Pid, DateTimeOffset StartedAt) started;
                 try
                 {
+                    if (component.SetAdminPassword is { } setAdminPassword)
+                    {
+                        await RunToEndAsync(
+                            executable, setAdminPassword(context), adminPassword, environment, store.LogPath(instance, $"{name}-set-admin-password"), cancellationToken);
+                    }
+
                     if (component.Prepare is { } prepare)
                     {
                         await prepare(context, Http, cancellationToken);
@@ -291,6 +298,8 @@ public sealed partial class LocalSystem(
             {
                 dropped = await SqlServerTarget.DropDatabaseAsync(sqlServer, instance, cancellationToken);
                 store.ForgetSqlServer(instance);
+                // The administrator went with the database; the next up makes a new password.
+                store.ForgetAdminPassword(instance);
             }
             catch (Exception e) when (e is Microsoft.Data.SqlClient.SqlException or InvalidOperationException)
             {
@@ -377,7 +386,14 @@ public sealed partial class LocalSystem(
             return Outcome.Fail(ExitCodes.NotRunning, $"The server of instance {instance} is not running. Run simple up.");
         }
 
-        var baseUri = ApiUri(server);
+        await using var api = await LogInAsync(state.Instance, ApiUri(server), cancellationToken);
+        if (api is null)
+        {
+            return Outcome.Fail(
+                ExitCodes.Unhealthy,
+                $"The server of instance {instance} refused the administrator password in {store.AdminPasswordPath(instance)}. Run simple down and simple up.");
+        }
+
         var events = new List<JsonElement>();
         long? after = null;
         while (true)
@@ -385,7 +401,7 @@ public sealed partial class LocalSystem(
             var query = "limit=1000"
                 + (after is { } cursor ? $"&after={cursor.ToString(CultureInfo.InvariantCulture)}" : string.Empty)
                 + (since is { } from ? $"&since={Uri.EscapeDataString(from.ToString("O", CultureInfo.InvariantCulture))}" : string.Empty);
-            var page = await Http.GetFromJsonAsync<JsonElement>(new Uri(baseUri, $"/api/v1/events?{query}"), cancellationToken);
+            var page = await api.GetJsonAsync($"/api/v1/events?{query}", cancellationToken);
             events.AddRange(page.GetProperty("items").EnumerateArray());
             if (!page.GetProperty("hasMore").GetBoolean())
             {
@@ -612,7 +628,14 @@ public sealed partial class LocalSystem(
         var component = Components.All.First(c => c.Name == process.Component);
         var portsOf = state.Processes.ToDictionary(p => p.Name, p => p.Ports);
         var context = new ComponentContext(
-            state.Instance, state.SqlServer, process.Index, process.Ports, portsOf, store.ProcessDirectory(state.Instance, process.Name), store.ProgramLogDirectory(state.Instance, process.Name));
+            state.Instance,
+            state.SqlServer,
+            process.Index,
+            process.Ports,
+            portsOf,
+            store.ProcessDirectory(state.Instance, process.Name),
+            store.ProgramLogDirectory(state.Instance, process.Name),
+            AdminPassword: store.ReadAdminPassword(state.Instance));
         return component.IsReady(context, Http, cancellationToken);
     }
 
@@ -671,7 +694,8 @@ public sealed partial class LocalSystem(
             {
                 try
                 {
-                    server = await Http.GetFromJsonAsync<JsonElement>(new Uri(ApiUri(process), "/api/v1/status"), cancellationToken);
+                    await using var api = await LogInAsync(state.Instance, ApiUri(process), cancellationToken);
+                    server = api is null ? null : await api.GetJsonAsync("/api/v1/status", cancellationToken);
                 }
                 catch (Exception e) when (e is HttpRequestException or JsonException
                     || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
@@ -690,6 +714,65 @@ public sealed partial class LocalSystem(
             state.StartedAt,
             processes,
             server);
+    }
+
+    /// <summary>Logs in to an instance's server as its administrator; null when there is no password or the server refuses it.</summary>
+    private async Task<ServerApi?> LogInAsync(string instance, Uri api, CancellationToken cancellationToken) =>
+        store.ReadAdminPassword(instance) is { } password
+            ? await ServerApi.LogInAsync(Http, api, password, cancellationToken)
+            : null;
+
+    /// <summary>
+    /// Runs a component's executable to the end with <paramref name="input"/>
+    /// on standard input (a password: never on the command line, which the
+    /// process list shows), in the components' environment; its output goes
+    /// to <paramref name="log"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">It ended with another exit code than 0, or ran longer than two minutes.</exception>
+    private static async Task RunToEndAsync(
+        string executable, IReadOnlyList<string> arguments, string input, Dictionary<string, string> environment, string log, CancellationToken cancellationToken)
+    {
+        var start = new ProcessStartInfo(executable)
+        {
+            WorkingDirectory = Path.GetDirectoryName(executable)!,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var argument in arguments)
+        {
+            start.ArgumentList.Add(argument);
+        }
+
+        start.Environment.Clear();
+        foreach (var (key, value) in environment)
+        {
+            start.Environment[key] = value;
+        }
+
+        using var process = Process.Start(start) ?? throw new InvalidOperationException($"{executable} did not start.");
+        var output = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var error = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.StandardInput.WriteLineAsync(input.AsMemory(), cancellationToken);
+        process.StandardInput.Close();
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        wait.CancelAfter(TimeSpan.FromMinutes(2));
+        try
+        {
+            await process.WaitForExitAsync(wait.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            process.Kill(entireProcessTree: true);
+            throw new InvalidOperationException($"{Path.GetFileName(executable)} {arguments[0]} did not end within two minutes. Its output: {log}");
+        }
+
+        await File.WriteAllTextAsync(log, await output + await error, cancellationToken);
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"{Path.GetFileName(executable)} {arguments[0]} ended with exit code {process.ExitCode}. Its output: {log}");
+        }
     }
 
     private static string FormatEvent(JsonElement e)

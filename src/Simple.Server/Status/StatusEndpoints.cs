@@ -1,3 +1,4 @@
+using Simple.Server.Accounts;
 using Microsoft.Extensions.Options;
 using Simple.Server.Configuration;
 using Simple.Server.Mes;
@@ -20,6 +21,7 @@ public static class StatusEndpoints
                     OnboardTerminals: terminals.Snapshot(),
                     Riot: riot.Status(),
                     MesGateway: mes.Status()))
+            .RequireAccess(Access.View)
             .WithName("GetStatus")
             .WithSummary("Server version, start time and instance, and the state of every connected part.");
     }
