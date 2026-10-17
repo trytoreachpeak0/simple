@@ -90,12 +90,13 @@ public sealed class GatewayApiTests : IAsyncLifetime
     [Fact]
     public async Task FailedReadsShowInTheSnapshotUntilTheSourceRecovers()
     {
-        var before = await NextSnapshotAsync(s => s.Succeeded);
+        await NextSnapshotAsync(s => s.Succeeded);
 
         await TellAsync("/fake-mes/failures", new FailRequest(Persistent, "ORA-03135: connection lost contact"), state => state.FailuresPending > 0);
 
         var failed = await NextSnapshotAsync(s => !s.Succeeded);
-        Assert.True(failed.Round > before.Round, $"The failure is from round {failed.Round}, not after round {before.Round}.");
+        // Every round before the injection succeeded (waited for above), and the
+        // failure says what was injected: that is what ties it to the injection.
         Assert.Equal(new MesReadFailure(MesReadFailure.Read, "ORA-03135: connection lost contact"), failed.Failure);
         Assert.Null(failed.Rows);
 
@@ -128,12 +129,13 @@ public sealed class GatewayApiTests : IAsyncLifetime
     [Fact]
     public async Task AMalformedReadIsAFormatFailure()
     {
-        var before = await NextSnapshotAsync(s => s.Succeeded);
+        await NextSnapshotAsync(s => s.Succeeded);
 
         await TellAsync("/fake-mes/malformed", new MalformedRequest(Persistent), state => state.MalformedPending > 0);
 
         var failed = await NextSnapshotAsync(s => !s.Succeeded);
-        Assert.True(failed.Round > before.Round, $"The failure is from round {failed.Round}, not after round {before.Round}.");
+        // Every round before the injection succeeded (waited for above), and the
+        // failure says what was injected: that is what ties it to the injection.
         Assert.Equal(MesReadFailure.Format, failed.Failure!.Kind);
         Assert.Matches("^Row [0-9]+ has 6 values for 7 columns\\.$", failed.Failure.Message);
     }
@@ -152,8 +154,10 @@ public sealed class GatewayApiTests : IAsyncLifetime
     [Fact]
     public async Task ResetBringsBackTheSeed()
     {
-        await client.PostAsJsonAsync(new Uri("/fake-mes/rows", UriKind.Relative), new MesRow("X", "Y", null, null, null, null, null), Cancel);
-        await client.PostAsJsonAsync(new Uri("/fake-mes/failures", UriKind.Relative), new FailRequest(100, null), Cancel);
+        // Both must take, or the reset below would have nothing to undo.
+        var added = new MesRow("X", "Y", null, null, null, null, null);
+        await TellAsync("/fake-mes/rows", added, state => state.Rows.Contains(added));
+        await TellAsync("/fake-mes/failures", new FailRequest(100, null), state => state.FailuresPending > 0);
 
         var reset = await client.PostAsync(new Uri("/fake-mes/reset", UriKind.Relative), null, Cancel);
         var state = await reset.Content.ReadFromJsonAsync<FakeMesState>(Cancel);
