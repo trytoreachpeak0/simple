@@ -30,7 +30,7 @@ permissions:
   actions: read
   # Restore reads RIoT.Sdk.* from GitHub Packages (nuget.config). Those packages
   # are public, so any repository's GITHUB_TOKEN may read them, but the NuGet
-  # registry still wants a token; see docs/adr/0027.
+  # registry still wants a token; see docs/adr/0028.
   packages: read
 
 defaults:

@@ -6,7 +6,7 @@ using RIoT.Sdk.Facade;
 namespace Simple.Server.Riot.Tests;
 
 // riot-sdk reaches Simple.Server.Riot as the GitHub Packages package RIoT.Sdk.Facade
-// (ADR 0027), not as a project reference. This test goes through all three of
+// (ADR 0028), not as a project reference. This test goes through all three of
 // its packages (Facade, the Kiota-generated client, Core) and the Kiota runtime
 // on this repository's target framework, against a canned HTTP response; no
 // fleet manager is contacted.

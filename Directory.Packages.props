@@ -17,7 +17,7 @@
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Windows.CsWin32" Version="0.3.363" />
-    <!-- From trytoreachpeak0/riot-sdk on GitHub Packages (nuget.config, ADR 0027).
+    <!-- From trytoreachpeak0/riot-sdk on GitHub Packages (nuget.config, ADR 0028).
          Brings RIoT.Sdk.Core and RIoT.Sdk.Generated at the same version. -->
     <PackageVersion Include="RIoT.Sdk.Facade" Version="0.3.0" />
     <PackageVersion Include="System.CommandLine" Version="2.0.13" />
