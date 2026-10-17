@@ -45,10 +45,11 @@ public sealed class ControlApiTests : IAsyncLifetime
         {
             Directory.Delete(logDirectory, recursive: true);
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // Hosted in process, the program may not have let go of its log
-            // yet when the factory returns (#69); a folder left in %TEMP% harms nothing.
+            // yet when the factory returns (#69), or a scanner holds it; a
+            // folder left in %TEMP% harms nothing.
         }
     }
 

@@ -100,11 +100,12 @@ public sealed class FakeRiotTarget : RiotTarget
         {
             Directory.Delete(logDirectory, recursive: true);
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // Hosted in process, the fake may not have let go of FakeRiot.log
-            // yet when the factory returns (#80, as in #69); a folder left in
-            // %TEMP% harms nothing. DirectoryNotFoundException is an IOException too.
+            // yet when the factory returns (#80, as in #69), or a scanner holds
+            // it; a folder left in %TEMP% harms nothing. DirectoryNotFoundException
+            // is an IOException too.
         }
     }
 }

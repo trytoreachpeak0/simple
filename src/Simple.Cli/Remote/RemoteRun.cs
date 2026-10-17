@@ -315,9 +315,6 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
     {
         var environment = new Dictionary<string, string>
         {
-            // Restore as on CI (Directory.Build.props): a stale
-            // packages.lock.json fails there with NU1004, not first on CI (#80).
-            ["CI"] = "true",
             // The remote machine may run another language; output is judged
             // by people and sessions reading English.
             ["DOTNET_CLI_UI_LANGUAGE"] = "en",
@@ -335,6 +332,11 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
             environment[name] = value;
         }
 
+        // Restore as on CI (Directory.Build.props), and no machine turns it
+        // off: a lock file that does not match its project fails there with
+        // NU1004, not first on CI (#80). CI's separate "Lock files up to
+        // date" step (ci.yml) is not run there.
+        environment["CI"] = "true";
         return environment;
     }
 

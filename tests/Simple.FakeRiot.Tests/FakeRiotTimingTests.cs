@@ -24,11 +24,11 @@ public sealed class FakeRiotTimingTests : IDisposable
         {
             Directory.Delete(logDirectory, recursive: true);
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // Not created, or the fake hosted in process has not let go of its
-            // log yet when the factory returns (#80, as in #69); a folder left
-            // in %TEMP% harms nothing.
+            // log yet when the factory returns (#80, as in #69), or a scanner
+            // holds it; a folder left in %TEMP% harms nothing.
         }
     }
 

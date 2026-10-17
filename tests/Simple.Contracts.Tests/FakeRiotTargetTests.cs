@@ -20,7 +20,15 @@ public sealed class FakeRiotTargetTests
             await target.DisposeAsync();
         }
 
-        // Left in %TEMP%, where it harms nothing.
+        // Left behind by the target; this test cleans up after itself.
         Assert.True(File.Exists(held));
+        try
+        {
+            Directory.Delete(target.LogDirectory, recursive: true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // The fake's own log may still be held a moment longer, as above.
+        }
     }
 }
