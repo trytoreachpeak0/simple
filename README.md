@@ -68,6 +68,8 @@ dotnet test --solution simple.slnx
 
 需要数据库的测试每次建一个随机名字的库（`Simple_test_<随机串>`），测完删掉，几个 worktree 同时跑也互不干扰。默认建在本机 LocalDB 上；要用别的 SQL Server 实例，把不带库名的连接串放进环境变量 `SIMPLE_TEST_SQLSERVER`，例如 `Server=.\SQLEXPRESS;Integrated Security=true;TrustServerCertificate=true`。
 
+测试里起的服务端，其证书钥匙默认放在当前用户的密钥存储里。环境变量 `SIMPLE_TEST_SERVER_KEY_STORE` 可以改成 `Machine`（本机级存储，建和删都要管理员）。`simple remote` 在远端运行时会设成 `Machine`，因为经 SSH 密钥登录的会话用不了用户级存储。取 `User`、`Machine` 以外的值时测试直接失败，不会悄悄改用用户级存储。
+
 ## 在本机起停整套系统
 
 仓库根的 `simple.ps1` 先编译命令行本身（安静地编译，失败才显示输出），再把参数原样交给它。在 PowerShell 7 里：
@@ -82,7 +84,7 @@ dotnet test --solution simple.slnx
 ./simple down --reset   # 再删掉本实例的库
 ```
 
-从别的 shell 调用写成 `pwsh -File <clone>/simple.ps1 up`。每个命令都接受 `--json`：标准输出上只有一个 JSON 对象 `{exitCode, error, result}`，进度提示写在标准错误上。退出码是固定的，`./simple --help` 列出全表：0 成功；1 意外错误（或 `down` 之后仍有进程在跑）；2 参数或设置不对；3 编译失败；4 有部件没就绪（已起的会被停掉）；5 实例没在运行；6 实例不健康、只起了一半，或是从另一个 clone 起的；7 另一条 simple 命令正在操作这个实例；8 有进程超时没停下、被强杀；9 连不上 SQL Server 或删库失败。
+从别的 shell 调用写成 `pwsh -File <clone>/simple.ps1 up`。每个命令都接受 `--json`：标准输出上只有一个 JSON 对象 `{exitCode, error, result}`，进度提示写在标准错误上。退出码是固定的，`./simple --help` 列出全表：0 成功；1 意外错误（或 `down` 之后仍有进程在跑）；2 参数或设置不对；3 编译失败；4 有部件没就绪（已起的会被停掉）；5 实例没在运行；6 实例不健康、只起了一半，或是从另一个 clone 起的；7 另一条 simple 命令正在操作这个实例；8 有进程超时没停下、被强杀；9 连不上 SQL Server，或删库、删服务端钥匙失败。
 
 目前系统里有三种部件，按这个顺序起：MES 网关（背后接假 MES）、服务端（启动参数里带上网关的地址）、无界面车载终端（`--terminals N` 个，默认 0）。`simple status` 除了列出每个进程，还有一行写服务端最近从网关看到了什么（网关通不通、最近一轮是第几轮、几点读的、多少行），以及服务端看到的每台车载终端。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪，以及起之前要准备什么；以后加 IO 模拟器、假 RIoT，都是往这里加一项。部件按登记的顺序一个一个起，前一个全部就绪才起下一个，因为后面的部件可能要用前面的：服务端第一次去网关取数时网关已经在了，车载终端要先从服务端的状态接口读到证书指纹。
 
@@ -97,9 +99,40 @@ dotnet test --solution simple.slnx
   - `POST /test/press`，正文 `{"button": "<按钮名>"}`：按屏上的一个按钮；
   - `GET /test/status`：连接状态和屏上文字；`GET /test/ready`：连着时 200。
   - 终端没连上服务端时，扫码和按键都返回 409 并被丢掉，和车上真屏一样。
-- **服务端钥匙**：本实例服务端的证书钥匙放在当前 Windows 用户的密钥存储里，名字是 `Simple-Server-<实例名>`。`down` 不动它，下次 `up` 指纹不变；`down --reset` 连库一起删掉它。
+- **服务端钥匙**：本实例服务端的证书钥匙放在当前 Windows 用户的密钥存储里，名字是 `Simple-Server-<实例名>`。`down` 不动它，下次 `up` 指纹不变；`down --reset` 连库一起删掉它。`up` 把钥匙放在哪个存储记在实例目录的 `serverkey.txt` 里，`down --reset` 只按这份记录去删；没有记录时两种存储都查，删掉存在的那一把；删不掉就以退出码 9 报错并保留记录，下次还能再删。
 
 `Simple.Cli.Tests` 里的冒烟测试经编译好的命令行真起真停随机名字的实例：两套只有服务端的实例互不干扰；一套带 3 个车载终端的实例里，终端上报新鲜、经测试输入扫的码进了事件记录、被杀掉的终端 10 秒内记成上报过期、`down` 后不留进程。`dotnet test` 时随其他测试一起跑，CI 上也跑。
+
+## 把重活送到远端机器上跑
+
+改代码留在本机，完整编译、全量测试、起整套系统这些重活可以送到另一台 Windows 机器上跑。远端是哪台机器只从环境变量 `SIMPLE_REMOTE` 读，它的值是本机 SSH 配置（`~/.ssh/config`）里的一个主机别名，仓库里不写任何机器名或地址。
+
+```
+./simple remote build
+./simple remote test                                # 全量测试；后面的参数原样交给 dotnet test（MTP 选项）
+./simple remote test --project tests/Simple.Cli.Tests --filter-class "*CommandLineTests"   # 只跑一个类时要带 --project
+./simple remote up                                  # 远端起整套系统，返回后系统继续运行
+./simple remote status                              # 还有 down、events、logs，转给远端那份 simple
+./simple remote exec -- dotnet --info               # 在远端的工作树里跑任意命令
+./simple remote forget                              # 停掉、删库、删远端目录；删 worktree 之前用
+```
+
+- **只跑一个类时用 `--project`**：`simple remote test` 默认对整个解决方案跑 `dotnet test --solution simple.slnx`。这时按类过滤（`--filter-class`），其余测试项目一个测试都匹配不到，各自以 8（一个测试都没跑到）结束，整次运行也就以 8 结束。带上 `--project <测试项目路径>`（必须在本仓库里），就只跑那一个项目，跑通了以 0 结束。
+- **跑的恰好是本机这棵树**：每次先把工作树做成一个快照提交，包括没提交的改动和还没 `git add` 的新文件，按 `.gitignore` 排除被忽略的文件；用的是一份临时索引，不动真正的索引和工作区。作者、时间都是固定值，所以同一棵树每次得到同一个提交号；工作树干净时就用 `HEAD` 本身。远端检出这个确切的提交再跑，开头和结尾各打印一行：提交号、基于哪个 `HEAD`、几个未提交的文件、哪台机器。
+- **怎么送**：只把 `origin/main` 之后的部分（本地没推送的提交加快照）打成 git bundle，经 scp 送到远端的裸仓库缓存；远端缺前置对象时从 origin 拉一次，还不行就送完整历史。远端已经有这个提交就什么都不送。不往 GitHub 推任何分支。快照里新增了超过 10 MiB 的文件时列出来并拒绝发送。
+- **远端的目录**：`C:\simple-remote\` 下有 `repo.git`（所有实例共用的对象缓存）、`wt\<实例名>`（每个 worktree 一个检出目录）、`runs\<实例名>`（每次运行的结果，保留最近 20 次）、`locks`、`slots`。实例名与本机相同，所以远端的 `simple up` 也按本机那套实例规则分开端口和库。**注意**：本机上两个文件夹同名的 clone（例如两台机器上都叫 `repo`）到了远端是同一个实例、同一个目录，本机"实例是从另一个 clone 起的"那道保护在远端不起作用，后跑的会改掉先跑的检出；这种情况下用 `--instance` 给其中一个起别的名字。检出时清掉残留文件，但保留被忽略的 `bin/`、`obj/`、`artifacts/`，编译是增量的。
+- **排队**：同一个实例同一时刻只跑一条远程命令，后来的等着，并打印在等谁；`build`、`test`、`exec`、`up` 还要占用整机 4 个名额中的一个。等 30 分钟还轮不到就以退出码 22 结束。
+- **结果**：输出实时回传；退出码是远端命令自己的（例如测试的 2、8 原样返回）。`simple remote` 自己的失败用 20（没跑成：git、ssh、scp 出错，或远端在起命令之前失败）、21（快照含大文件，没送）、22（等不到实例或名额）；`--json` 时标准输出是一个 `{exitCode, error, result}`，`result` 里有提交号、`HEAD`、未提交文件数和远端退出码。`build`、`test`、`exec` 的输出和测试结果（TRX）拷回本机 `artifacts/remote/<实例名>/<时刻>-<提交号前 8 位>/`；`exec` 的命令把文件写进 `%SIMPLE_REMOTE_RUN%` 也会拷回来。
+- **远端也只起本机的假系统**：远端的命令把 `SIMPLE_SQLSERVER` 和 `SIMPLE_TEST_SQLSERVER` 指向那台机器上专给它用的命名实例 `.\SIMPLE_DEV`，`simple` 在那台机器上照样只接受本机的 LocalDB 或命名实例；`simple remote` 没有任何指向真实系统的开关。
+- **断线**：远端那台机器的 sshd 在笔记本这头断开后，既不结束会话，也不结束会话里的进程（simple01 上 2026-10-17 实测）。所以本机每 5 秒往 ssh 写一行心跳，远端每 0.5 秒检查一次：察觉断开后，结束这次运行的整棵进程树（包括它起的子进程、`up` 已经起来的部件），然后退出，实例锁和名额随之放掉。察觉要多久：
+  - 强杀本机的 `simple` 或 ssh：约 1–2 秒（远端读到输入结束）；
+  - Ctrl+C：同上，约 1–2 秒；
+  - 断网：远端在最后一次心跳之后约 30 秒结束运行；本机 ssh 也在约 30 秒内放弃（`ServerAliveInterval=10` × 3），以 20 结束。
+
+  `up` 已经成功返回之后再断开不影响它起的系统：部件脱离 SSH 会话继续运行，用 `simple remote down` 停。
+- **远端的服务端钥匙在本机级存储里**：经 SSH 密钥登录的会话用不了按用户加密的 Windows 存储（DPAPI），所以 `simple remote up` 让服务端把钥匙放在那台机器的本机级密钥存储里。**本机级的钥匙只有管理员能建、能删**，所以远端的 SSH 账户必须是那台机器的本机管理员。`simple remote down --reset` 和 `forget` 按 `up` 时的记录把它删掉。
+
+为什么手写这一层：现成的同步工具（Mutagen、Syncthing 等）都是持续同步型的，说不出某一次运行看到的是哪个状态的树，"同步到一半就开跑"正是要避免的；`simple remote` 只是 git、ssh、scp 之上的一层薄胶水，"这次跑的是哪棵树"由提交号保证。
 
 ## 只运行服务端
 

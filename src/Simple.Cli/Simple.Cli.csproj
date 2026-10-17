@@ -17,6 +17,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The remote side of simple remote, copied to the remote machine when it lacks this version. -->
+    <EmbeddedResource Include="Remote/agent.ps1" LogicalName="Simple.Cli.Remote.agent.ps1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Simple.Cli.Tests" />
   </ItemGroup>
 

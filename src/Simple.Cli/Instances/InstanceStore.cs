@@ -43,6 +43,35 @@ public sealed class InstanceStore(string home)
 
     public void ForgetSqlServer(string instance) => File.Delete(SqlServerPath(instance));
 
+    private string ServerKeyStorePath(string instance) => Path.Combine(InstanceDirectory(instance), "serverkey.txt");
+
+    /// <summary>
+    /// The key store the instance's server key was made in, written at up and
+    /// kept until down --reset deletes the key; null when there is no record.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The record holds something else.</exception>
+    public ServerKeyStore? ReadServerKeyStore(string instance)
+    {
+        var path = ServerKeyStorePath(instance);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        var text = File.ReadAllText(path).Trim();
+        return ServerKey.TryParse(text, out var store)
+            ? store
+            : throw new InvalidDataException($"{path} holds '{text}', neither User nor Machine.");
+    }
+
+    public void WriteServerKeyStore(string instance, ServerKeyStore store)
+    {
+        Directory.CreateDirectory(InstanceDirectory(instance));
+        File.WriteAllText(ServerKeyStorePath(instance), store.ToString());
+    }
+
+    public void ForgetServerKeyStore(string instance) => File.Delete(ServerKeyStorePath(instance));
+
     public string LogDirectory(string instance) => Path.Combine(InstanceDirectory(instance), "logs");
 
     public string LogPath(string instance, string processName) => Path.Combine(LogDirectory(instance), $"{processName}.log");

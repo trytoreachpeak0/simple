@@ -29,7 +29,14 @@ public sealed class FakeServer : IAsyncDisposable
 
     public FakeServer()
     {
-        using var key = CngKey.Create(CngAlgorithm.ECDsaP256, keyName, new CngKeyCreationParameters { KeyUsage = CngKeyUsages.Signing });
+        using var key = CngKey.Create(
+            CngAlgorithm.ECDsaP256,
+            keyName,
+            new CngKeyCreationParameters
+            {
+                KeyUsage = CngKeyUsages.Signing,
+                KeyCreationOptions = TestKeyStore.IsMachine ? CngKeyCreationOptions.MachineKey : CngKeyCreationOptions.None,
+            });
         using var ecdsa = new ECDsaCng(key);
         var request = new CertificateRequest("CN=fake-simple-server", ecdsa, HashAlgorithmName.SHA256);
         certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
@@ -85,7 +92,8 @@ public sealed class FakeServer : IAsyncDisposable
     {
         await StopAsync();
         certificate.Dispose();
-        using var key = CngKey.Open(keyName);
+        using var key = CngKey.Open(
+            keyName, CngProvider.MicrosoftSoftwareKeyStorageProvider, TestKeyStore.IsMachine ? CngKeyOpenOptions.MachineKey : CngKeyOpenOptions.None);
         key.Delete();
     }
 

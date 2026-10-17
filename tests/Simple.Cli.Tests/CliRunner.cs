@@ -56,6 +56,9 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // Through a pipe the command line writes UTF-8 (Program.cs).
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
             UseShellExecute = false,
             WorkingDirectory = Repository,
         };
@@ -63,6 +66,12 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
         foreach (var arg in args)
         {
             start.ArgumentList.Add(arg);
+        }
+
+        if (args is ["up", ..])
+        {
+            start.ArgumentList.Add(SimpleCommand.ServerKeyStoreOption);
+            start.ArgumentList.Add(TestKeyStore.Store.ToString());
         }
 
         start.Environment[InstanceStore.HomeVariable] = Home;
@@ -138,7 +147,12 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
             await TryAsync(failures, () => SqlServerTarget.DropDatabaseAsync(SqlServer, instance, CancellationToken.None));
             await TryAsync(failures, () =>
             {
-                ServerKey.Delete(Components.ServerKeyName(instance));
+                // Both stores: an up told --server-key-store Machine keeps it there.
+                foreach (var keyStore in Enum.GetValues<ServerKeyStore>())
+                {
+                    ServerKey.Delete(Components.ServerKeyName(instance), keyStore);
+                }
+
                 return Task.CompletedTask;
             });
             await TryAsync(failures, () =>

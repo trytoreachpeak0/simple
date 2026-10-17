@@ -75,6 +75,7 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
         // Without real sockets there is no terminal endpoint to reach, so none
         // is configured, and no server key is made for the test.
         settings[ServerSettings.OnboardTerminalsUrlKey] = kestrel ? "https://127.0.0.1:0" : "";
+        settings[ServerSettings.ServerKeyStoreKey] = TestKeyStore.Name;
         if (kestrel)
         {
             settings["urls"] = "http://127.0.0.1:0";
@@ -142,7 +143,7 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
             {
                 if (OperatingSystem.IsWindows())
                 {
-                    ServerCertificate.Delete(Database.ServerKeyName, machineKey: false);
+                    ServerCertificate.Delete(Database.ServerKeyName, TestKeyStore.IsMachine);
                 }
             }
         }

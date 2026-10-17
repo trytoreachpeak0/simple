@@ -11,6 +11,8 @@ public static partial class SimpleCommand
 {
     public const string InstanceOption = "--instance";
     public const string JsonOption = "--json";
+    public const string BreakAwayOption = "--break-away";
+    public const string ServerKeyStoreOption = "--server-key-store";
 
     /// <summary>
     /// The exit codes each command can end with, listed in its help. Every
@@ -25,6 +27,8 @@ public static partial class SimpleCommand
         ["status"] = [0, 1, 2, 5, 6],
         ["events"] = [0, 1, 2, 5],
         ["logs"] = [0, 1, 2, 5],
+        // Besides the exit code of the command it ran on the remote machine.
+        ["remote"] = [1, 2, 5, 20, 21, 22],
     };
 
     /// <summary>Builds the command tree. The actions run against <paramref name="environment"/>.</summary>
@@ -106,6 +110,27 @@ public static partial class SimpleCommand
             }
         });
 
+        var breakAway = new Option<bool>(BreakAwayOption)
+        {
+            Description = "Internal, for simple remote up: start the components outside this session's job, so they outlive the SSH session.",
+            Hidden = true,
+        };
+
+        var keyStore = new Option<string>(ServerKeyStoreOption)
+        {
+            Description = "Internal, for simple remote up: where the server keeps its key, User (default) or Machine. "
+                + "Machine is for an SSH key login, which cannot use the user's store; only an administrator can create or delete a key there.",
+            Hidden = true,
+            DefaultValueFactory = _ => nameof(ServerKeyStore.User),
+        };
+        keyStore.Validators.Add(result =>
+        {
+            if (!ServerKey.TryParse(result.GetValueOrDefault<string>(), out _))
+            {
+                result.AddError($"{ServerKeyStoreOption} '{result.GetValueOrDefault<string>()}' is neither User nor Machine.");
+            }
+        });
+
         var up = new Command(
             "up",
             "Build once, start every component of the local system from the build output, and return when all are ready. "
@@ -113,9 +138,16 @@ public static partial class SimpleCommand
         {
             terminals,
             timeout,
+            breakAway,
+            keyStore,
         };
         up.SetAction((parse, cancellationToken) => RunAsync(parse, environment, (system, instance) =>
-            system.UpAsync(instance, environment.SqlServer, new UpOptions(parse.GetValue(terminals)), TimeSpan.FromSeconds(parse.GetValue(timeout)), cancellationToken)));
+            system.UpAsync(
+                instance,
+                environment.SqlServer,
+                UpOptionsOf(parse),
+                TimeSpan.FromSeconds(parse.GetValue(timeout)),
+                cancellationToken)));
 
         var down = new Command(
             "down",
@@ -166,6 +198,7 @@ public static partial class SimpleCommand
             status,
             events,
             logs,
+            Remote.RemoteCommand.Create(environment),
             signal,
         };
     }
@@ -216,6 +249,17 @@ public static partial class SimpleCommand
         return outcome.Write(json, environment.Out, environment.Error);
     }
 
+    /// <summary>What a parsed <c>up</c> asks for.</summary>
+    public static UpOptions UpOptionsOf(ParseResult parse)
+    {
+        ArgumentNullException.ThrowIfNull(parse);
+        var text = parse.GetValue<string>(ServerKeyStoreOption);
+        return new UpOptions(
+            parse.GetValue<int>("--terminals"),
+            parse.GetValue<bool>(BreakAwayOption),
+            ServerKey.TryParse(text, out var store) ? store : throw new ArgumentException($"'{text}' is neither User nor Machine.", nameof(parse)));
+    }
+
     public static string ExitCodesOf(string command) => $"Exit codes {string.Join(", ", CommandExitCodes[command])}.";
 
     private static DateTimeOffset? ParseSince(ArgumentResult result)
@@ -251,8 +295,17 @@ public static partial class SimpleCommand
 /// <summary>Where the command line runs: which clone, where its files go, which SQL Server, where it writes.</summary>
 public sealed record CliEnvironment(string Repository, string Home, string SqlServer, TextWriter Out, TextWriter Error)
 {
+    /// <summary>The SSH alias simple remote runs on, from SIMPLE_REMOTE.</summary>
+    public string? RemoteAlias { get; init; }
+
+    /// <summary>The machine simple remote runs on instead of <see cref="RemoteAlias"/>; tests set it.</summary>
+    public Remote.IRemoteMachine? RemoteMachine { get; init; }
+
     public static CliEnvironment FromProcess() =>
-        new(FindRepository(AppContext.BaseDirectory), InstanceStore.DefaultHome(), SqlServerTarget.Configured(), Console.Out, Console.Error);
+        new(FindRepository(AppContext.BaseDirectory), InstanceStore.DefaultHome(), SqlServerTarget.Configured(), Console.Out, Console.Error)
+        {
+            RemoteAlias = Environment.GetEnvironmentVariable(Remote.SshMachine.Variable) is { Length: > 0 } alias ? alias : null,
+        };
 
     /// <summary>The clone the command line was built from: the nearest folder above it that holds simple.slnx.</summary>
     public static string FindRepository(string start)

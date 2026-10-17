@@ -28,6 +28,16 @@ public sealed class CommandLineTests
     }
 
     [Fact]
+    public void ALocalUpStaysInTheCallersJobAndUsesTheUsersKeyStore()
+    {
+        // Only simple remote up asks otherwise (RemotePlan); a local up, the
+        // tests' and CI's, must leave a job that cleans up able to catch its
+        // components.
+        Assert.Equal(new UpOptions(2, BreakAway: false, KeyStore: ServerKeyStore.User), SimpleCommand.UpOptionsOf(Parse("up", "--terminals", "2")));
+        Assert.Equal(new UpOptions(0, BreakAway: true, KeyStore: ServerKeyStore.Machine), SimpleCommand.UpOptionsOf(Parse("up", "--break-away", "--server-key-store", "Machine")));
+    }
+
+    [Fact]
     public void UpDefaultsToNoTerminalsAndTwoMinutes()
     {
         var parse = Parse("up");
@@ -116,6 +126,7 @@ public sealed class CommandLineTests
     [InlineData("status")]
     [InlineData("events")]
     [InlineData("logs")]
+    [InlineData("remote")]
     public async Task EachCommandsHelpListsItsExitCodes(string command)
     {
         using var stdout = new StringWriter();

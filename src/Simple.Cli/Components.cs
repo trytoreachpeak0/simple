@@ -44,6 +44,7 @@ public static class Components
                 $"--ConnectionStrings:Simple={context.SqlServer}",
                 $"--Simple:OnboardTerminals:Url=https://127.0.0.1:{context.Ports[1].ToString(CultureInfo.InvariantCulture)}",
                 $"--Simple:OnboardTerminals:ServerKeyName={ServerKeyName(context.Instance)}",
+                $"--Simple:OnboardTerminals:ServerKeyStore={context.KeyStore}",
                 $"--Simple:MesGateway:Url={context.UrlOf("mes-gateway")}",
             ],
             IsReady: (context, http, cancellationToken) =>
@@ -71,8 +72,9 @@ public static class Components
 
     /// <summary>
     /// The persisted key behind the certificate the instance's terminals pin,
-    /// in the current user's key store. It outlives down, so the pin stays the
-    /// same from one up to the next; down --reset deletes it.
+    /// in the key store up was told (<see cref="UpOptions.KeyStore"/>). It
+    /// outlives down, so the pin stays the same from one up to the next;
+    /// down --reset deletes it.
     /// </summary>
     public static string ServerKeyName(string instance) => $"Simple-Server-{instance}";
 
@@ -109,20 +111,24 @@ public sealed record Component(
     Func<ComponentContext, HttpClient, CancellationToken, Task>? Prepare = null);
 
 /// <summary>What <c>up</c> was asked for.</summary>
-public sealed record UpOptions(int Terminals);
+/// <param name="BreakAway">Start the components outside the caller's job (<see cref="Processes.ChildProcess.Start"/>); only simple remote up asks for it.</param>
+/// <param name="KeyStore">Where the server keeps its key; only simple remote up asks for the machine's store.</param>
+public sealed record UpOptions(int Terminals, bool BreakAway = false, ServerKeyStore KeyStore = ServerKeyStore.User);
 
 /// <summary>What one process of a component is started with.</summary>
 /// <param name="Index">1-based among the processes of its component.</param>
 /// <param name="Ports">This process's own ports.</param>
 /// <param name="PortsOf">Every process's ports by process name, for components that connect to another.</param>
 /// <param name="Directory">This process's own directory for files it reads or writes, outside the clone; kept after down.</param>
+/// <param name="KeyStore">Where the server keeps its key.</param>
 public sealed record ComponentContext(
     string Instance,
     string SqlServer,
     int Index,
     IReadOnlyList<int> Ports,
     IReadOnlyDictionary<string, IReadOnlyList<int>> PortsOf,
-    string Directory)
+    string Directory,
+    ServerKeyStore KeyStore = ServerKeyStore.User)
 {
     public Uri Url(int port = 0) => new($"http://127.0.0.1:{Ports[port].ToString(CultureInfo.InvariantCulture)}");
 

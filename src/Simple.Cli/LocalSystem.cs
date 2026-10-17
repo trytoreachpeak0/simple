@@ -16,7 +16,8 @@ public sealed partial class LocalSystem(
     string repository,
     InstanceStore store,
     TextWriter progress,
-    Func<string, CancellationToken, Task<string?>>? verifySqlServer = null)
+    Func<string, CancellationToken, Task<string?>>? verifySqlServer = null,
+    Func<string, ServerKeyStore, bool>? deleteServerKey = null)
 {
     public static readonly TimeSpan LockWait = TimeSpan.FromMinutes(5);
     public static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(30);
@@ -103,9 +104,20 @@ public sealed partial class LocalSystem(
             return refused;
         }
 
+        // One instance, one key store: a key left in the other store would
+        // outlive down --reset, which deletes where the record says.
+        if (store.ReadServerKeyStore(instance) is { } recorded && recorded != options.KeyStore)
+        {
+            return Outcome.Fail(
+                ExitCodes.Usage,
+                $"Instance {instance} keeps its server key in the {recorded} key store, not {options.KeyStore}. Run simple down --reset first.");
+        }
+
         // Kept after down, so down --reset finds the database where up made it
-        // even when the caller's SIMPLE_SQLSERVER has changed since.
+        // even when the caller's SIMPLE_SQLSERVER has changed since, and the
+        // server key in the store it was made in.
         store.WriteSqlServer(instance, sqlServer);
+        store.WriteServerKeyStore(instance, options.KeyStore);
         Directory.CreateDirectory(store.LogDirectory(instance));
         File.Delete(store.LogPath(instance, "build"));
         var executables = new Dictionary<string, string>();
@@ -157,7 +169,7 @@ public sealed partial class LocalSystem(
                     index++;
                     portsOf[name] = ports.Skip(next).Take(component.PortsPerProcess).ToList();
                     next += component.PortsPerProcess;
-                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name))));
+                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name), options.KeyStore)));
                 }
             }
         }
@@ -182,7 +194,7 @@ public sealed partial class LocalSystem(
                         await prepare(context, Http, cancellationToken);
                     }
 
-                    started = ChildProcess.Start(executable, component.Arguments(context), Path.GetDirectoryName(executable)!, environment, log);
+                    started = ChildProcess.Start(executable, component.Arguments(context), Path.GetDirectoryName(executable)!, environment, log, options.BreakAway);
                 }
                 catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException or HttpRequestException or JsonException or InvalidOperationException
                     || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
@@ -282,10 +294,37 @@ public sealed partial class LocalSystem(
 
             // The instance's server key goes with its database: the next up
             // makes a new one, and its terminals' settings are written anew.
-            keyDeleted = ServerKey.Delete(Components.ServerKeyName(instance));
+            // It is deleted from the store up recorded; without a record
+            // (an up from before the record existed), from either.
+            var key = Components.ServerKeyName(instance);
+            var recorded = store.ReadServerKeyStore(instance);
+            var deleted = new List<ServerKeyStore>();
+            foreach (var keyStore in recorded is { } only ? [only] : Enum.GetValues<ServerKeyStore>())
+            {
+                try
+                {
+                    if ((deleteServerKey ?? ServerKey.Delete)(key, keyStore))
+                    {
+                        deleted.Add(keyStore);
+                    }
+                }
+                catch (System.Security.Cryptography.CryptographicException e)
+                {
+                    return Outcome.Fail(
+                        ExitCodes.DatabaseFailed,
+                        $"Could not delete the server key {key} from the {keyStore} key store: {e.Message}"
+                        + (keyStore == ServerKeyStore.Machine ? " Only an administrator can delete a key there." : string.Empty)
+                        + " The record of where it is stays, so down --reset can try again.",
+                        new { Instance = instance, Stopped = stopped, DatabaseDropped = dropped },
+                        lines);
+                }
+            }
+
+            store.ForgetServerKeyStore(instance);
+            keyDeleted = deleted.Count > 0;
             lines.Add(keyDeleted.Value
-                ? $"Deleted the server key {Components.ServerKeyName(instance)}."
-                : $"The server key {Components.ServerKeyName(instance)} did not exist.");
+                ? $"Deleted the server key {key} from the {string.Join(" and ", deleted)} key store."
+                : $"The server key {key} did not exist.");
         }
 
         var result = new { Instance = instance, WasRunning = state is not null, Stopped = stopped, DatabaseDropped = dropped, ServerKeyDeleted = keyDeleted };

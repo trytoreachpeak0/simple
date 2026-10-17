@@ -26,6 +26,7 @@ namespace Simple.Cli.Processes;
 public static class ChildProcess
 {
     private const uint ProcThreadAttributeHandleList = 0x00020002;
+    private const int AccessDenied = 5;
 
     /// <summary>
     /// Starts <paramref name="executable"/> in a hidden console of its own.
@@ -33,12 +34,22 @@ public static class ChildProcess
     /// while it is still open, so even a process that exits at once is
     /// recorded as itself.
     /// </summary>
+    /// <param name="breakAway">
+    /// Start it outside the job the command line runs in. Only simple remote
+    /// up asks for it: over SSH the command line runs in the session's job,
+    /// which kills every process in it when the session ends (on the remote
+    /// machine, 2026-10-17: KILL_ON_JOB_CLOSE | BREAKAWAY_OK), and the
+    /// components must outlive it. Everywhere else they stay in the caller's job, so a job
+    /// that cleans up after a run (a CI runner's) still catches a component
+    /// a test failed to stop.
+    /// </param>
     public static unsafe (int Pid, DateTimeOffset StartedAt) Start(
         string executable,
         IReadOnlyList<string> arguments,
         string workingDirectory,
         IReadOnlyDictionary<string, string> environment,
-        string logPath)
+        string logPath,
+        bool breakAway = false)
     {
         ArgumentNullException.ThrowIfNull(arguments);
         ArgumentNullException.ThrowIfNull(environment);
@@ -93,15 +104,16 @@ public static class ChildProcess
                             null,
                             null,
                             true,
-                            PROCESS_CREATION_FLAGS.CREATE_NO_WINDOW
-                                | PROCESS_CREATION_FLAGS.CREATE_UNICODE_ENVIRONMENT
-                                | PROCESS_CREATION_FLAGS.EXTENDED_STARTUPINFO_PRESENT,
+                            CreationFlags(breakAway),
                             blockPointer,
                             directory,
                             (STARTUPINFOW*)&startup,
                             &information))
                     {
-                        throw new Win32Exception(Marshal.GetLastPInvokeError(), $"Could not start {executable}");
+                        var error = Marshal.GetLastPInvokeError();
+                        throw breakAway && error == AccessDenied
+                            ? new Win32Exception(error, $"Could not start {executable} outside this session's job: the job does not allow it, and inside it the component would end with the session.")
+                            : new Win32Exception(error, $"Could not start {executable}");
                     }
                 }
 
@@ -132,6 +144,13 @@ public static class ChildProcess
             NativeMemory.Free(attributes);
         }
     }
+
+    /// <summary>How <see cref="Start"/> creates the process.</summary>
+    internal static PROCESS_CREATION_FLAGS CreationFlags(bool breakAway) =>
+        PROCESS_CREATION_FLAGS.CREATE_NO_WINDOW
+            | PROCESS_CREATION_FLAGS.CREATE_UNICODE_ENVIRONMENT
+            | PROCESS_CREATION_FLAGS.EXTENDED_STARTUPINFO_PRESENT
+            | (breakAway ? PROCESS_CREATION_FLAGS.CREATE_BREAKAWAY_FROM_JOB : 0);
 
     /// <summary>
     /// Sends Ctrl+Break to the console of process <paramref name="pid"/>,
