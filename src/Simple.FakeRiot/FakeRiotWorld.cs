@@ -55,6 +55,9 @@ public sealed class FakeRiotWorld
 
     private FakeRiotTiming Timing => settings.Timing;
 
+    /// <summary>A duration of the fake's world in real time, compressed by <see cref="FakeRiotTiming.Speedup"/>.</summary>
+    private TimeSpan Real(TimeSpan duration) => duration / Timing.Speedup;
+
     // ---- Authentication (BC-AUTH-001, BC-AUTH-002) ----
 
     /// <summary>The call key, or a token the admin login issued.</summary>
@@ -312,12 +315,12 @@ public sealed class FakeRiotWorld
             {
                 if (v.Emergency == EmergencyStates.Ok && v.EmergencyTarget is null)
                 {
-                    (v.EmergencyTarget, v.EmergencyChangeAt) = (EmergencyStates.CanRecover, now + Timing.EmergencyLock);
+                    (v.EmergencyTarget, v.EmergencyChangeAt) = (EmergencyStates.CanRecover, now + Real(Timing.EmergencyLock));
                 }
             }
             else if (v.Emergency == EmergencyStates.CanRecover || v.EmergencyTarget == EmergencyStates.CanRecover)
             {
-                (v.EmergencyTarget, v.EmergencyChangeAt) = (EmergencyStates.Ok, now + Timing.EmergencyRelease);
+                (v.EmergencyTarget, v.EmergencyChangeAt) = (EmergencyStates.Ok, now + Real(Timing.EmergencyRelease));
             }
 
             return Answer.Ok(new Dictionary<string, object?>
@@ -618,6 +621,9 @@ public sealed class FakeRiotWorld
                 elapsed = TimeSpan.Zero;
             }
 
+            // Travel and the arrival-to-success wait are counted in the world's own time.
+            elapsed *= Timing.Speedup;
+
             foreach (var v in vehicles.Values)
             {
                 if (v.EmergencyTarget is { } target && now >= v.EmergencyChangeAt)
@@ -654,7 +660,7 @@ public sealed class FakeRiotWorld
         }
 
         var next = orders
-            .Where(o => o.State == OrderStates.Queueing && o.AppointVehicleKey == v.Key && now - o.CreatedAt >= Timing.QueueToStart)
+            .Where(o => o.State == OrderStates.Queueing && o.AppointVehicleKey == v.Key && now - o.CreatedAt >= Real(Timing.QueueToStart))
             .OrderByDescending(o => o.Promotion)
             .ThenBy(o => o.Id)
             .FirstOrDefault();

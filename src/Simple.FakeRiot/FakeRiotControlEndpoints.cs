@@ -27,7 +27,34 @@ public static class FakeRiotControlEndpoints
                     : Results.NotFound($"Map {mapId} has no charging station {stationId}."))
             .WithName("SetFakeRiotCharger")
             .WithSummary("Plugs a charging station's charger in or out; at an unplugged charger a charge order hangs with 407802.");
+
+        group.MapGet("/calls", (FakeRiotLoad load) => Results.Json(new { calls = load.Calls }))
+            .WithName("GetFakeRiotCalls")
+            .WithSummary("Calls to the RIoT API so far, by method and route pattern; unauthorised calls included.");
+
+        group.MapDelete("/calls", (FakeRiotLoad load) =>
+            {
+                load.Reset();
+                return Results.NoContent();
+            })
+            .WithName("ResetFakeRiotCalls")
+            .WithSummary("Starts the call counts again from zero.");
+
+        group.MapPut("/read-delay", (FakeRiotLoad load, ReadDelayRequest request) =>
+            {
+                if (request.Milliseconds < 0)
+                {
+                    return Results.BadRequest("The read delay must not be negative.");
+                }
+
+                load.ReadDelay = TimeSpan.FromMilliseconds(request.Milliseconds);
+                return Results.NoContent();
+            })
+            .WithName("SetFakeRiotReadDelay")
+            .WithSummary("Sets how long every read under /api waits before it is answered (real RIoT: about 168 ms at p95).");
     }
 
     public sealed record ChargerRequest(bool Connected);
+
+    public sealed record ReadDelayRequest(int Milliseconds);
 }
