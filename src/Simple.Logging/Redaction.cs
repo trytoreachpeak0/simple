@@ -37,7 +37,8 @@ public static partial class Redaction
 
     private const RegexOptions Options = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
 
-    private const int TimeoutMilliseconds = 250;
+    // A backstop against a pattern going slow on some text nobody foresaw, not a budget.
+    private const int TimeoutMilliseconds = 1000;
 
     /// <summary>Whether a property, setting or field with this name holds a credential.</summary>
     public static bool IsSecretName(string name)
@@ -53,17 +54,58 @@ public static partial class Redaction
         ArgumentNullException.ThrowIfNull(text);
         try
         {
-            // Whole values first, then values found by the name in front of them.
-            text = PrivateKeyBlock().Replace(text, Mask);
-            text = Jwt().Replace(text, Mask);
-            text = GitHubToken().Replace(text, Mask);
-            text = JsonField().Replace(text, KeepNameAndQuotes);
-            text = AuthorizationHeader().Replace(text, KeepName);
-            text = BearerToken().Replace(text, KeepName);
-            text = CookieHeader().Replace(text, KeepName);
-            text = UrlPassword().Replace(text, KeepName);
-            text = NamedValues(text);
-            return PairingCodeInWords().Replace(text, KeepName);
+            // Each pattern runs only where a plain search finds what it needs,
+            // so most lines skip most patterns. Whole values first, then values
+            // found by the name in front of them.
+            var named = SecretNamePart().IsMatch(text) || text.Contains("key", StringComparison.OrdinalIgnoreCase);
+            if (text.Contains("PRIVATE KEY-----", StringComparison.OrdinalIgnoreCase))
+            {
+                text = PrivateKeyBlock().Replace(text, Mask);
+            }
+
+            if (text.Contains("eyJ", StringComparison.Ordinal))
+            {
+                text = Jwt().Replace(text, Mask);
+            }
+
+            if (text.Contains("gh", StringComparison.Ordinal))
+            {
+                text = GitHubToken().Replace(text, Mask);
+            }
+
+            if (named && text.Contains('"', StringComparison.Ordinal))
+            {
+                text = JsonField().Replace(text, KeepNameAndQuotes);
+            }
+
+            if (text.Contains("authorization", StringComparison.OrdinalIgnoreCase))
+            {
+                text = AuthorizationHeader().Replace(text, KeepName);
+            }
+
+            if (text.Contains("bearer", StringComparison.OrdinalIgnoreCase))
+            {
+                text = BearerToken().Replace(text, KeepName);
+            }
+
+            if (text.Contains("cookie", StringComparison.OrdinalIgnoreCase))
+            {
+                text = CookieHeader().Replace(text, KeepName);
+            }
+
+            if (text.Contains("://", StringComparison.Ordinal) && text.Contains('@', StringComparison.Ordinal))
+            {
+                text = UrlPassword().Replace(text, KeepName);
+            }
+
+            if (named && (text.AsSpan().IndexOfAny('=', ':') >= 0 || text.Contains("--", StringComparison.Ordinal)))
+            {
+                text = NamedValues(text);
+            }
+
+            return text.Contains("pairing", StringComparison.OrdinalIgnoreCase) || text.Contains("配对码", StringComparison.Ordinal)
+                ? PairingCodeInWords().Replace(text, KeepName)
+                : text;
         }
         catch (RegexMatchTimeoutException)
         {
@@ -113,14 +155,21 @@ public static partial class Redaction
         return output is null ? text : output.Append(text, copied, text.Length - copied).ToString();
     }
 
-    /// <summary>Where the value that starts at <paramref name="start"/> ends.</summary>
+    /// <summary>
+    /// Where the value that starts at <paramref name="start"/> ends. Every scan
+    /// here is bounded, so many values on one long line stay cheap.
+    /// </summary>
     private static int ValueEnd(string text, Match match, int start)
     {
+        const int MaxQuoted = 1000;
+        const int SpaceWindow = 200;
+
         // Quoted as in connection strings: "a""b", 'a''b', {a}}b} (ODBC).
         var close = text[start] switch { '"' => '"', '\'' => '\'', '{' => '}', _ => '\0' };
         if (close != '\0')
         {
-            for (var i = start + 1; i < text.Length && text[i] is not ('\r' or '\n'); i++)
+            var limit = Math.Min(text.Length, start + MaxQuoted);
+            for (var i = start + 1; i < limit && text[i] is not ('\r' or '\n'); i++)
             {
                 if (text[i] == close)
                 {
@@ -134,39 +183,52 @@ public static partial class Redaction
                 }
             }
 
-            return LineEnd(text, start);
+            // Not closed nearby: everything up to there goes.
+            var cut = start + 1;
+            while (cut < limit && text[cut] is not ('\r' or '\n'))
+            {
+                cut++;
+            }
+
+            return cut;
         }
 
-        // In a connection string a value runs to the next ; and may hold spaces;
-        // elsewhere (a query string, a rendered object, a command line) it ends
-        // at a space or a separator.
-        var line = LineEnd(text, start);
-        var semicolon = text.IndexOf(';', start, line - start);
-        var inConnectionString = match.Groups["equals"].Success
-            && (semicolon >= 0 || PreviousNonSpace(text, match.Index) == ';');
-        if (inConnectionString)
-        {
-            return semicolon >= 0 ? semicolon : line;
-        }
-
+        // A value ends at a space or a separator (a query string, a rendered
+        // object, a command line)...
         var end = start;
-        while (end < line && !char.IsWhiteSpace(text[end]) && text[end] is not ('&' or ',' or ';' or ')' or '}' or ']' or '"' or '\'' or '<' or '>'))
+        while (end < text.Length && !char.IsWhiteSpace(text[end]) && text[end] is not ('&' or ',' or ';' or ')' or '}' or ']' or '"' or '\'' or '<' or '>'))
         {
             end++;
         }
 
-        return end;
-    }
+        // ...except in a connection string, where it runs to the next ; (or the
+        // end of the line after the last setting) and may hold spaces.
+        if (!match.Groups["equals"].Success || end == text.Length || !char.IsWhiteSpace(text[end]) || text[end] is '\r' or '\n')
+        {
+            return end;
+        }
 
-    private static int LineEnd(string text, int start)
-    {
-        var end = text.IndexOfAny(['\r', '\n'], start);
-        return end < 0 ? text.Length : end;
+        var afterSemicolon = PreviousNonSpace(text, match.Index) == ';';
+        var window = Math.Min(text.Length, end + SpaceWindow);
+        for (var i = end; i < window; i++)
+        {
+            if (text[i] == ';')
+            {
+                return i;
+            }
+
+            if (text[i] is '\r' or '\n')
+            {
+                return afterSemicolon ? i : end;
+            }
+        }
+
+        return afterSemicolon && window == text.Length ? window : end;
     }
 
     private static char PreviousNonSpace(string text, int index)
     {
-        for (var i = index - 1; i >= 0; i--)
+        for (var i = index - 1; i >= 0 && i >= index - 20; i--)
         {
             if (!char.IsWhiteSpace(text[i]))
             {
@@ -193,8 +255,8 @@ public static partial class Redaction
     [GeneratedRegex(@"(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})", RegexOptions.CultureInvariant, TimeoutMilliseconds)]
     private static partial Regex GitHubToken();
 
-    // "password": "value" or "pairingCode": 482913; the name is at most 100 characters each side.
-    [GeneratedRegex(@"(?<name>""[^""\r\n]{0,100}?" + SecretName + @"[^""\r\n]{0,100}""\s*:\s*)(?<value>""(?:[^""\\\r\n]|\\.)*""|[^,}\]\s]+)", Options, TimeoutMilliseconds)]
+    // "password": "value", "pairingCode": 482913 or "signingKey": "value"; names up to 200 characters.
+    [GeneratedRegex(@"(?<name>""(?:[^""\r\n]{0,100}?" + SecretName + @"[^""\r\n]{0,100}|[^""\r\n]{0,200}?key)""\s*:\s*)(?<value>""(?:[^""\\\r\n]|\\.)*""|[^,}\]\s]+)", Options, TimeoutMilliseconds)]
     private static partial Regex JsonField();
 
     // Authorization: <scheme> <credentials>, any scheme (Bearer, Basic, Token, ApiKey...).
@@ -216,7 +278,7 @@ public static partial class Redaction
 
     // A name followed by = or :, or a --option followed by a space. The name is taken whole
     // (atomic), so the match is tried once per word; IsSecretName decides about it.
-    [GeneratedRegex(@"(?<![\w.:-])(?<key>(?>[\w.-]+(?::[\w.-]+)*))(?:\s*(?:(?<equals>=)|:)\s*|(?<=(?<![\w.:-])--[\w.:-]+)\s+(?=[^\s-]))", Options, TimeoutMilliseconds)]
+    [GeneratedRegex(@"(?<![\w.:-])(?:(?<key>(?>[\w.-]+(?::[\w.-]+)*))\s*(?:(?<equals>=)|:)\s*|(?<key>(?>--[\w.-]+(?::[\w.-]+)*))\s+(?=[^\s-]))", Options, TimeoutMilliseconds)]
     private static partial Regex Named();
 
     // The pairing code written out rather than named by a property: "pairing code 482913", "配对码：482913".

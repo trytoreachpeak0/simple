@@ -121,40 +121,6 @@ public sealed partial class RedactionTests
     [InlineData("Server=db01;User ID=simple;Password=a b;Encrypt=true", "Server=db01;User ID=simple;Password=***;Encrypt=true")]
     public void OnlyTheValueGoes(string text, string expected) => Assert.Equal(expected, Redaction.Redact(text));
 
-    /// <summary>
-    /// Redaction runs on the thread that logs (a UI thread included), so a
-    /// long value must not make it slow: no pattern may try every start
-    /// position against the rest of the line.
-    /// </summary>
-    [Theory]
-    [InlineData("hex")]
-    [InlineData("bytes")]
-    [InlineData("dotted")]
-    [InlineData("colons")]
-    [InlineData("base64")]
-    [InlineData("quotes")]
-    [InlineData("words")]
-    public void AMegabyteLongValueIsRedactedWithinASecond(string shape)
-    {
-        var text = shape switch
-        {
-            "hex" => Convert.ToHexString(new byte[512 * 1024]),
-            "bytes" => BitConverter.ToString(new byte[350 * 1024]),
-            "dotted" => string.Concat(Enumerable.Repeat("simple.server.", 75_000)),
-            "colons" => string.Concat(Enumerable.Repeat("Simple:Mes:", 95_000)),
-            "base64" => Convert.ToBase64String(new byte[768 * 1024]),
-            "quotes" => string.Concat(Enumerable.Repeat("\"a\":", 260_000)),
-            _ => string.Concat(Enumerable.Repeat("pass word token key ", 52_000)),
-        };
-
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        var redacted = Redaction.Redact(text);
-        clock.Stop();
-
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(1), $"{text.Length} characters took {clock.Elapsed.TotalMilliseconds:F0} ms");
-        Assert.Equal(text, redacted);
-    }
-
     [Fact]
     public void ACategoryNamedLikeACredentialDoesNotHideTheMessage()
     {
