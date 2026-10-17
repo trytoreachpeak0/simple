@@ -194,7 +194,7 @@ single-context layout). Do not start a parallel set of these by hand.
 - `./simple up` (in PowerShell 7; elsewhere `pwsh -File <clone>/simple.ps1 up`) builds each component's project once, copies the output to `artifacts/simple/<instance>/` and starts every component from there; `./simple down` stops them, `--reset` also drops the instance's database. Every command takes `--json`; the exit codes are fixed and listed in `simple --help`.
 - Each component is one entry in `src/Simple.Cli/Components.cs`: project, process count, ports, arguments, readiness. A ticket that adds a component adds its entry there, and `simple up` and `simple status` show it.
 - The instance defaults to the clone's folder name, so two worktrees never share one; its database is `Simple_<instance>`. Its state file and `sqlserver.txt` (the SQL Server its database is on) are in `%LOCALAPPDATA%\simple\instances\<instance>\`, or under `SIMPLE_HOME`. The command line stops only the processes it recorded, by process id and start time, never by process name, and stops them gracefully so the server records `server.stopped`.
-- The command line starts a local system only. It has no switch that points at anything real, removes `Simple__*`, `ConnectionStrings__*`, `ASPNETCORE_*` and `DOTNET_ENVIRONMENT` from the components' environment, and always runs them as Production.
+- The command line starts a local system only. It has no switch that points at anything real, removes `Simple__*`, `ConnectionStrings__*`, `ASPNETCORE_*`, `Kestrel__*` and `DOTNET_ENVIRONMENT` from the components' environment, and always runs them as Production.
 - SQL Server (`SIMPLE_SQLSERVER`, LocalDB by default): only LocalDB or a named instance on this machine, with Windows authentication. A port, the instance name `MSSQLSERVER`, a failover partner and a SQL login (User ID, Password) are refused. Before starting the server and before dropping a database, the command line asks the server who it is (`SERVERPROPERTY` `IsLocalDB`, `InstanceName`, `MachineName`) and goes on only for LocalDB or a named instance other than `MSSQLSERVER` on this machine.
 
 ## Tests
@@ -246,9 +246,11 @@ single-context layout). Do not start a parallel set of these by hand.
   is the one exception (ADR 0025): it may listen on the address of one
   named network interface, never a wildcard, serves only the terminal
   protocol over TLS 1.2 with the certificate the terminals pin, and
-  answers nothing else. `Simple.Server.Tests` checks every
-  `appsettings*.json` in the repository for hosts that are neither
-  loopback nor LocalDB.
+  answers nothing else. Until the per-terminal keys (the other half of
+  ADR 0025) are in place, this endpoint accepts any client, so the server
+  must not base any decision on onboard reports. `Simple.Server.Tests`
+  checks every `appsettings*.json` in the repository for hosts that are
+  neither loopback nor LocalDB.
 - `sites/<site>/` holds a site's starting business configuration: areas,
   maps, task types, the vehicle list and similar settings, with real
   values. It holds no endpoints the product connects to and no
