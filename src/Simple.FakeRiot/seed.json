@@ -1,0 +1,43 @@
+{
+  "maps": [
+    {
+      "id": 1,
+      "name": "fake-map-1",
+      "stations": [
+        { "id": 1, "name": "F1-01", "type": 1, "x": 0, "y": 0 },
+        { "id": 2, "name": "F1-02", "type": 1, "x": 10000, "y": 0 },
+        { "id": 3, "name": "F1-03", "type": 1, "x": 20000, "y": 0 },
+        { "id": 4, "name": "F1-04", "type": 1, "x": 20000, "y": 10000 },
+        { "id": 5, "name": "F1-CHARGER", "type": 2, "x": 10000, "y": 10000 },
+        { "id": 6, "name": "F1-UNREACHABLE", "type": 1, "x": 0, "y": 10000 }
+      ],
+      "edges": [
+        { "id": 1, "from": 1, "to": 2 },
+        { "id": 2, "from": 2, "to": 1 },
+        { "id": 3, "from": 2, "to": 3 },
+        { "id": 4, "from": 3, "to": 4 },
+        { "id": 5, "from": 4, "to": 2 },
+        { "id": 6, "from": 2, "to": 5 },
+        { "id": 7, "from": 5, "to": 2 },
+        { "id": 8, "from": 6, "to": 1 }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "fake-map-2",
+      "stations": [
+        { "id": 1, "name": "F2-01", "type": 1, "x": 0, "y": 0 },
+        { "id": 2, "name": "F2-02", "type": 1, "x": 5000, "y": 0 }
+      ],
+      "edges": [
+        { "id": 1, "from": 1, "to": 2 },
+        { "id": 2, "from": 2, "to": 1 }
+      ]
+    }
+  ],
+  "vehicles": [
+    { "deviceKey": "BROKERX-0000000000000000000000000000fa01", "name": "fake-vehicle-1", "vehicleId": 901, "mapId": 1, "station": 1, "battery": 80 },
+    { "deviceKey": "BROKERX-0000000000000000000000000000fa02", "name": "fake-vehicle-2", "vehicleId": 902, "mapId": 1, "station": 3, "battery": 80 },
+    { "deviceKey": "BROKERX-0000000000000000000000000000fa03", "name": "fake-vehicle-3", "vehicleId": 903, "mapId": 2, "station": 1, "battery": 80 }
+  ]
+}

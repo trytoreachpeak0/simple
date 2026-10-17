@@ -11,6 +11,7 @@ using Simple.Server.Configuration;
 using Simple.Server.Mes;
 using Simple.Server.OnboardTerminals;
 using Simple.Server.Persistence;
+using Simple.Server.Riot;
 
 namespace Simple.Server.Tests;
 
@@ -28,7 +29,8 @@ namespace Simple.Server.Tests;
 /// server; needed to reach the terminal endpoint.
 /// </param>
 /// <param name="time">Replaces the server's clock, for example with a FakeTimeProvider.</param>
-public sealed class ServerInstance(string? instance = null, bool kestrel = false, TimeProvider? time = null) : IAsyncDisposable
+/// <param name="riot">Configure a fleet manager, the <see cref="StubRiot"/>; false leaves <c>Simple:Riot:Url</c> empty.</param>
+public sealed class ServerInstance(string? instance = null, bool kestrel = false, TimeProvider? time = null, bool riot = true) : IAsyncDisposable
 {
     /// <summary>
     /// The SQL Server instance the test databases are created on, without a
@@ -45,6 +47,8 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
     public string Instance { get; } = instance ?? $"test_{Guid.NewGuid():N}"[..17];
 
     public StubMesGateway MesGateway { get; } = new();
+
+    public StubRiot Riot { get; } = new();
 
     public ServerSettings Database => new() { Instance = Instance, ConnectionString = SqlServer };
 
@@ -71,6 +75,11 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
             [$"{MesGatewaySettings.Section}:PollInterval"] = "00:00:00.1",
             [$"{MesGatewaySettings.Section}:RetryMaxDelay"] = "00:00:00.3",
             [$"{MesGatewaySettings.Section}:StaleAfter"] = "00:00:02",
+            // Nothing listens there either; the stub RIoT answers.
+            [$"{RiotSettings.Section}:Url"] = riot ? "http://127.0.0.1:9" : "",
+            [$"{RiotSettings.Section}:CallApiKey"] = StubRiot.CallApiKey,
+            [$"{RiotSettings.Section}:PollInterval"] = "00:00:00.1",
+            [$"{RiotSettings.Section}:RetryMaxDelay"] = "00:00:00.3",
         };
         // Without real sockets there is no terminal endpoint to reach, so none
         // is configured, and no server key is made for the test.
@@ -81,7 +90,7 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
             settings["urls"] = "http://127.0.0.1:0";
         }
 
-        var created = new Factory(settings, time, MesGateway);
+        var created = new Factory(settings, time, MesGateway, Riot);
         try
         {
             HttpClient client;
@@ -152,7 +161,7 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
     private List<Uri> Addresses() =>
         Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Select(a => new Uri(a)).ToList();
 
-    private sealed class Factory(Dictionary<string, string?> settings, TimeProvider? time, StubMesGateway mesGateway) : WebApplicationFactory<Program>
+    private sealed class Factory(Dictionary<string, string?> settings, TimeProvider? time, StubMesGateway mesGateway, StubRiot riot) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -160,7 +169,10 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
                 .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(settings))
                 .ConfigureTestServices(services => services
                     .AddHttpClient(MesGatewayPoller.HttpClientName)
-                    .ConfigurePrimaryHttpMessageHandler(mesGateway.CreateHandler));
+                    .ConfigurePrimaryHttpMessageHandler(mesGateway.CreateHandler))
+                .ConfigureTestServices(services => services
+                    .AddHttpClient(RiotConnectionProbe.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(riot.CreateHandler));
             if (time is not null)
             {
                 builder.ConfigureTestServices(services => services.Replace(ServiceDescriptor.Singleton(time)));

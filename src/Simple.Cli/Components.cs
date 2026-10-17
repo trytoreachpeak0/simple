@@ -11,8 +11,29 @@ namespace Simple.Cli;
 /// </summary>
 public static class Components
 {
+    /// <summary>
+    /// The call key the local system's fake fleet manager accepts and the
+    /// server sends. A value of the fake only: it opens nothing real.
+    /// </summary>
+    public const string FakeRiotCallApiKey = "fake-riot-call-api-key-not-a-secret";
+
     public static IReadOnlyList<Component> All { get; } =
     [
+        // The fleet manager the local system dispatches through: always the
+        // fake, on loopback. Started first; the server finds it by its address.
+        new(
+            Name: "fake-riot",
+            Project: "src/Simple.FakeRiot/Simple.FakeRiot.csproj",
+            Count: _ => 1,
+            PortsPerProcess: 1,
+            Arguments: context =>
+            [
+                $"--urls={context.Url()}",
+                $"--FakeRiot:CallApiKey={FakeRiotCallApiKey}",
+            ],
+            IsReady: (context, http, cancellationToken) =>
+                Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),
+            ApiPort: 0),
         // Started before the server, which is told its address. up waits for
         // each component to be ready before it starts the next, so the
         // gateway answers by the server's first fetch. A gateway that goes
@@ -46,6 +67,8 @@ public static class Components
                 $"--Simple:OnboardTerminals:ServerKeyName={ServerKeyName(context.Instance)}",
                 $"--Simple:OnboardTerminals:ServerKeyStore={context.KeyStore}",
                 $"--Simple:MesGateway:Url={context.UrlOf("mes-gateway")}",
+                $"--Simple:Riot:Url={context.UrlOf("fake-riot")}",
+                $"--Simple:Riot:CallApiKey={FakeRiotCallApiKey}",
             ],
             IsReady: (context, http, cancellationToken) =>
                 Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),

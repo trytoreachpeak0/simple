@@ -25,10 +25,25 @@ public sealed partial class DefaultConfigurationTests
         // production MES.
         Assert.Contains(files, f => f.EndsWith(Path.Combine("Simple.Server", "appsettings.json"), StringComparison.Ordinal));
         Assert.Contains(files, f => f.EndsWith(Path.Combine("src", "Simple.MesGateway", "appsettings.json"), StringComparison.Ordinal));
+        Assert.Contains(files, f => f.EndsWith(Path.Combine("src", "Simple.FakeRiot", "appsettings.json"), StringComparison.Ordinal));
         var findings = files
             .SelectMany(f => FindRealHosts(File.ReadAllText(f)).Select(finding => $"{Path.GetRelativePath(root, f)}: {finding}"))
             .ToList();
         Assert.True(findings.Count == 0, "Default configuration points at real hosts:\n" + string.Join('\n', findings));
+    }
+
+    /// <summary>The server's default fleet manager is the fake, at the loopback address the fake listens on by default.</summary>
+    [Fact]
+    public void TheServersDefaultFleetManagerIsTheFakeOnLoopback()
+    {
+        var root = RepositoryRoot();
+        using var server = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "src", "Simple.Server", "appsettings.json")));
+        using var fake = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "src", "Simple.FakeRiot", "appsettings.json")));
+
+        var riot = server.RootElement.GetProperty("Simple").GetProperty("Riot");
+        Assert.Equal(new Uri(fake.RootElement.GetProperty("Urls").GetString()!), new Uri(riot.GetProperty("Url").GetString()!));
+        Assert.Equal(fake.RootElement.GetProperty("FakeRiot").GetProperty("CallApiKey").GetString(), riot.GetProperty("CallApiKey").GetString());
+        Assert.True(new Uri(riot.GetProperty("Url").GetString()!).IsLoopback);
     }
 
     [Theory]

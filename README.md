@@ -18,6 +18,7 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 | `src/Simple.OnboardTerminal.Core` | 车载终端的核心，不依赖 WPF：连接服务端、收发消息、车旁操作 |
 | `src/Simple.OnboardTerminal.Headless` | 无界面的车载终端，本机整套系统、测试和 CI 用它 |
 | `src/Simple.MesGateway` | MES 网关，独立的小进程 |
+| `src/Simple.FakeRiot` | 假 RIoT：只在回环地址上监听，按真实 RIoT 的样子回答 SIMPLE 用到的那部分接口，给本机整套系统、测试和 CI 用；它必须先通过 `Simple.Contracts.Tests` |
 | `src/Simple.IoSimulator` | 车上 IO 模块的模拟器 |
 | `src/Simple.Protocol` | 服务端与车载终端之间的协议契约 |
 | `src/Simple.Cli` | `simple` 命令行：在本机一条命令起停整套系统、查看状态、事件和日志 |
@@ -86,7 +87,7 @@ dotnet test --solution simple.slnx
 
 从别的 shell 调用写成 `pwsh -File <clone>/simple.ps1 up`。每个命令都接受 `--json`：标准输出上只有一个 JSON 对象 `{exitCode, error, result}`，进度提示写在标准错误上。退出码是固定的，`./simple --help` 列出全表：0 成功；1 意外错误（或 `down` 之后仍有进程在跑）；2 参数或设置不对；3 编译失败；4 有部件没就绪（已起的会被停掉）；5 实例没在运行；6 实例不健康、只起了一半，或是从另一个 clone 起的；7 另一条 simple 命令正在操作这个实例；8 有进程超时没停下、被强杀；9 连不上 SQL Server，或删库、删服务端钥匙失败。
 
-目前系统里有三种部件，按这个顺序起：MES 网关（背后接假 MES）、服务端（启动参数里带上网关的地址）、无界面车载终端（`--terminals N` 个，默认 0）。`simple status` 除了列出每个进程，还有一行写服务端最近从网关看到了什么（网关通不通、最近一轮是第几轮、几点读的、多少行），以及服务端看到的每台车载终端。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪，以及起之前要准备什么；以后加 IO 模拟器、假 RIoT，都是往这里加一项。部件按登记的顺序一个一个起，前一个全部就绪才起下一个，因为后面的部件可能要用前面的：服务端第一次去网关取数时网关已经在了，车载终端要先从服务端的状态接口读到证书指纹。
+目前系统里有四种部件，按这个顺序起：假 RIoT、MES 网关（背后接假 MES）、服务端（启动参数里带上假 RIoT 和网关的地址）、无界面车载终端（`--terminals N` 个，默认 0）。`simple status` 除了列出每个进程，还有一行写服务端最近从网关看到了什么（网关通不通、最近一轮是第几轮、几点读的、多少行），一行写服务端连不连得上 RIoT，以及服务端看到的每台车载终端。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪，以及起之前要准备什么；以后加 IO 模拟器，也是往这里加一项。部件按登记的顺序一个一个起，前一个全部就绪才起下一个，因为后面的部件可能要用前面的：服务端第一次去网关取数时网关已经在了，车载终端要先从服务端的状态接口读到证书指纹。
 
 - **实例**：不写 `--instance` 时，实例名取 clone 所在文件夹的名字（例如 `29-simple-cli`），所以两个 worktree 各起一套互不干扰。库名是 `Simple_<实例名>`；端口按实例名在 20000～29999 之间选一段，被占用就往后挪，同一个实例每次拿到的端口一般不变。
 - **起**：`up` 先 `dotnet build` 各部件的项目，再把编译输出复制到 `artifacts/simple/<实例名>/` 下运行，所以系统起着的时候照样可以重新编译、跑测试，不会碰到文件被占用。部件是独立的进程，命令行返回后它们继续运行；每个进程的输出写进自己的日志文件。重复执行 `up` 不会起第二套。
@@ -146,7 +147,7 @@ dotnet run --project src/Simple.Server
 | --- | --- |
 | `GET /health/live` | 进程活着 |
 | `GET /health/ready` | 能连上自己的数据库 |
-| `GET /api/v1/status` | 版本、启动时间、实例名、库名；车载终端端点的地址和证书指纹；每台车载终端的版本、连着没有、最新鲜的上报最多是几秒前写的、是否已过期、最近下发的屏上文字；RIoT 一栏（目前为空）；MES 网关一栏（见下一节） |
+| `GET /api/v1/status` | 版本、启动时间、实例名、库名；车载终端端点的地址和证书指纹；每台车载终端的版本、连着没有、最新鲜的上报最多是几秒前写的、是否已过期、最近下发的屏上文字；RIoT 一栏（连不连得上：`not-configured`、`connecting`、`connected` 或 `unreachable`，地址、最近一次问和最近一次连上的时刻、出错原因、地图数）；MES 网关一栏（见下一节） |
 | `GET /api/v1/events` | 事件记录，按提交顺序（顺着游标一直往后读不会漏事件）；参数 `after`（游标，即上一页的 `nextCursor`）、`since`、`until`、`limit`（1～1000，默认 100） |
 | `GET /openapi/v1.json` | 接口描述 |
 
@@ -155,6 +156,8 @@ dotnet run --project src/Simple.Server
 ```
 dotnet run --project src/Simple.Server -- --Simple:Instance=wt25 --urls=http://127.0.0.1:5182 --Simple:OnboardTerminals:Url=https://127.0.0.1:5183
 ```
+
+服务端默认连 `http://127.0.0.1:5200` 上的假 RIoT（`Simple:Riot:Url`、`Simple:Riot:CallApiKey`，仓库里的密钥是假 RIoT 认的占位串）。每 10 秒读一次 RIoT 的地图列表，看连不连得上；连不上时按逐步拉长、最长 30 秒的间隔一直重试（ADR 0008），不会因为 RIoT 掉线而退出。`Simple:Riot:Url` 留空时不连 RIoT，状态里写 `not-configured`。这里只读，不建单、不发命令。
 
 仓库里的配置只指向回环地址和 LocalDB。真实的连接串和地址放在仓库外：用 `--Simple:SettingsFile=<路径>` 指定一个 JSON 配置文件，或用环境变量（例如 `ConnectionStrings__Simple`、`Simple__Instance`）。连接串里不写库名，库名由实例名决定。配置不合法时服务端拒绝启动，退出码为 2，并逐项说明是哪一项不对；接口还没有鉴权，所以接口的监听地址（`urls`）不是回环地址、或不是 `http://` 时也拒绝启动。
 
@@ -229,3 +232,63 @@ dotnet run --project src/Simple.MesGateway
 服务端刚启动、第一次就取到好数据时不记事件；第一次就不可用（网关没起来或第一轮就失败）要记一条 `mes.unreachable`。网关刚重启、还没读完第一轮时，服务端当作"没有新消息"，不改变状态。
 
 和服务端一样，网关的接口没有鉴权，监听地址不是回环地址时拒绝启动（退出码 2，并说明是哪一项）；真实端点只能从仓库外读入（`--Simple:SettingsFile=<路径>` 或环境变量）。`Simple.Server.Tests` 的守卫测试会检查网关的 `appsettings*.json` 里有没有非回环地址。
+
+## 假 RIoT 与 RIoT 契约测试
+
+RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。它的行为有不少反直觉的地方，例如按 upperId 查一张不存在的单，真 RIoT 回 HTTP 200、业务码 `0`、不带 `result`，而不是 404。上一代的假 RIoT 在这里回 404，"RIoT 说没这张单"的处理逻辑因此在测试里全绿、到现场从来不触发（`research/riot-review.md` §4.3）。所以这次反过来做：在真 RIoT 上观测到的行为先写成契约测试（`tests/Simple.Contracts.Tests`），假 RIoT（`src/Simple.FakeRiot`）必须通过同一批测试，别的测试才能拿它当 RIoT 用。
+
+### 假 RIoT
+
+一个只在回环地址上监听的小服务（默认 `http://127.0.0.1:5200`，监听地址不是回环时拒绝启动），按 riot-sdk 0.3.1 实际发出的请求和读取方式回答：登录、建单（含带充电动作的）、按 upperId 或 orderId 查单、订单列表、取消、暂停、从暂停继续、从挂起继续、优先执行、急停与解除、上下线、路线代价与就近站点、车辆状态、地图、站点和边表。`./simple up` 把它作为第一个部件起来，服务端默认连它。
+
+- **种子**：`src/Simple.FakeRiot/seed.json`，两张虚构的小地图和三台假车（`fake-vehicle-1` 在 1 号图 1 号站）。1 号图的路网是有向的，6 号站没有路通进去，5 号站是充电桩；两张图都有 1 号站，演示站号跨图不唯一。没有用 D8 的真实地图和车。
+- **会自己动**：订单排队 → 执行 → 车到站 → 约 1 秒后成功；行驶中车的站号读 0；执行中 `controlState` 一直是 `CONTROL_STATE_ERR`；急停约 1 秒锁上、解除后 4～5 秒才回 `OK`。时长在 `FakeRiot:Timing` 下，契约测试用几十到几百毫秒。
+- **没观测过的就不编**：真 RIoT 在某种情况下怎么回答没有记录时（例如对一张已成功的单发取消），假 RIoT 回业务码 `FAKE-UNOBSERVED`，说明这是知识的空白，任何代码都不能依赖它。
+- **控制面**（只有假 RIoT 有，代替车旁的人）：
+
+  | 接口 | 作用 |
+  | --- | --- |
+  | `POST /fake-riot/orders/{orderId}/hang?resultCode=` | 把执行中或暂停的单打成挂起（9），就像有人在车载屏上取消或松了抱闸 |
+  | `PUT /fake-riot/maps/{mapId}/chargers/{stationId}` | 正文 `{"connected": false}`：拔掉充电器，之后去这个桩的充电单挂起、结果码 `407802` |
+
+- **已知和真 RIoT 不一样的地方**：不自动给没指定车的单派车（SDK 也不许不指定车）；充电单不展开进出点；充电失败直接挂起，不先重试两三轮；从暂停继续后不模拟约 16 秒的起步延迟；不会出现状态 8；不模拟读延迟。后续票用到哪一条再补，补之前先加契约。
+
+### 契约测试
+
+每条契约是一个经 riot-sdk 的 Facade 调 RIoT 的测试，用 `[Contract("BC-ORDER-004")]` 写明出处：行为实验室的契约编号、实验轮次（`round 24`）或问题编号（`Q-033`），或上一代的现场记录（`cs#404`）。出处会变成测试的 trait，可以按它挑：
+
+```
+dotnet test --project tests/Simple.Contracts.Tests --filter-trait "Contract=BC-ORDER-004"
+```
+
+产品负责人说过、但还没在真 RIoT 上测过的行为（例如"对挂起的单发取消，单子变成已取消"，ADR 0010），另外标 `[NotVerifiedOnRealRiot("…")]`（trait `RealRiot=NotVerified`）。假 RIoT 照这些说法做，好让建在上面的代码能测；它们是否成立另由 #11 在真 RIoT 上核对，测出来不成立要回头改 ADR 和假 RIoT。
+
+**默认、CI 上永远只对假 RIoT 跑**：每条测试在测试进程里起一个新的假 RIoT，不开端口。
+
+**对真 RIoT 跑**要人明确选定，并且只跑只读的契约：
+
+1. 在任何 git 克隆之外写一个 JSON 文件，例如：
+
+   ```json
+   {
+     "url": "http://<RIoT 地址>:<端口>",
+     "callApiKey": "<RIoT 网页上的调用密钥>",
+     "vehicleKey": "BROKERX-…",
+     "mapId": 26,
+     "vehicleStation": 151,
+     "reachableStation": 155,
+     "secondReachableStation": null,
+     "unreachableStation": null,
+     "chargingStation": null,
+     "mapsSharingAStationId": [25, 26],
+     "sharedStationId": 1,
+     "username": null,
+     "password": null
+   }
+   ```
+
+2. 设环境变量 `SIMPLE_CONTRACTS_RIOT_SETTINGS` 指向它，再跑测试。测试在第一次调用前把要调的地址打到标准错误上。
+
+拒绝的情形：`CI=true`；文件在某个 git 克隆里面（不只是本仓库，任何上层目录有 `.git` 都算）；缺 `url`、`callApiKey`、`vehicleKey`、`mapId`、`vehicleStation`、`reachableStation`。会建单、发订单命令、急停或上下线的契约在真 RIoT 上一律跳过，理由写在跳过信息里：这些操作要产品负责人逐次授权、现场有人。需要控制面的契约在真 RIoT 上也跳过。跳过不算通过。
+
+**加一条契约**：先在 `research/riot-review.md` §5.1 或行为实验室里找到出处；写成测试，写明出处；对假 RIoT 跑，红了就改假 RIoT，直到绿。只读的契约在真 RIoT 上也能跑，写操作的开头调 `Target.RequireWrites()`。
