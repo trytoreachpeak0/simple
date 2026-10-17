@@ -134,8 +134,11 @@ public sealed partial class TerminalConnection : IDisposable
                 // next one starts with the shortest delay again.
                 await pipeline.ExecuteAsync(SessionAsync, stopping);
             }
-            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+            catch (Exception e) when (stopping.IsCancellationRequested && e is OperationCanceledException or RpcException or IOException)
             {
+                // A stream that failed as the stop came is not retried, and
+                // its failure comes back here as it was (ReconnectPolicy). It
+                // was logged when it happened; the stop is what ends the run (#55).
                 break;
             }
         }
