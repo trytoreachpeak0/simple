@@ -55,10 +55,10 @@ reviewed in pull requests like the code is.
   The end goal is that AI finds a problem, reproduces it as a failing
   scenario, fixes it and opens the PR itself. In v1 the on-duty AI only
   finds and reports problems; the product owner decides what gets fixed
-  (`docs/adr/0032-ai-two-levels-on-duty-ai-only-reports.md`). Build the command line and
-  the server API first; an MCP server, if it comes, is a thin layer over
-  them and holds no logic of its own. CI, people and AI run the same code
-  through different entry points.
+  (`docs/adr/0032-ai-two-levels-on-duty-ai-only-reports.md`). Build the
+  command line and the server API first; an MCP server, if it comes, is a
+  thin layer over them and holds no logic of its own. CI, people and AI
+  run the same code through different entry points.
 
 ## What is in this repository
 
@@ -95,15 +95,17 @@ Planned, not created yet: `Simple.Mcp`, the thin AI layer above the command line
   - a check has four outcomes: holds, does not hold, cannot judge, not
     applicable. The last two are deliberately kept apart, and "cannot
     judge" never counts as a pass;
-  - AI acts at one of two levels: view only, or view plus parameter
-    configuration. Nothing that moves a vehicle and no account
-    management ever goes to AI
+  - in production SIMPLE (through its API or MCP), AI acts at one of two
+    levels: view only, or view plus parameter configuration. Nothing that
+    moves a vehicle and no account management ever goes to AI there
     (`docs/adr/0032-ai-two-levels-on-duty-ai-only-reports.md`);
   - after three failed repairs of the same problem, stop and hand it to a
     person;
-  - a `HALT` file, or the console's on-duty pause, stops every AI
-    action. It never stops the server's own stopping, retries and
-    recovery (`docs/adr/0033-watch-account-on-duty-pause-runs-on-owner-laptop.md`).
+  - a `HALT` file, or the console's on-duty pause, stops the on-duty AI.
+    A session the product owner called up stops when its session is
+    closed. Neither ever stops the server's own stopping, retries and
+    recovery
+    (`docs/adr/0033-watch-account-on-duty-pause-runs-on-owner-laptop.md`).
 
 ## Public repository
 
