@@ -155,16 +155,8 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
 
                 return Task.CompletedTask;
             });
-            await TryAsync(failures, () =>
-            {
-                var run = InstanceStore.RunDirectory(Repository, instance);
-                if (Directory.Exists(run))
-                {
-                    Directory.Delete(run, recursive: true);
-                }
-
-                return Task.CompletedTask;
-            });
+            // Just killed: its files can stay held a moment longer (#60).
+            await TryAsync(failures, () => DirectoryTree.DeleteAsync(InstanceStore.RunDirectory(Repository, instance), store.DeleteWait, CancellationToken.None));
         }
 
         await TryAsync(failures, () =>
