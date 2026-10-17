@@ -180,12 +180,17 @@ public static partial class Redaction
             return -1;
         }
 
+        // A name holds no colon, so whether a prefix names a credential depends
+        // only on its last part: each part is checked once, not every prefix again.
+        var part = 0;
         for (var colon = word.IndexOf(':', StringComparison.Ordinal); colon >= 0; colon = word.IndexOf(':', colon + 1))
         {
-            if (IsSecretName(word[..colon]))
+            if (IsSecretName(word[part..colon]))
             {
                 return match.Index + colon + 1;
             }
+
+            part = colon + 1;
         }
 
         return -1;
