@@ -68,6 +68,28 @@ public sealed class RemoteDisconnectTests
     }
 
     [Fact]
+    public async Task WhileHeartbeatsComeARunOutlivesTheAliveTimeout()
+    {
+        // The other side of the cut: a build or a test run takes far longer
+        // than the timeout, and must not be ended while this end is there.
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+        using var stdout = new StringWriter();
+        try
+        {
+            var outcome = await Run(sandbox, machine, alive: TimeSpan.FromSeconds(3), stdout: stdout).RunAsync(
+                "exec", ["pwsh", "-NoProfile", "-Command", "Start-Sleep 9; 'slept'"], json: false, Cancel);
+
+            Assert.True(outcome.ExitCode == ExitCodes.Success, $"{outcome.ExitCode}: {outcome.Error}");
+            Assert.Contains("slept", stdout.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            machine.KillAbandoned();
+        }
+    }
+
+    [Fact]
     public async Task TheCommandReadsNoHeartbeats()
     {
         await using var sandbox = await GitSandbox.CreateAsync(Cancel);

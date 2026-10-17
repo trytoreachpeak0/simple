@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using Simple.Cli.Remote;
 
 namespace Simple.Cli.Tests.Remote;
@@ -20,7 +19,7 @@ namespace Simple.Cli.Tests.Remote;
 public sealed class DirectoryMachine(string root) : IRemoteMachine
 {
     private readonly List<string> sent = [];
-    private readonly List<Process> abandoned = [];
+    private readonly List<Process> sessions = [];
 
     public string Name => "test-remote";
 
@@ -48,70 +47,39 @@ public sealed class DirectoryMachine(string root) : IRemoteMachine
         }
     }
 
-    public async Task<int> RunAsync(string script, Action<string> onOutput, Action<string> onError, CancellationToken cancellationToken)
+    public Task<int> RunAsync(string script, Action<string> onOutput, Action<string> onError, CancellationToken cancellationToken)
     {
         // As sshd does with DefaultShell pwsh: the command line SSH would send,
         // run by an outer pwsh -c, which turns every non-zero exit code into 1.
         // And, as sshd gives each session, a console of its own, in the
         // machine's code page (936 on a Chinese Windows), not this test's.
-        var start = new ProcessStartInfo("pwsh")
-        {
-            CreateNoWindow = true,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            UseShellExecute = false,
-        };
+        var start = new ProcessStartInfo("pwsh") { CreateNoWindow = true };
         foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-c", SshMachine.Command(script) })
         {
             start.ArgumentList.Add(argument);
         }
 
-        using var stop = new CancellationTokenSource();
-        var process = new Process { StartInfo = start };
-        process.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is not null && !stop.IsCancellationRequested)
+        // The heartbeats are the product's own (LineProcess), at this
+        // machine's interval; on cancel, as sshd, the session's input ends
+        // but nothing there is killed.
+        return LineProcess.RunAsync(
+            start,
+            onOutput,
+            onError,
+            cancellationToken,
+            SshMachine.RunOptions with
             {
-                onOutput(e.Data);
-            }
-        };
-        process.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is not null && !stop.IsCancellationRequested)
-            {
-                onError(e.Data);
-            }
-        };
-        process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        var beating = BeatAsync(process, stop.Token);
-        try
-        {
-            await process.WaitForExitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            // The client is gone: the session's input ends; what runs there goes on.
-            await stop.CancelAsync();
-            CloseInput(process);
-            lock (abandoned)
-            {
-                abandoned.Add(process);
-            }
-
-            throw;
-        }
-
-        await stop.CancelAsync();
-        await beating;
-        CloseInput(process);
-        var exitCode = process.ExitCode;
-        process.Dispose();
-        return exitCode;
+                Heartbeat = Heartbeat,
+                Beats = SilenceAfter,
+                KillOnCancel = false,
+                Started = process =>
+                {
+                    lock (sessions)
+                    {
+                        sessions.Add(process);
+                    }
+                },
+            });
     }
 
     public Task SendAsync(string file, string directory, CancellationToken cancellationToken)
@@ -144,9 +112,9 @@ public sealed class DirectoryMachine(string root) : IRemoteMachine
     /// <summary>Kills what sessions of abandoned runs left running, so a test that fails leaves nothing behind.</summary>
     public void KillAbandoned()
     {
-        lock (abandoned)
+        lock (sessions)
         {
-            foreach (var process in abandoned)
+            foreach (var process in sessions)
             {
                 try
                 {
@@ -157,48 +125,11 @@ public sealed class DirectoryMachine(string root) : IRemoteMachine
                 }
                 catch (InvalidOperationException)
                 {
-                    // Already gone.
+                    // Already gone, or its handle was let go once it ended.
                 }
-
-                process.Dispose();
             }
 
-            abandoned.Clear();
-        }
-    }
-
-    private async Task BeatAsync(Process process, CancellationToken stop)
-    {
-        var beats = 0;
-        try
-        {
-            while (!stop.IsCancellationRequested)
-            {
-                if (SilenceAfter is not { } silence || beats < silence)
-                {
-                    await process.StandardInput.WriteLineAsync("alive".AsMemory(), stop);
-                    await process.StandardInput.FlushAsync(stop);
-                    beats++;
-                }
-
-                await Task.Delay(Heartbeat, stop);
-            }
-        }
-        catch (Exception e) when (e is OperationCanceledException or IOException or ObjectDisposedException)
-        {
-            // Stopped, or the session has ended.
-        }
-    }
-
-    private static void CloseInput(Process process)
-    {
-        try
-        {
-            process.StandardInput.Close();
-        }
-        catch (IOException)
-        {
-            // The session has ended already.
+            sessions.Clear();
         }
     }
 }

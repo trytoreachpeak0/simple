@@ -34,7 +34,15 @@ public sealed partial class SshMachine : IRemoteMachine
         ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"];
 
     public SshMachine(string alias)
+        : this(alias, ["ssh"])
     {
+    }
+
+    /// <param name="ssh">The ssh client and its leading arguments; tests put a stand-in there.</param>
+    internal SshMachine(string alias, IReadOnlyList<string> ssh)
+    {
+        ArgumentNullException.ThrowIfNull(ssh);
+        this.ssh = ssh;
         if (Refusal(alias) is { } refusal)
         {
             throw new ArgumentException(refusal, nameof(alias));
@@ -43,7 +51,15 @@ public sealed partial class SshMachine : IRemoteMachine
         Name = alias;
     }
 
+    private readonly IReadOnlyList<string> ssh;
+
     public string Name { get; }
+
+    /// <summary>
+    /// How this machine's commands run: heartbeats into ssh's input, and on
+    /// cancel (Ctrl+C) ssh is killed, which ends the session's input there.
+    /// </summary>
+    public static LineProcessOptions RunOptions => new(Heartbeat);
 
     public string Root => "C:/simple-remote";
 
@@ -64,13 +80,13 @@ public sealed partial class SshMachine : IRemoteMachine
     public async Task<int> RunAsync(string script, Action<string> onOutput, Action<string> onError, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(script);
-        var start = new ProcessStartInfo("ssh");
-        foreach (var argument in (string[])["-T", .. Options, Name, Command(script)])
+        var start = new ProcessStartInfo(ssh[0]);
+        foreach (var argument in (string[])[.. ssh.Skip(1), "-T", .. Options, Name, Command(script)])
         {
             start.ArgumentList.Add(argument);
         }
 
-        var exitCode = await LineProcess.RunAsync(start, onOutput, onError, cancellationToken, Heartbeat);
+        var exitCode = await LineProcess.RunAsync(start, onOutput, onError, cancellationToken, RunOptions);
         // 255 is ssh's own: it could not connect, or the connection was lost.
         return exitCode == 255
             ? throw new RemoteException(ExitCodes.RemoteFailed, $"ssh {Name} failed (exit code 255): the machine could not be reached or the connection was lost.")
