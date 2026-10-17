@@ -25,7 +25,7 @@ public sealed class EmergencyStopContracts : OrderContractTest
 
     /// <summary>An emergency stop alone never puts the executing order into HANG: it stays EXECUTING, held by the stop.</summary>
     [Fact]
-    [Contract("BC-ORDER-015")]
+    [Contract("BC-ORDER-015", "ADR 0010", "#11")]
     public async Task AnEmergencyStopKeepsTheExecutingOrderExecuting()
     {
         Target.RequireWrites();

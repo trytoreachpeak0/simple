@@ -76,6 +76,7 @@ public sealed class FakeRiotTarget : RiotTarget
             host.UseSetting("FakeRiot:Timing:EmergencyLock", "00:00:00.050");
             host.UseSetting("FakeRiot:Timing:EmergencyRelease", "00:00:00.200");
             host.UseSetting("FakeRiot:Timing:FaultCodeResidue", "00:00:00.300");
+            host.UseSetting("FakeRiot:Timing:ChargingTimePerPercent", "00:00:00.010");
             // Longer than the quiet window, so a contract can watch the vehicle not start.
             host.UseSetting("FakeRiot:Timing:ContinueStartDelay", "00:00:01");
         });
@@ -159,6 +160,19 @@ public sealed class FakeRiotControl(HttpClient client)
     /// <summary>A person drives the vehicle to a station without an order: with the handset in manual mode, or from Matrix.</summary>
     public Task DriveAsync(string vehicleKey, int station) =>
         PostAsync($"/fake-riot/vehicles/{Uri.EscapeDataString(vehicleKey)}/drive", new { station });
+
+    /// <summary>A person adds a station to the map in RIoT's map editor; answers its number.</summary>
+    public async Task<int> AddStationAsync(int mapId, string name) =>
+        (await PostAsync($"/fake-riot/maps/{mapId}/stations", new { name, type = 1, x = 30000, y = 30000 })).GetProperty("id").GetInt32();
+
+    /// <summary>A person deletes a station from the map in RIoT's map editor.</summary>
+    public async Task DeleteStationAsync(int mapId, int stationId)
+    {
+        using var response = await client.DeleteAsync(
+            new Uri($"/fake-riot/maps/{mapId}/stations/{stationId}", UriKind.Relative),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
 
     /// <summary>Before each read of the order list, other lines make this many orders, so the total changes while a caller pages through it.</summary>
     public Task SetOrderListChurnAsync(int ordersPerRead) => PutAsync("/fake-riot/order-list/churn", new { ordersPerRead });

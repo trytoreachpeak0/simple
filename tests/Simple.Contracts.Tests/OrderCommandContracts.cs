@@ -124,7 +124,7 @@ public sealed class OrderCommandContracts : OrderContractTest
     /// (ADR 0010); the lab has no record of it (research/riot-review.md U3).
     /// </summary>
     [Fact]
-    [Contract("ADR 0010")]
+    [Contract("ADR 0010", "#11")]
     [NotVerifiedOnRealRiot("对挂起的单发取消，单子变成已取消（产品负责人，ADR 0010）")]
     public async Task CancellingAHungOrderCancelsIt()
     {

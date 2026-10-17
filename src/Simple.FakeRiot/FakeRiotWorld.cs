@@ -117,12 +117,22 @@ public sealed class FakeRiotWorld
         Answer.Ok(maps.Values.Select(m => new Dictionary<string, object?> { ["id"] = m.Seed.Id, ["name"] = m.Seed.Name }).ToList());
 
     /// <summary>An unknown map is <c>code=0</c> with an empty list, not an error (BC-MAP-002).</summary>
-    public Answer Stations(int mapId) =>
-        Answer.Ok(maps.TryGetValue(mapId, out var map) ? map.Seed.Stations.Select(s => StationWire(map, s)).ToList() : []);
+    public Answer Stations(int mapId)
+    {
+        lock (gate)
+        {
+            return Answer.Ok(maps.TryGetValue(mapId, out var map) ? map.Stations.Select(s => StationWire(map, s)).ToList() : []);
+        }
+    }
 
     /// <summary>snake_case keys, which the generated client cannot read (BC-MAP-003).</summary>
-    public Answer Edges(int mapId) =>
-        Answer.Ok(maps.TryGetValue(mapId, out var map) ? map.Seed.Edges.Select(e => EdgeWire(map, e)).ToList() : []);
+    public Answer Edges(int mapId)
+    {
+        lock (gate)
+        {
+            return Answer.Ok(maps.TryGetValue(mapId, out var map) ? map.Edges.Select(e => EdgeWire(map, e)).ToList() : []);
+        }
+    }
 
     private static Dictionary<string, object?> StationWire(MapState map, SeedStation station) => new()
     {
@@ -130,8 +140,8 @@ public sealed class FakeRiotWorld
         ["name"] = station.Name,
         ["type"] = station.Type,
         ["desc"] = "",
-        ["edge_id"] = map.Seed.Edges.FirstOrDefault(e => e.To == station.Id)?.Id
-            ?? map.Seed.Edges.FirstOrDefault(e => e.From == station.Id)?.Id ?? 0,
+        ["edge_id"] = map.Edges.FirstOrDefault(e => e.To == station.Id)?.Id
+            ?? map.Edges.FirstOrDefault(e => e.From == station.Id)?.Id ?? 0,
         ["pos.x"] = station.X,
         ["pos.y"] = station.Y,
         ["pos.yaw"] = 0.0,
@@ -369,17 +379,20 @@ public sealed class FakeRiotWorld
     /// <summary>One unreachable candidate makes the whole query a NullPointerException (BC-ROUTE-002); so does an empty list (BC-ROUTE-001).</summary>
     public Answer Nearest(int mapId, int fixedStation, IReadOnlyList<int> candidates, bool fromFixed)
     {
-        if (!maps.TryGetValue(mapId, out var map) || candidates.Count == 0)
+        lock (gate)
         {
-            return Answer.InternalError();
-        }
+            if (!maps.TryGetValue(mapId, out var map) || candidates.Count == 0)
+            {
+                return Answer.InternalError();
+            }
 
-        var ranked = candidates
-            .Select(c => (Station: c, Cost: fromFixed ? map.Graph.CostBetween(fixedStation, c) : map.Graph.CostBetween(c, fixedStation)))
-            .ToList();
-        return ranked.Any(r => r.Cost is null)
-            ? Answer.InternalError()
-            : Answer.Ok(ranked.OrderBy(r => r.Cost).First().Station);
+            var ranked = candidates
+                .Select(c => (Station: c, Cost: fromFixed ? map.Graph.CostBetween(fixedStation, c) : map.Graph.CostBetween(c, fixedStation)))
+                .ToList();
+            return ranked.Any(r => r.Cost is null)
+                ? Answer.InternalError()
+                : Answer.Ok(ranked.OrderBy(r => r.Cost).First().Station);
+        }
     }
 
     // ---- Orders ----
@@ -759,6 +772,14 @@ public sealed class FakeRiotWorld
         }
     }
 
+    public bool HasVehicle(string key)
+    {
+        lock (gate)
+        {
+            return vehicles.ContainsKey(key);
+        }
+    }
+
     /// <summary>
     /// A person drives the vehicle to a station without an order: with the
     /// handset in MODE_MANUAL, or from Matrix with the mode still MODE_AUTO
@@ -788,6 +809,51 @@ public sealed class FakeRiotWorld
             v.Driving = true;
             StartTravel(v, station, cost);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// A person adds a station in RIoT's map editor. It gets the number after
+    /// the highest the map ever had: station numbers only go up, and a deleted
+    /// number is never given again (the product owner, ADR 0015). It has no
+    /// edges. Null for an unknown map.
+    /// </summary>
+    public int? AddStation(int mapId, string name, int type, double x, double y)
+    {
+        lock (gate)
+        {
+            if (!maps.TryGetValue(mapId, out var map))
+            {
+                return null;
+            }
+
+            var id = ++map.HighestStationId;
+            map.Stations.Add(new SeedStation(id, name, type, x, y));
+            map.RebuildGraph();
+            return id;
+        }
+    }
+
+    /// <summary>A person deletes a station and its edges in RIoT's map editor; refused while a vehicle stands on it or starts its routes there.</summary>
+    public StationChange DeleteStation(int mapId, int stationId)
+    {
+        lock (gate)
+        {
+            if (!maps.TryGetValue(mapId, out var map) || map.Station(stationId) is not { } station)
+            {
+                return StationChange.Unknown;
+            }
+
+            if (vehicles.Values.Any(v => v.Map == map && (v.Station == stationId || v.LastStation == stationId || v.TravelTo == stationId)))
+            {
+                return StationChange.InUse;
+            }
+
+            map.Stations.Remove(station);
+            map.Edges.RemoveAll(e => e.From == stationId || e.To == stationId);
+            map.DisconnectedChargers.Remove(stationId);
+            map.RebuildGraph();
+            return StationChange.Done;
         }
     }
 
@@ -854,6 +920,11 @@ public sealed class FakeRiotWorld
                 {
                     Travel(v, elapsed);
                 }
+            }
+
+            foreach (var v in vehicles.Values)
+            {
+                Charge(v, elapsed);
             }
 
             foreach (var v in vehicles.Values.Where(v => v.Current is null))
@@ -984,6 +1055,28 @@ public sealed class FakeRiotWorld
         }
     }
 
+    /// <summary>
+    /// On a charger or the manual charger the battery rises, and stops at
+    /// <see cref="FakeRiotSettings.ChargingStopsAtBattery"/>: the battery
+    /// management may stop at 97 to 99 % (a guess, ADR 0020). batteryState
+    /// still reads CHARGING after that.
+    /// </summary>
+    private void Charge(VehicleState v, TimeSpan elapsed)
+    {
+        if (!(v.Charging || v.ManualCharger) || v.Battery >= settings.ChargingStopsAtBattery)
+        {
+            v.ChargedFor = TimeSpan.Zero;
+            return;
+        }
+
+        v.ChargedFor += elapsed;
+        while (v.ChargedFor >= Timing.ChargingTimePerPercent && v.Battery < settings.ChargingStopsAtBattery)
+        {
+            v.ChargedFor -= Timing.ChargingTimePerPercent;
+            v.Battery++;
+        }
+    }
+
     /// <summary>Sets the vehicle off towards <paramref name="destination"/>; off any station while it moves (BC-STATE-002).</summary>
     private void StartTravel(VehicleState v, int destination, double cost)
     {
@@ -1038,9 +1131,14 @@ public sealed class FakeRiotWorld
             m.MissionState = state == OrderStates.Cancelled ? 4 : m.MissionState;
         }
 
-        // Cancelled midway, the vehicle stays where it is: off a station if it was moving.
+        // Cancelled midway, the vehicle stops where it is: off a station, not back at the start (ADR 0021).
         foreach (var v in vehicles.Values.Where(v => ReferenceEquals(v.Current, order)))
         {
+            if (v.Station == 0 && v.TravelNeeded > TimeSpan.Zero)
+            {
+                v.StoppedAt = Position(v);
+            }
+
             v.Current = null;
             v.TravelNeeded = v.Travelled = TimeSpan.Zero;
         }
@@ -1073,7 +1171,7 @@ public sealed class FakeRiotWorld
 
     private static (double X, double Y) Position(VehicleState v)
     {
-        var at = v.Map.Station(v.Station != 0 ? v.Station : v.LastStation) ?? v.Map.Seed.Stations[0];
+        var at = v.Map.Station(v.Station != 0 ? v.Station : v.LastStation) ?? v.Map.Stations[0];
         if (v.Station == 0 && v.StoppedAt is { } stopped)
         {
             return stopped;
@@ -1160,11 +1258,20 @@ public sealed class FakeRiotWorld
     {
         public SeedMap Seed { get; } = seed;
 
-        public RouteGraph Graph { get; } = new(seed);
+        public List<SeedStation> Stations { get; } = [.. seed.Stations];
+
+        public List<SeedEdge> Edges { get; } = [.. seed.Edges];
+
+        public RouteGraph Graph { get; private set; } = new(seed);
 
         public HashSet<int> DisconnectedChargers { get; } = [];
 
-        public SeedStation? Station(int id) => Seed.Stations.FirstOrDefault(s => s.Id == id);
+        /// <summary>The highest station number the map ever had: a new station gets the next (ADR 0015).</summary>
+        public int HighestStationId { get; set; } = seed.Stations.Count == 0 ? 0 : seed.Stations.Max(s => s.Id);
+
+        public SeedStation? Station(int id) => Stations.FirstOrDefault(s => s.Id == id);
+
+        public void RebuildGraph() => Graph = new RouteGraph(Seed with { Stations = [.. Stations], Edges = [.. Edges] });
     }
 
     private sealed class VehicleState(SeedVehicle seed, MapState map)
@@ -1186,6 +1293,9 @@ public sealed class FakeRiotWorld
         public bool ManualCharger { get; set; }
 
         public bool ButtonPressed { get; set; }
+
+        /// <summary>World time charged towards the next percent.</summary>
+        public TimeSpan ChargedFor { get; set; }
 
         /// <summary>Driven by a person, with no order (ADR 0022).</summary>
         public bool Driving { get; set; }
@@ -1309,6 +1419,13 @@ public static class VehicleModes
 {
     public const string Auto = "MODE_AUTO";
     public const string Manual = "MODE_MANUAL";
+}
+
+public enum StationChange
+{
+    Done,
+    Unknown,
+    InUse,
 }
 
 public enum VehicleChange

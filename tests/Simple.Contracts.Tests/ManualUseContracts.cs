@@ -43,7 +43,7 @@ public sealed class ManualUseContracts : OrderContractTest
 
     /// <summary>An order made while the brake is released stays queued.</summary>
     [Fact]
-    [Contract("round 29-F", "round 30", "#11")]
+    [Contract("round 29-F", "round 30", "#11", "ADR 0022")]
     public async Task AnOrderMadeWhileTheBrakeIsReleasedStaysQueued()
     {
         var control = Target.RequireControl("松开车的抱闸");

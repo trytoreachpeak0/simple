@@ -29,6 +29,9 @@ public sealed class FakeRiotSettings
     /// <summary>At this battery level or below RIoT gives the vehicle no order: 10 % (the product owner, BC-VEH-007).</summary>
     public int NoOrdersAtOrBelowBattery { get; set; } = 10;
 
+    /// <summary>Charging stops at this battery level: the battery management may stop at 97 to 99 % (a guess, ADR 0020).</summary>
+    public int ChargingStopsAtBattery { get; set; } = 98;
+
     /// <summary>
     /// How long every read (a GET under /api) waits before it is answered,
     /// in real time; not compressed by <see cref="FakeRiotTiming.Speedup"/>.
@@ -116,6 +119,9 @@ public sealed class FakeRiotTiming
     /// once but real RIoT's vehicle started about 16 seconds later (BC-ORDER-020 item 3).
     /// </summary>
     public TimeSpan ContinueStartDelay { get; set; } = TimeSpan.FromSeconds(16);
+
+    /// <summary>How long charging takes for one percent; never measured on real RIoT, about an hour from empty to full.</summary>
+    public TimeSpan ChargingTimePerPercent { get; set; } = TimeSpan.FromSeconds(36);
 }
 
 /// <summary>Refuses to start the fake on settings that would make it reachable from another machine or leave it without a key.</summary>
@@ -141,6 +147,7 @@ public sealed class FakeRiotSettingsValidator : IValidateOptions<FakeRiotSetting
                  {
                      ("Tick", timing.Tick),
                      ("MinimumTravel", timing.MinimumTravel),
+                     ("ChargingTimePerPercent", timing.ChargingTimePerPercent),
                  })
         {
             if (value <= TimeSpan.Zero)
@@ -163,6 +170,11 @@ public sealed class FakeRiotSettingsValidator : IValidateOptions<FakeRiotSetting
             {
                 failures.Add($"{section}:Timing:{key} must not be negative.");
             }
+        }
+
+        if (options.NoOrdersAtOrBelowBattery is < 0 or > 100 || options.ChargingStopsAtBattery is < 0 or > 100)
+        {
+            failures.Add($"{section}:NoOrdersAtOrBelowBattery and {section}:ChargingStopsAtBattery are percentages, 0 to 100.");
         }
 
         if (options.ReadDelay < TimeSpan.Zero)

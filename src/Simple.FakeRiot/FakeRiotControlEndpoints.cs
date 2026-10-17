@@ -42,6 +42,23 @@ public static class FakeRiotControlEndpoints
             .WithName("FailFakeRiotOrder")
             .WithSummary("Makes a queued order FAILED (4), which the fake never does by itself; real RIoT is said to fail only a just-made order (ADR 0010).");
 
+        group.MapPost("/maps/{mapId:int}/stations", (FakeRiotWorld world, int mapId, StationRequest request) =>
+                world.AddStation(mapId, request.Name, request.Type, request.X, request.Y) is { } id
+                    ? Results.Json(new { id })
+                    : Results.NotFound($"No map {mapId}."))
+            .WithName("AddFakeRiotStation")
+            .WithSummary("Adds a station, as in RIoT's map editor: it gets the number after the highest the map ever had (ADR 0015). Answers its id.");
+
+        group.MapDelete("/maps/{mapId:int}/stations/{stationId:int}", (FakeRiotWorld world, int mapId, int stationId) =>
+                world.DeleteStation(mapId, stationId) switch
+                {
+                    StationChange.Done => Results.NoContent(),
+                    StationChange.InUse => Results.Conflict($"A vehicle stands on, starts from or heads for station {stationId}."),
+                    _ => Results.NotFound($"Map {mapId} has no station {stationId}."),
+                })
+            .WithName("DeleteFakeRiotStation")
+            .WithSummary("Deletes a station and its edges, as in RIoT's map editor; its number is never given again.");
+
         group.MapPut("/vehicles/{key}", (FakeRiotWorld world, string key, VehicleRequest request) =>
                 world.SetVehicle(key, request.Battery, request.BrakeReleased, request.Mode, request.ManualCharger, request.EmergencyButtonPressed) switch
                 {
@@ -53,7 +70,9 @@ public static class FakeRiotControlEndpoints
             .WithSummary("What a person does to the vehicle: battery level, brake released, handset mode, manual charger, emergency-stop button. Only the values given change.");
 
         group.MapPost("/vehicles/{key}/drive", (FakeRiotWorld world, string key, DriveRequest request) =>
-                world.Drive(key, request.Station) is { } refusal ? Results.Conflict(refusal) : Results.NoContent())
+                !world.HasVehicle(key) ? Results.NotFound($"No vehicle '{key}'.")
+                : world.Drive(key, request.Station) is { } refusal ? Results.Conflict(refusal)
+                : Results.NoContent())
             .WithName("DriveFakeRiotVehicle")
             .WithSummary("A person drives the vehicle to a station without an order (handset in MODE_MANUAL, or Matrix in MODE_AUTO).");
 
@@ -112,6 +131,8 @@ public static class FakeRiotControlEndpoints
     public sealed record ChargerRequest(bool Connected);
 
     public sealed record ReadDelayRequest(int Milliseconds);
+
+    public sealed record StationRequest(string Name, int Type, double X, double Y);
 
     public sealed record VehicleRequest(int? Battery, bool? BrakeReleased, string? Mode, bool? ManualCharger, bool? EmergencyButtonPressed);
 

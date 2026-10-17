@@ -101,6 +101,70 @@ public sealed class FakeRiotHostTests : IDisposable
         Assert.Equal(HttpStatusCode.NotFound, charger.StatusCode);
     }
 
+    [Fact]
+    public async Task TheControlApiAnswersNotFoundForAVehicleOrMapItDoesNotHave()
+    {
+        await using var factory = Fake();
+        using var client = factory.CreateClient();
+
+        using var vehicle = await client.PutAsJsonAsync(new Uri("/fake-riot/vehicles/BROKERX-none", UriKind.Relative), new { battery = 50 }, Cancel);
+        using var drive = await client.PostAsJsonAsync(new Uri("/fake-riot/vehicles/BROKERX-none/drive", UriKind.Relative), new { station = 3 }, Cancel);
+        using var station = await client.PostAsJsonAsync(new Uri("/fake-riot/maps/99/stations", UriKind.Relative), new { name = "x", type = 1, x = 0, y = 0 }, Cancel);
+        using var web = await client.PostAsJsonAsync(new Uri("/fake-riot/orders/web", UriKind.Relative), new { vehicleKey = "BROKERX-none", mapId = 1, station = 3 }, Cancel);
+        using var fail = await client.PostAsync(new Uri("/fake-riot/orders/order-1/fail", UriKind.Relative), content: null, Cancel);
+
+        Assert.All(new[] { vehicle, drive, station, web, fail }, r => Assert.Equal(HttpStatusCode.NotFound, r.StatusCode));
+    }
+
+    [Theory]
+    [InlineData("PUT", "/fake-riot/vehicles/BROKERX-0000000000000000000000000000fa01", """{"battery":101}""")]
+    [InlineData("PUT", "/fake-riot/vehicles/BROKERX-0000000000000000000000000000fa01", """{"mode":"MODE_ROBOT"}""")]
+    [InlineData("PUT", "/fake-riot/order-list/churn", """{"ordersPerRead":-1}""")]
+    [InlineData("PUT", "/fake-riot/read-delay", """{"milliseconds":-1}""")]
+    [InlineData("POST", "/fake-riot/faults/create-00002", """{"orderMade":false,"times":-1}""")]
+    public async Task TheControlApiRefusesValuesThatMakeNoSense(string method, string path, string body)
+    {
+        await using var factory = Fake();
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(new HttpMethod(method), new Uri(path, UriKind.Relative))
+        {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+        };
+
+        using var response = await client.SendAsync(request, Cancel);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>A station a vehicle stands on cannot be deleted; a vehicle with the manual charger plugged in cannot be driven.</summary>
+    [Fact]
+    public async Task TheControlApiRefusesWhatThePlantWouldNotAllow()
+    {
+        await using var factory = Fake();
+        using var client = factory.CreateClient();
+
+        using var delete = await client.DeleteAsync(new Uri("/fake-riot/maps/1/stations/1", UriKind.Relative), Cancel);
+        using var plug = await client.PutAsJsonAsync(new Uri("/fake-riot/vehicles/BROKERX-0000000000000000000000000000fa01", UriKind.Relative), new { manualCharger = true }, Cancel);
+        using var drive = await client.PostAsJsonAsync(new Uri("/fake-riot/vehicles/BROKERX-0000000000000000000000000000fa01/drive", UriKind.Relative), new { station = 3 }, Cancel);
+
+        Assert.Equal(HttpStatusCode.Conflict, delete.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, plug.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, drive.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("FakeRiot:Timing:Speedup", "0", "Speedup")]
+    [InlineData("FakeRiot:Timing:ChargingTimePerPercent", "00:00:00", "ChargingTimePerPercent")]
+    [InlineData("FakeRiot:Timing:ContinueStartDelay", "-00:00:01", "ContinueStartDelay")]
+    [InlineData("FakeRiot:ReadDelay", "-00:00:01", "ReadDelay")]
+    [InlineData("FakeRiot:NoOrdersAtOrBelowBattery", "101", "NoOrdersAtOrBelowBattery")]
+    public void TimingsAndLevelsOutOfRangeAreRefused(string key, string value, string named)
+    {
+        var failures = Validate(new Dictionary<string, string?> { [key] = value });
+
+        Assert.Contains(failures, f => f.Contains(named, StringComparison.Ordinal));
+    }
+
     /// <summary>The seed's edges join stations of their own map, and every vehicle stands on a station of its map.</summary>
     [Fact]
     public void TheShippedSeedIsConsistent()
