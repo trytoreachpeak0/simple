@@ -39,6 +39,19 @@
           "Std.UriTemplate": "2.0.8"
         }
       },
+      "Microsoft.Kiota.Bundle": {
+        "type": "Transitive",
+        "resolved": "1.22.2",
+        "contentHash": "dqzCwYgDhIPIeTma2oeAgc1hAOCN+s7/oa1Wt8VzDoK25xnk+vsLTVyBEg5LW2T733cr22GdZw66D9Dl4dQNFg==",
+        "dependencies": {
+          "Microsoft.Kiota.Abstractions": "1.22.2",
+          "Microsoft.Kiota.Http.HttpClientLibrary": "1.22.2",
+          "Microsoft.Kiota.Serialization.Form": "1.22.2",
+          "Microsoft.Kiota.Serialization.Json": "1.22.2",
+          "Microsoft.Kiota.Serialization.Multipart": "1.22.2",
+          "Microsoft.Kiota.Serialization.Text": "1.22.2"
+        }
+      },
       "Microsoft.Kiota.Http.HttpClientLibrary": {
         "type": "Transitive",
         "resolved": "1.22.2",
@@ -121,15 +134,15 @@
       },
       "RIoT.Sdk.Core": {
         "type": "Transitive",
-        "resolved": "0.3.0",
-        "contentHash": "eNK0vsWQHRbT0te4KIIoklRI1Qsa8Xa1iuJ4LpGsM38h3TDcw+LbjMeLX2aseAaqTIAfn1WDj52N5tcf1hWdPg=="
+        "resolved": "0.3.1",
+        "contentHash": "Ew8rmoh5qRm5f39aPJOTC05/p/6aLrFUPXtSradeb8p0dAYyWh9eiPeRFgaoDrasl2368wTcDcJlmCEcr2kHZg=="
       },
       "RIoT.Sdk.Generated": {
         "type": "Transitive",
-        "resolved": "0.3.0",
-        "contentHash": "AURAyw9azVr5oy+X7itXtXhoDki/6wBCReTbP0/3DBwLs7+X8ge8SYOi8Jqq59DxPCn/b4HKBILqyB9z91Euww==",
+        "resolved": "0.3.1",
+        "contentHash": "n1guIw/C1t5MSMywe9K+tqPgQB3D11oN7ENYNa5ItZIiamGbfIerW2fOSWVieHwVDRTvQEm58A7w6iUtVsQIOQ==",
         "dependencies": {
-          "Microsoft.Kiota.Bundle": "1.17.4"
+          "Microsoft.Kiota.Bundle": "1.22.2"
         }
       },
       "Std.UriTemplate": {
@@ -213,32 +226,18 @@
       "simple.server.riot": {
         "type": "Project",
         "dependencies": {
-          "RIoT.Sdk.Facade": "[0.3.0, )"
-        }
-      },
-      "Microsoft.Kiota.Bundle": {
-        "type": "CentralTransitive",
-        "requested": "[1.22.2, )",
-        "resolved": "1.22.2",
-        "contentHash": "dqzCwYgDhIPIeTma2oeAgc1hAOCN+s7/oa1Wt8VzDoK25xnk+vsLTVyBEg5LW2T733cr22GdZw66D9Dl4dQNFg==",
-        "dependencies": {
-          "Microsoft.Kiota.Abstractions": "1.22.2",
-          "Microsoft.Kiota.Http.HttpClientLibrary": "1.22.2",
-          "Microsoft.Kiota.Serialization.Form": "1.22.2",
-          "Microsoft.Kiota.Serialization.Json": "1.22.2",
-          "Microsoft.Kiota.Serialization.Multipart": "1.22.2",
-          "Microsoft.Kiota.Serialization.Text": "1.22.2"
+          "RIoT.Sdk.Facade": "[0.3.1, )"
         }
       },
       "RIoT.Sdk.Facade": {
         "type": "CentralTransitive",
-        "requested": "[0.3.0, )",
-        "resolved": "0.3.0",
-        "contentHash": "G47l/9bbm6HYL6/qrt7z0mY705r4wFHgIZuNOFlTPHZ3QfxPY7vsF0F+L3oHU4xtpLcwx0jyuAHH7DKWEn2BHg==",
+        "requested": "[0.3.1, )",
+        "resolved": "0.3.1",
+        "contentHash": "KqH7h89sLH/owWKoCuqc9/6XbADQDaqZoMA306v9SczfDhbMG/ll6f0T+titLVeCjRwD9dgoQQ5jF79NShNmxw==",
         "dependencies": {
-          "Microsoft.Kiota.Bundle": "1.17.4",
-          "RIoT.Sdk.Core": "0.3.0",
-          "RIoT.Sdk.Generated": "0.3.0"
+          "Microsoft.Kiota.Bundle": "1.22.2",
+          "RIoT.Sdk.Core": "0.3.1",
+          "RIoT.Sdk.Generated": "0.3.1"
         }
       }
     }
