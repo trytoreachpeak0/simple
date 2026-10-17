@@ -126,6 +126,40 @@ public sealed class FakeRiotControl(HttpClient client)
     /// <summary>The next byDefaultMissions answers 00002, with or without making the order.</summary>
     public Task InjectCreate00002Async(bool orderMade) => PostAsync("/fake-riot/faults/create-00002", new { orderMade, times = 1 });
 
+    /// <summary>
+    /// What a person does to the vehicle itself: its battery level, the brake,
+    /// the handset's manual mode, the manual charger, the emergency-stop
+    /// button. Only the values given change.
+    /// </summary>
+    public Task SetVehicleAsync(
+        string vehicleKey,
+        int? battery = null,
+        bool? brakeReleased = null,
+        string? mode = null,
+        bool? manualCharger = null,
+        bool? emergencyButtonPressed = null)
+    {
+        var body = new Dictionary<string, object>();
+        Add("battery", battery);
+        Add("brakeReleased", brakeReleased);
+        Add("mode", mode);
+        Add("manualCharger", manualCharger);
+        Add("emergencyButtonPressed", emergencyButtonPressed);
+        return PutAsync($"/fake-riot/vehicles/{Uri.EscapeDataString(vehicleKey)}", body);
+
+        void Add(string name, object? value)
+        {
+            if (value is not null)
+            {
+                body[name] = value;
+            }
+        }
+    }
+
+    /// <summary>A person drives the vehicle to a station without an order: with the handset in manual mode, or from Matrix.</summary>
+    public Task DriveAsync(string vehicleKey, int station) =>
+        PostAsync($"/fake-riot/vehicles/{Uri.EscapeDataString(vehicleKey)}/drive", new { station });
+
     /// <summary>Before each read of the order list, other lines make this many orders, so the total changes while a caller pages through it.</summary>
     public Task SetOrderListChurnAsync(int ordersPerRead) => PutAsync("/fake-riot/order-list/churn", new { ordersPerRead });
 

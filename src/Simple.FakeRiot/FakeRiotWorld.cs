@@ -198,11 +198,11 @@ public sealed class FakeRiotWorld
                 ["currentMap"] = v.Map.Seed.Name,
                 ["currentPosition"] = v.Station,
                 ["battery"] = v.Battery,
-                ["batteryState"] = v.Charging ? "CHARGING" : "NO_CHARGE",
-                ["breakSwitchState"] = "MOVABLE",
+                ["batteryState"] = BatteryState(v),
+                ["breakSwitchState"] = BrakeSwitchState(v),
                 ["emergencyState"] = v.Emergency,
                 ["locationState"] = "LOCATION_STATE_RUNNING",
-                ["mode"] = "MODE_AUTO",
+                ["mode"] = v.Mode,
                 ["movementState"] = MovementState(v),
                 ["speed"] = Speed(v),
                 ["lockStatus"] = 0,
@@ -233,8 +233,8 @@ public sealed class FakeRiotWorld
                     ["name"] = v.Name,
                     ["vehicleId"] = v.VehicleId,
                     ["battery"] = v.Battery,
-                    ["batteryState"] = v.Charging ? "CHARGING" : "NO_CHARGE",
-                    ["breakSwitchState"] = "MOVABLE",
+                    ["batteryState"] = BatteryState(v),
+                    ["breakSwitchState"] = BrakeSwitchState(v),
                     // Every executing order shows CONTROL_STATE_ERR from start to
                     // finish, emergency stop or not (BC-VEH-005 item 8).
                     ["controlState"] = v.Current is not null || v.Emergency != EmergencyStates.Ok ? "CONTROL_STATE_ERR" : "CONTROL_STATE_OK",
@@ -244,7 +244,7 @@ public sealed class FakeRiotWorld
                         : time.GetUtcNow() < v.FaultCodesClearAt ? ResidualFaultCodes
                         : Array.Empty<int>(),
                     ["locationState"] = "LOCATION_STATE_RUNNING",
-                    ["mode"] = "MODE_AUTO",
+                    ["mode"] = v.Mode,
                     ["movementState"] = MovementState(v),
                     ["speed"] = Speed(v),
                     ["connected"] = true,
@@ -703,6 +703,94 @@ public sealed class FakeRiotWorld
         }
     }
 
+    /// <summary>
+    /// What a person does to the vehicle itself; only the values given change.
+    /// Releasing the brake hangs the executing or held order (BC-ORDER-015).
+    /// While the brake is released, the mode is not MODE_AUTO, the manual
+    /// charger is plugged in or the battery is at the no-order level or below,
+    /// RIoT gives the vehicle no order and the vehicle does not move (rounds
+    /// 29-F and 30; ADR 0022 and BC-VEH-007, the product owner's statements).
+    /// Pressing the emergency-stop button stops the vehicle (CAN_NOT_RECOVER)
+    /// and hangs its executing order; RIoT cannot release it while the button
+    /// is pressed; letting go leaves the software stop set, CAN_RECOVER, until
+    /// it is released in RIoT (the product owner, ADR 0009 and ADR 0010).
+    /// </summary>
+    public VehicleChange SetVehicle(string key, int? battery, bool? brakeReleased, string? mode, bool? manualCharger, bool? emergencyButtonPressed)
+    {
+        lock (gate)
+        {
+            if (!vehicles.TryGetValue(key, out var v))
+            {
+                return VehicleChange.UnknownVehicle;
+            }
+
+            if (battery is < 0 or > 100 || mode is not (null or VehicleModes.Auto or VehicleModes.Manual))
+            {
+                return VehicleChange.Invalid;
+            }
+
+            var now = time.GetUtcNow();
+            v.Battery = battery ?? v.Battery;
+            v.Mode = mode ?? v.Mode;
+            v.ManualCharger = manualCharger ?? v.ManualCharger;
+            if (brakeReleased is { } released && released != v.BrakeReleased)
+            {
+                v.BrakeReleased = released;
+                if (released && v.Current is { State: OrderStates.Executing or OrderStates.Held } order)
+                {
+                    order.State = OrderStates.Hang;
+                    order.Touch(now);
+                }
+            }
+
+            if (emergencyButtonPressed is { } pressed && pressed != v.ButtonPressed)
+            {
+                v.ButtonPressed = pressed;
+                v.EmergencyTarget = null;
+                v.Emergency = pressed ? EmergencyStates.CanNotRecover : EmergencyStates.CanRecover;
+                if (pressed && v.Current is { State: OrderStates.Executing } executing)
+                {
+                    executing.State = OrderStates.Hang;
+                    executing.Touch(now);
+                }
+            }
+
+            return VehicleChange.Done;
+        }
+    }
+
+    /// <summary>
+    /// A person drives the vehicle to a station without an order: with the
+    /// handset in MODE_MANUAL, or from Matrix with the mode still MODE_AUTO
+    /// (ADR 0022). It moves like on an order, and RIoT has no order for it.
+    /// Refused while it has an order, is stopped, or has the manual charger
+    /// plugged in, or when there is no route.
+    /// </summary>
+    public string? Drive(string key, int station)
+    {
+        lock (gate)
+        {
+            if (!vehicles.TryGetValue(key, out var v))
+            {
+                return $"No vehicle '{key}'.";
+            }
+
+            if (v.Current is not null || v.Driving || v.Emergency != EmergencyStates.Ok || v.EmergencyTarget is not null || v.ManualCharger)
+            {
+                return "The vehicle cannot be driven now: it has an order, is moving, is emergency stopped or has the manual charger plugged in.";
+            }
+
+            if (v.Map.Graph.CostBetween(v.LastStation, station) is not { } cost)
+            {
+                return $"No route from station {v.LastStation} to {station} on the vehicle's map.";
+            }
+
+            v.Driving = true;
+            StartTravel(v, station, cost);
+            return null;
+        }
+    }
+
     /// <summary>Plugs a charging station's charger in or out; a vehicle at an unplugged charger cannot charge (round 24).</summary>
     public bool SetChargerConnected(int mapId, int stationId, bool connected)
     {
@@ -758,9 +846,13 @@ public sealed class FakeRiotWorld
 
                 // An emergency stop holds the vehicle; it does not put the
                 // order into HANG (BC-ORDER-015 item 1).
-                if (v.Current is { State: OrderStates.Executing } order && v.Emergency == EmergencyStates.Ok)
+                if (v.Current is { State: OrderStates.Executing } order && v.Emergency == EmergencyStates.Ok && !Immobile(v))
                 {
                     Advance(v, order, elapsed, now);
+                }
+                else if (v.Driving && v.Emergency == EmergencyStates.Ok)
+                {
+                    Travel(v, elapsed);
                 }
             }
 
@@ -778,7 +870,8 @@ public sealed class FakeRiotWorld
     /// </summary>
     private void StartNext(VehicleState v, DateTimeOffset now)
     {
-        if (!v.Online || v.Emergency != EmergencyStates.Ok || v.EmergencyTarget is not null)
+        if (!v.Online || v.Emergency != EmergencyStates.Ok || v.EmergencyTarget is not null || v.Driving || Immobile(v)
+            || v.Battery <= settings.NoOrdersAtOrBelowBattery)
         {
             return;
         }
@@ -853,24 +946,15 @@ public sealed class FakeRiotWorld
                     }
 
                     mission.MissionState = 1;
-                    v.TravelFrom = v.LastStation;
-                    v.TravelNeeded = cost == 0
-                        ? TimeSpan.Zero
-                        : TimeSpan.FromSeconds(Math.Max(Timing.MinimumTravel.TotalSeconds, cost.Value / Timing.SpeedMillimetresPerSecond));
-                    v.Travelled = TimeSpan.Zero;
-                    // Off any station while it moves (BC-STATE-002).
-                    v.Station = cost == 0 ? mission.Destination : 0;
+                    StartTravel(v, mission.Destination, cost.Value);
                 }
 
-                v.Travelled += budget;
-                if (v.Travelled < v.TravelNeeded)
+                if (Travel(v, budget) is not { } left)
                 {
                     return;
                 }
 
-                budget = v.Travelled - v.TravelNeeded;
-                v.Station = v.LastStation = mission.Destination;
-                v.TravelNeeded = v.Travelled = TimeSpan.Zero;
+                budget = left;
                 CompleteMission(order, mission, 900);
             }
             else if (mission is { Type: "act", ActionId: ChargeActionId, ActionParam1: 1 })
@@ -899,6 +983,43 @@ public sealed class FakeRiotWorld
             }
         }
     }
+
+    /// <summary>Sets the vehicle off towards <paramref name="destination"/>; off any station while it moves (BC-STATE-002).</summary>
+    private void StartTravel(VehicleState v, int destination, double cost)
+    {
+        v.TravelFrom = v.LastStation;
+        v.TravelTo = destination;
+        v.TravelNeeded = cost == 0
+            ? TimeSpan.Zero
+            : TimeSpan.FromSeconds(Math.Max(Timing.MinimumTravel.TotalSeconds, cost / Timing.SpeedMillimetresPerSecond));
+        v.Travelled = TimeSpan.Zero;
+        v.StoppedAt = null;
+        v.Station = cost == 0 ? destination : 0;
+    }
+
+    /// <summary>Moves the vehicle on by <paramref name="budget"/>; on arrival, the time left over, otherwise null.</summary>
+    private static TimeSpan? Travel(VehicleState v, TimeSpan budget)
+    {
+        v.Travelled += budget;
+        if (v.Travelled < v.TravelNeeded)
+        {
+            return null;
+        }
+
+        var left = v.Travelled - v.TravelNeeded;
+        v.Station = v.LastStation = v.TravelTo;
+        v.TravelNeeded = v.Travelled = TimeSpan.Zero;
+        v.Driving = false;
+        return left;
+    }
+
+    /// <summary>The brake released, not in MODE_AUTO, or the manual charger plugged in: the vehicle does not move on an order.</summary>
+    private static bool Immobile(VehicleState v) => v.BrakeReleased || v.Mode != VehicleModes.Auto || v.ManualCharger;
+
+    private static string BatteryState(VehicleState v) => v.Charging || v.ManualCharger ? "CHARGING" : "NO_CHARGE";
+
+    /// <summary>Named the wrong way round on real RIoT: an applied brake reads MOVABLE (#11).</summary>
+    private static string BrakeSwitchState(VehicleState v) => v.BrakeReleased ? "UNMOVABLE" : "MOVABLE";
 
     private static void CompleteMission(OrderState order, Mission mission, int resultCode)
     {
@@ -945,15 +1066,21 @@ public sealed class FakeRiotWorld
     };
 
     private double Speed(VehicleState v) =>
-        v.Current is { State: OrderStates.Executing } order && order.StartDelayLeft <= TimeSpan.Zero && v.TravelNeeded > TimeSpan.Zero && v.Emergency == EmergencyStates.Ok
+        (v.Driving || (v.Current is { State: OrderStates.Executing } order && order.StartDelayLeft <= TimeSpan.Zero && !Immobile(v)))
+        && v.TravelNeeded > TimeSpan.Zero && v.Emergency == EmergencyStates.Ok
             ? Timing.SpeedMillimetresPerSecond / 1000
             : 0;
 
     private static (double X, double Y) Position(VehicleState v)
     {
         var at = v.Map.Station(v.Station != 0 ? v.Station : v.LastStation) ?? v.Map.Seed.Stations[0];
-        if (v.Station != 0 || v.TravelNeeded <= TimeSpan.Zero || v.Current?.CurrentMission is not { Type: "move" } move
-            || v.Map.Station(move.Destination) is not { } to || v.Map.Station(v.TravelFrom) is not { } from)
+        if (v.Station == 0 && v.StoppedAt is { } stopped)
+        {
+            return stopped;
+        }
+
+        if (v.Station != 0 || v.TravelNeeded <= TimeSpan.Zero
+            || v.Map.Station(v.TravelTo) is not { } to || v.Map.Station(v.TravelFrom) is not { } from)
         {
             return (at.X, at.Y);
         }
@@ -1050,7 +1177,23 @@ public sealed class FakeRiotWorld
 
         public MapState Map { get; } = map;
 
-        public int Battery { get; } = seed.Battery;
+        public int Battery { get; set; } = seed.Battery;
+
+        public bool BrakeReleased { get; set; }
+
+        public string Mode { get; set; } = VehicleModes.Auto;
+
+        public bool ManualCharger { get; set; }
+
+        public bool ButtonPressed { get; set; }
+
+        /// <summary>Driven by a person, with no order (ADR 0022).</summary>
+        public bool Driving { get; set; }
+
+        public int TravelTo { get; set; }
+
+        /// <summary>Where it stopped off a station when its order was cancelled on the way.</summary>
+        public (double X, double Y)? StoppedAt { get; set; }
 
         /// <summary>The station it is on; 0 off a station (BC-STATE-002).</summary>
         public int Station { get; set; } = seed.Station;
@@ -1160,6 +1303,19 @@ public static class OrderStates
     public const int Deleted = 6;
     public const int Held = 7;
     public const int Hang = 9;
+}
+
+public static class VehicleModes
+{
+    public const string Auto = "MODE_AUTO";
+    public const string Manual = "MODE_MANUAL";
+}
+
+public enum VehicleChange
+{
+    Done,
+    UnknownVehicle,
+    Invalid,
 }
 
 public static class EmergencyStates

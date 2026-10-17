@@ -143,6 +143,22 @@ public sealed class EmergencyStopContracts : OrderContractTest
         await UntilStateAsync(upperId, OrderStates.Success);
     }
 
+    /// <summary>After a software stop under an executing order is released, the vehicle goes on with the order to SUCCESS.</summary>
+    [Fact]
+    [Contract("BC-ORDER-020", "ADR 0009", "#11")]
+    [NotVerifiedOnRealRiot("三类急停解除后，车会接着走原来的单（产品负责人，ADR 0009；BC-ORDER-020 第 5 条只是推断，没有轮次观测过执行中解除后自行继续）")]
+    public async Task AfterTheStopIsReleasedTheVehicleGoesOnWithItsOrder()
+    {
+        Target.RequireWrites();
+        var (upperId, _) = await ExecutingAsync("estop-goes-on");
+        await Riot.Device.TriggerEmergencyStopAsync(Facts.VehicleKey, Cancel);
+        await UntilAsync(_ => VehicleAsync(), v => v.EmergencyState == "CAN_RECOVER", "急停锁上");
+
+        await Riot.Device.CancelEmergencyStopAsync(Facts.VehicleKey, Cancel);
+
+        await UntilStateAsync(upperId, OrderStates.Success);
+    }
+
     private async Task<(string? Emergency, int FaultCodes)> RawVehicleAsync()
     {
         using var http = Target.CreateRawClient(withCallKey: true);

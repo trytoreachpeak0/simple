@@ -42,6 +42,21 @@ public static class FakeRiotControlEndpoints
             .WithName("FailFakeRiotOrder")
             .WithSummary("Makes a queued order FAILED (4), which the fake never does by itself; real RIoT is said to fail only a just-made order (ADR 0010).");
 
+        group.MapPut("/vehicles/{key}", (FakeRiotWorld world, string key, VehicleRequest request) =>
+                world.SetVehicle(key, request.Battery, request.BrakeReleased, request.Mode, request.ManualCharger, request.EmergencyButtonPressed) switch
+                {
+                    VehicleChange.Done => Results.NoContent(),
+                    VehicleChange.UnknownVehicle => Results.NotFound($"No vehicle '{key}'."),
+                    _ => Results.BadRequest("battery is 0 to 100; mode is MODE_AUTO or MODE_MANUAL."),
+                })
+            .WithName("SetFakeRiotVehicle")
+            .WithSummary("What a person does to the vehicle: battery level, brake released, handset mode, manual charger, emergency-stop button. Only the values given change.");
+
+        group.MapPost("/vehicles/{key}/drive", (FakeRiotWorld world, string key, DriveRequest request) =>
+                world.Drive(key, request.Station) is { } refusal ? Results.Conflict(refusal) : Results.NoContent())
+            .WithName("DriveFakeRiotVehicle")
+            .WithSummary("A person drives the vehicle to a station without an order (handset in MODE_MANUAL, or Matrix in MODE_AUTO).");
+
         group.MapPut("/order-list/churn", (FakeRiotWorld world, ChurnRequest request) =>
             {
                 if (request.OrdersPerRead < 0)
@@ -97,6 +112,10 @@ public static class FakeRiotControlEndpoints
     public sealed record ChargerRequest(bool Connected);
 
     public sealed record ReadDelayRequest(int Milliseconds);
+
+    public sealed record VehicleRequest(int? Battery, bool? BrakeReleased, string? Mode, bool? ManualCharger, bool? EmergencyButtonPressed);
+
+    public sealed record DriveRequest(int Station);
 
     public sealed record ChurnRequest(int OrdersPerRead);
 

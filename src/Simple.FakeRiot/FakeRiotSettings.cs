@@ -26,6 +26,9 @@ public sealed class FakeRiotSettings
 
     public FakeRiotTiming Timing { get; set; } = new();
 
+    /// <summary>At this battery level or below RIoT gives the vehicle no order: 10 % (the product owner, BC-VEH-007).</summary>
+    public int NoOrdersAtOrBelowBattery { get; set; } = 10;
+
     /// <summary>
     /// How long every read (a GET under /api) waits before it is answered,
     /// in real time; not compressed by <see cref="FakeRiotTiming.Speedup"/>.
