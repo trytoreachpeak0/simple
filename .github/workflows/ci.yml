@@ -53,37 +53,47 @@ jobs:
     runs-on: [self-hosted, simple]
     # Backstop only. When GitHub cancels a job for running past this limit it
     # sends the runner the same cancel message as a manual cancel, which is the
-    # path that has wedged runners. The long steps below therefore carry their
-    # own, shorter timeout-minutes: the runner enforces a step timeout itself,
-    # kills that step's processes and finishes the job normally.
-    timeout-minutes: 45
+    # path that has wedged runners. Every step therefore carries its own
+    # timeout-minutes, and this limit stays above their sum (74) plus margin, so
+    # a hang always hits a step timeout first: the runner enforces a step
+    # timeout itself, kills that step's processes and finishes the job normally.
+    timeout-minutes: 90
 
     steps:
       # Steps are judged by exit codes only: vm01 runs a Chinese-locale
       # Windows and dotnet prints localized text.
       - name: Record machine load
+        timeout-minutes: 2
         run: |
           # Our own job is one Runner.Worker; any other one is a job of another
-          # runner on this machine (the v2 line shares vm01's CPU and memory).
+          # runner on this machine (on vm01 the runners of the v2 line and of
+          # riot-sdk, which share its CPU and memory).
           $others = [Math]::Max(0, @(Get-Process -Name Runner.Worker -ErrorAction Ignore).Count - 1)
           "SIMPLE_CI_OTHER_JOBS_AT_START=$others" >> $env:GITHUB_ENV
-          # The NuGet cache stays on the machine between runs, apart from the
-          # v2 runners' cache (they run under the same service account).
+          # The NuGet caches stay on the machine between runs, apart from those
+          # of the other runners, which run under the same service account.
+          # This keeps SIMPLE's runs from writing into their caches by
+          # accident; it does not stop code running under that account on
+          # purpose.
           "NUGET_PACKAGES=$(Join-Path $env:RUNNER_WORKSPACE 'nuget-packages')" >> $env:GITHUB_ENV
+          "NUGET_HTTP_CACHE_PATH=$(Join-Path $env:RUNNER_WORKSPACE 'nuget-http-cache')" >> $env:GITHUB_ENV
           Write-Output "Other runner jobs on this machine: $others"
 
       # Actions are pinned by commit SHA: this runner sits in the plant network.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 10
         with:
           persist-credentials: false
 
       - name: SDK matches global.json
+        timeout-minutes: 2
         run: |
           $pinned = (Get-Content global.json -Raw | ConvertFrom-Json).sdk.version
           $resolved = dotnet --version
-          if ($LASTEXITCODE -ne 0 -or $resolved -ne $pinned) {
+          $code = $LASTEXITCODE
+          if ($code -ne 0 -or $resolved -ne $pinned) {
             dotnet --list-sdks
-            Write-Output "::error::global.json pins SDK $pinned; this machine resolves '$resolved' (exit code $LASTEXITCODE). Install SDK $pinned on the runner."
+            Write-Output "::error::global.json pins SDK $pinned; this machine resolves '$resolved' (exit code $code). Install SDK $pinned on the runner."
             exit 1
           }
           Write-Output "SDK $resolved"
@@ -122,8 +132,12 @@ jobs:
           SIMPLE_TEST_SQLSERVER: Server=.\SQLEXPRESS;Integrated Security=true;TrustServerCertificate=true
         run: dotnet test --solution simple.slnx -c Release --no-build --results-directory "$env:RUNNER_TEMP/test-results" --report-xunit-trx
 
+      # Diagnostics only: the Test step has already judged the run, so a
+      # network hiccup while uploading must not turn a green run red.
       - name: Upload test results
         if: always()
+        timeout-minutes: 5
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results
@@ -137,6 +151,7 @@ jobs:
       # failing to query fails the step.
       - name: No test databases left behind
         if: always()
+        timeout-minutes: 2
         run: |
           $ErrorActionPreference = 'Stop'
           $connection = [System.Data.SqlClient.SqlConnection]::new('Server=.\SQLEXPRESS;Integrated Security=true')
@@ -166,6 +181,7 @@ jobs:
       # Informational: a failure here never turns the run red.
       - name: Timing summary
         if: always()
+        timeout-minutes: 3
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}

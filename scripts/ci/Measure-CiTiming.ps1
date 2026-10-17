@@ -6,8 +6,10 @@
 .DESCRIPTION
     Default: reads the last N finished runs of .github/workflows/ci.yml with
     `gh api` and prints, per phase, the median and the 90th percentile: over
-    all runs, and split by whether another runner on the machine had a job
-    running when the run started (the v2 line shares vm01).
+    the runs that got through every phase, split by whether another runner on
+    the machine had a job running when the run started (vm01 also hosts the
+    runners of other repositories: the v2 line, riot-sdk and others). Runs that
+    stopped early are listed apart so that they do not pull the medians down.
 
     -Summary: used by the ci job itself. Writes this run's phase times to the
     job summary and records them, with the machine load the job saw, as a
@@ -59,7 +61,7 @@ $annotationTitle = 'ci-timing'
 function Invoke-GitHubApi([string] $Path) {
     if ($env:GITHUB_ACTIONS -eq 'true') {
         $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json' }
-        return Invoke-RestMethod -Uri "$env:GITHUB_API_URL/$Path" -Headers $headers
+        return Invoke-RestMethod -Uri "$env:GITHUB_API_URL/$Path" -Headers $headers -TimeoutSec 30
     }
     $json = gh api $Path
     if ($LASTEXITCODE -ne 0) { throw "gh api $Path failed with exit code $LASTEXITCODE." }
@@ -127,7 +129,7 @@ if ($Summary) {
         foreach ($key in $phases.Keys) { "| $($phases[$key].Label) | $(Format-Seconds $timing[$key]) |" }
         "| 入队到本步骤 | $(Format-Seconds $soFar) |"
         ''
-        "本机其他 runner 正在跑的作业：开始时 $atStart 个，结束时 $atEnd 个（vm01 上的其他 runner 都属于 v2 线）。"
+        "本机其他 runner 正在跑的作业：开始时 $atStart 个，结束时 $atEnd 个（vm01 上其他仓库的 runner：v2 线各仓库、riot-sdk 等）。"
         ''
         "NuGet 缓存：``$cache``，$($null -eq $cacheMB ? '不存在' : "$cacheMB MB")。"
     )
@@ -178,11 +180,17 @@ if ($Detail) {
     $rows | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
 }
 
+# A run that stopped before its last phase (a failed restore, stale lock files,
+# a broken build) is short for that reason alone; counting it would pull the
+# medians down, so only runs that got through every phase are counted.
+$complete = @($rows | Where-Object { $row = $_; -not @($phases.Keys | Where-Object { $null -eq $row.$_ }) })
+$early = @($rows | Where-Object { $_ -notin $complete })
+
 $groups = [ordered]@{
-    '全部'                 = $rows
-    '开始时 v2 有作业在跑' = @($rows | Where-Object otherBusy -EQ $true)
-    '开始时 v2 没有作业'   = @($rows | Where-Object otherBusy -EQ $false)
-    '未记录机器负载'       = @($rows | Where-Object { $null -eq $_.otherBusy })
+    '跑完全部各段的运行'           = $complete
+    '其中开始时其他 runner 有作业' = @($complete | Where-Object otherBusy -EQ $true)
+    '其中开始时其他 runner 没作业' = @($complete | Where-Object otherBusy -EQ $false)
+    '其中未记录机器负载'           = @($complete | Where-Object { $null -eq $_.otherBusy })
 }
 $columns = @(@{ Key = 'queue'; Label = '排队' }) +
     @($phases.Keys | ForEach-Object { @{ Key = $_; Label = $phases[$_].Label } }) +
@@ -204,4 +212,9 @@ foreach ($name in $groups.Keys) {
         }
     }
     $stats | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+}
+
+if ($early.Count) {
+    Write-Output ''
+    Write-Output "没跑完各段就停下的 $($early.Count) 轮（不计入上面的统计）：$(($early | ForEach-Object run) -join ', ')"
 }
