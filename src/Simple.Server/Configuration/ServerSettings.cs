@@ -17,6 +17,11 @@ public sealed class ServerSettings
     public const string OnboardTerminalsUrlKey = "Simple:OnboardTerminals:Url";
     public const string ServerKeyNameKey = "Simple:OnboardTerminals:ServerKeyName";
     public const string ServerKeyStoreKey = "Simple:OnboardTerminals:ServerKeyStore";
+    public const string ConsoleUrlKey = "Simple:Console:Url";
+    public const string ConsoleKeyNameKey = "Simple:Console:KeyName";
+    public const string OverviewUrlKey = "Simple:Overview:Url";
+
+    private string? consoleKeyName;
 
     /// <summary>
     /// Names this server instance. Two instances on one machine (for example
@@ -50,7 +55,31 @@ public sealed class ServerSettings
         set => serverKeyName = value;
     }
 
-    /// <summary><c>User</c> (default): the key store of the account the server runs as; <c>Machine</c>: the machine's.</summary>
+    /// <summary>
+    /// The console's HTTPS address (ADR 0046), for example
+    /// <c>https://172.19.205.222:5443</c>; null for none. The address of one
+    /// network interface, which goes into the certificate the server makes.
+    /// </summary>
+    public string? ConsoleUrl { get; set; }
+
+    /// <summary>The name of the persisted key behind the console's certificate (see Listeners.ConsoleCertificate).</summary>
+    public string ConsoleKeyName
+    {
+        get => consoleKeyName ?? $"Simple-Console-{Instance}";
+        set => consoleKeyName = value;
+    }
+
+    /// <summary>
+    /// The vehicle overview's plain HTTP address (ADR 0046), for example
+    /// <c>http://172.19.205.222:5080</c>; null for none. It serves the
+    /// overview and nothing else, and takes no login.
+    /// </summary>
+    public string? OverviewUrl { get; set; }
+
+    /// <summary>
+    /// <c>User</c> (default): the key store of the account the server runs as; <c>Machine</c>: the machine's.
+    /// It holds the terminal certificate's key and the console certificate's key alike.
+    /// </summary>
     public string? ServerKeyStore { get; set; }
 
     public bool ServerKeyIsMachineKey => string.Equals(ServerKeyStore, "Machine", StringComparison.OrdinalIgnoreCase);
@@ -67,6 +96,9 @@ public sealed class ServerSettings
         OnboardTerminalsUrl = configuration[OnboardTerminalsUrlKey] is { Length: > 0 } url ? url : null;
         serverKeyName = configuration[ServerKeyNameKey] is { Length: > 0 } keyName ? keyName : null;
         ServerKeyStore = configuration[ServerKeyStoreKey];
+        ConsoleUrl = configuration[ConsoleUrlKey] is { Length: > 0 } console ? console : null;
+        consoleKeyName = configuration[ConsoleKeyNameKey] is { Length: > 0 } consoleKey ? consoleKey : null;
+        OverviewUrl = configuration[OverviewUrlKey] is { Length: > 0 } overview ? overview : null;
 
         ListenAddresses.Clear();
         AddList("urls", configuration["urls"]);

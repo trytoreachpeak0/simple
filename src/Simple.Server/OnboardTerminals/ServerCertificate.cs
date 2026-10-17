@@ -67,7 +67,8 @@ public static class ServerCertificate
         return true;
     }
 
-    private static CngKey OpenOrCreateKey(string keyName, bool machineKey)
+    /// <summary>Opens the named persisted key (ECDSA P-256), creating it first if it does not exist. The console certificate's key is made the same way.</summary>
+    public static CngKey OpenOrCreateKey(string keyName, bool machineKey)
     {
         if (Exists(keyName, machineKey))
         {

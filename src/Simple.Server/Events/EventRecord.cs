@@ -88,6 +88,15 @@ public static class EventTypes
 
     /// <summary>The administrator switched the on-duty pause (ADR 0033): data.name, data.paused.</summary>
     public const string AccountPauseSet = "account.pause-set";
+
+    /// <summary>
+    /// The server made the console's certificate (ADR 0046): data.sha256,
+    /// data.names, data.notAfter. Every console PC has to install it.
+    /// </summary>
+    public const string ConsoleCertificateCreated = "console.certificate-created";
+
+    /// <summary>A person discarded the console's certificate with the server command; the next start makes a new one.</summary>
+    public const string ConsoleCertificateDiscarded = "console.certificate-discarded";
 }
 
 /// <summary>The entries an event can come through (ADR 0019).</summary>
