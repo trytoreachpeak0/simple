@@ -50,13 +50,55 @@ public sealed class LogsTests : IDisposable
     }
 
     [Fact]
-    public void ANameWithoutAProgramLogIsNotRunningAndTheKnownOnesAreListed()
+    public void AProcessThatHasNoProgramLogYetPointsToItsConsoleOutput()
+    {
+        // For example a terminal that refused to start before its log came up.
+        File.WriteAllLines(store.LogPath(Instance, "terminal-1"), ["The onboard terminal refuses to start"]);
+
+        var outcome = System.Logs(Instance, "terminal-1", tail: null, output: false);
+
+        Assert.Equal(ExitCodes.NotRunning, outcome.ExitCode);
+        Assert.Equal(
+            "terminal-1 of instance logs-test has no program log yet: it may have stopped before its log started. "
+            + "What it printed to its console: simple logs terminal-1 --output",
+            outcome.Error);
+        Assert.Empty(outcome.Lines);
+    }
+
+    [Fact]
+    public void AnEmptyProgramLogPointsToTheConsoleOutputToo()
+    {
+        var directory = store.ProgramLogDirectory(Instance, "mes-gateway");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "MesGateway.log"), "");
+        File.WriteAllLines(store.LogPath(Instance, "mes-gateway"), ["Unhandled exception."]);
+
+        var outcome = System.Logs(Instance, "mes-gateway", tail: null, output: false);
+
+        Assert.Equal(ExitCodes.NotRunning, outcome.ExitCode);
+        Assert.StartsWith("mes-gateway of instance logs-test has no program log yet", outcome.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheBuildHasOnlyConsoleOutput()
     {
         var outcome = System.Logs(Instance, "build", tail: null, output: false);
 
         Assert.Equal(ExitCodes.NotRunning, outcome.ExitCode);
+        Assert.EndsWith("What it printed to its console: simple logs build --output", outcome.Error, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnUnknownNameIsNotRunningAndTheKnownOnesAreListed(bool output)
+    {
+        var outcome = System.Logs(Instance, "terminal-9", tail: null, output);
+
+        Assert.Equal(ExitCodes.NotRunning, outcome.ExitCode);
         Assert.Equal(
-            "Instance logs-test has no program log 'build'. Program logs: server. Console output (--output): build, server.",
+            $"Instance logs-test has no {(output ? "console output" : "program log")} 'terminal-9'. "
+            + "Program logs: server. Console output (--output): build, server.",
             outcome.Error);
     }
 

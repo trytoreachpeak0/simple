@@ -389,13 +389,24 @@ public sealed partial class LocalSystem(
     /// <summary>
     /// A process's program log (ADR 0034), its files oldest first; with
     /// <paramref name="output"/>, what it wrote to its console instead (or,
-    /// for <c>build</c>, the last build's output).
+    /// for <c>build</c>, the last build's output). A process with console
+    /// output but no program log, or an empty one, is pointed to
+    /// <c>--output</c>: it may have stopped before its log started.
     /// </summary>
     public Outcome Logs(string instance, string name, int? tail, bool output)
     {
         IReadOnlyList<string> files = !LogName().IsMatch(name) ? []
             : output ? (File.Exists(store.LogPath(instance, name)) ? [store.LogPath(instance, name)] : [])
             : ProgramLog.Files(store.ProgramLogDirectory(instance, name));
+        var lines = files.SelectMany(ReadLines).ToList();
+        if (!output && lines.Count == 0 && LogName().IsMatch(name) && File.Exists(store.LogPath(instance, name)))
+        {
+            return Outcome.Fail(
+                ExitCodes.NotRunning,
+                $"{name} of instance {instance} has no program log yet: it may have stopped before its log started. "
+                + $"What it printed to its console: simple logs {name} --output");
+        }
+
         if (files.Count == 0)
         {
             var logs = store.LogDirectory(instance);
@@ -413,7 +424,6 @@ public sealed partial class LocalSystem(
                     : "It has never been started here."));
         }
 
-        var lines = files.SelectMany(ReadLines).ToList();
         if (tail is { } count)
         {
             lines = lines.TakeLast(count).ToList();

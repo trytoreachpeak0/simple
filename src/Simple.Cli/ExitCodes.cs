@@ -32,7 +32,7 @@ public static class ExitCodes
           2  invalid arguments or settings
           3  the build failed (up)
           4  a component did not become ready (up); what this instance started is stopped again
-          5  the instance is not running (status, events, logs: no such log)
+          5  the instance is not running (status, events, logs: no such log, or no program log yet)
           6  the instance is unhealthy: a component is gone or not ready (status), or the
              instance is partly running (up) or was started from another clone (up, down)
           7  another simple command is still working on this instance or building in this clone

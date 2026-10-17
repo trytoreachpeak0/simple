@@ -59,7 +59,7 @@ jobs:
     # Backstop only. When GitHub cancels a job for running past this limit it
     # sends the runner the same cancel message as a manual cancel, which is the
     # path that has wedged runners. Every step therefore carries its own
-    # timeout-minutes, and this limit stays above their sum (74) plus margin, so
+    # timeout-minutes, and this limit stays above their sum (76) plus margin, so
     # a hang always hits a step timeout first: the runner enforces a step
     # timeout itself, kills that step's processes and finishes the job normally.
     timeout-minutes: 90
@@ -182,6 +182,29 @@ jobs:
             exit 1
           }
           Write-Output 'No Simple_test_* databases left behind.'
+
+      # Tests and the local system give every program a log directory of its
+      # own (a temp folder, or %LOCALAPPDATA%\simple through simple up), so a
+      # program log in the default place, %ProgramData%\Simple\<program>\logs,
+      # means something started a program without one (#54). Like the database
+      # check, the step removes what it finds and still fails.
+      - name: No program logs under ProgramData
+        if: always()
+        timeout-minutes: 2
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $left = @(foreach ($program in 'Server', 'MesGateway', 'OnboardTerminal', 'IoSimulator') {
+            $logs = Join-Path $env:ProgramData "Simple\$program\logs"
+            if (Test-Path -LiteralPath $logs) {
+              Get-ChildItem -LiteralPath $logs -File -Recurse | ForEach-Object FullName
+              Remove-Item -LiteralPath $logs -Recurse -Force
+            }
+          })
+          if ($left) {
+            Write-Output "::error::Program logs written under $env:ProgramData\Simple (now removed): $($left -join ', ')"
+            exit 1
+          }
+          Write-Output "No program logs under $env:ProgramData\Simple."
 
       # Informational: a failure here never turns the run red.
       - name: Timing summary
