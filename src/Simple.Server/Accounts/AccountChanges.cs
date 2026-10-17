@@ -135,10 +135,7 @@ public sealed class AccountChanges(SimpleDbContext db, EventStore events, IPassw
         }
         else
         {
-            admin.PasswordHash = hasher.HashPassword(admin, password);
-            admin.CredentialVersion++;
-            await db.SaveChangesAsync(cancellationToken);
-            await db.Logins.Where(l => l.AccountId == admin.Id).ExecuteDeleteAsync(cancellationToken);
+            await WritePasswordAsync(admin.Id, hasher.HashPassword(admin, password), cancellationToken);
             await events.AppendAsync(EventTypes.AccountPasswordSet, actor, new { name = admin.Name, by = "server command" }, cancellationToken);
         }
 
@@ -147,14 +144,29 @@ public sealed class AccountChanges(SimpleDbContext db, EventStore events, IPassw
 
     private async Task SetPasswordAsync(Account account, string password, Actor actor, string by, CancellationToken cancellationToken)
     {
+        var hash = hasher.HashPassword(account, password);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        account.PasswordHash = hasher.HashPassword(account, password);
-        account.CredentialVersion++;
-        await db.SaveChangesAsync(cancellationToken);
-        await db.Logins.Where(l => l.AccountId == account.Id).ExecuteDeleteAsync(cancellationToken);
+        var changed = await WritePasswordAsync(account.Id, hash, cancellationToken);
         await events.AppendAsync(EventTypes.AccountPasswordSet, actor, new { name = account.Name, by }, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        registry.Put(account, endLogins: true);
+        registry.Put(changed, endLogins: true);
+    }
+
+    /// <summary>
+    /// Writes a new password's hash and raises the credential version in one
+    /// statement, from what the database holds, not from what was read before:
+    /// two new passwords set at once each raise it, so a login checked against
+    /// either of them does not outlive the other. Ends the account's logins
+    /// in the database; returns the account as written.
+    /// </summary>
+    private async Task<Account> WritePasswordAsync(int accountId, string hash, CancellationToken cancellationToken)
+    {
+        await db.Accounts.Where(a => a.Id == accountId)
+            .ExecuteUpdateAsync(
+                set => set.SetProperty(a => a.PasswordHash, hash).SetProperty(a => a.CredentialVersion, a => a.CredentialVersion + 1),
+                cancellationToken);
+        await db.Logins.Where(l => l.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
+        return await db.Accounts.AsNoTracking().SingleAsync(a => a.Id == accountId, cancellationToken);
     }
 }
 
