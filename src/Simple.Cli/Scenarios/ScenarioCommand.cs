@@ -55,7 +55,9 @@ public static class ScenarioCommand
             "run",
             "Run one scenario as its own local system: reset the instance (<instance>-scenario unless --instance is given), bring it up in the scenario's initial state, "
             + "drive its events through the fakes, judge its expectations on the server's API and event record, write the evidence and stop the system. "
-            + "Ends with the verdict: 0 holds, 10 does not hold, 11 cannot tell, 12 not applicable; 2 when the file is not valid.")
+            + "On Ctrl+C or any failure it still stops the system and writes the result (cannot tell). "
+            + "Ends with the verdict: 0 holds, 10 does not hold, 11 cannot tell, 12 not applicable; 1 when the system could not be stopped; "
+            + "2 when the file is not valid; 7 when another run holds the instance.")
         {
             name,
             evidence,
@@ -116,6 +118,13 @@ public static class ScenarioCommand
             validate,
             run,
         };
+    }
+
+    /// <summary>Whether the parsed command is simple scenario run.</summary>
+    public static bool IsRun(ParseResult parse)
+    {
+        ArgumentNullException.ThrowIfNull(parse);
+        return parse.CommandResult is { Command.Name: "run", Parent: System.CommandLine.Parsing.CommandResult { Command.Name: "scenario" } };
     }
 
     private static int Write(ParseResult parse, CliEnvironment environment, Outcome outcome) =>

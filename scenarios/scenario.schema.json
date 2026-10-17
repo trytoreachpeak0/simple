@@ -17,7 +17,7 @@
     "expected-verdict": {
       "type": "string",
       "enum": ["holds", "does-not-hold", "cannot-tell", "not-applicable"],
-      "description": "The verdict CI expects. holds unless the scenario proves that the runner reports another verdict."
+      "description": "The verdict CI expects. holds unless the scenario proves that the runner reports another verdict; such a scenario has exactly one expectation."
     },
     "initial": { "$ref": "#/definitions/initial" },
     "events": {
@@ -233,12 +233,12 @@
         "id": { "$ref": "#/definitions/id" },
         "title": { "type": "string" },
         "eventually": { "$ref": "#/definitions/condition", "description": "Holds once the condition holds within the window." },
-        "always": { "$ref": "#/definitions/condition", "description": "Holds if the condition holds at every look throughout the window." },
+        "always": { "$ref": "#/definitions/condition", "description": "Holds if the condition holds at every look throughout the window. A status condition only: an entry of the event record, once there, stays." },
         "never": { "$ref": "#/definitions/condition", "description": "Holds if the condition holds at no look throughout the window." },
         "within": { "$ref": "#/definitions/duration" },
         "for": { "$ref": "#/definitions/duration" },
         "after": { "$ref": "#/definitions/id", "description": "The window opens when the event with this id starts its action, instead of when the scenario starts." },
-        "only-if": { "$ref": "#/definitions/condition", "description": "Judged when the window opens: if it does not hold, the expectation is not applicable." }
+        "only-if": { "$ref": "#/definitions/condition", "description": "A status condition, judged when the window opens: if it does not hold, the expectation is not applicable." }
       }
     }
   }

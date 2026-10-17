@@ -40,7 +40,7 @@ public sealed class ScenarioFileTests : IDisposable
         var scenario = Valid("""
             title: t
             site: sample
-            expected-verdict: does-not-hold
+            expected-verdict: holds
             initial:
               terminals: 2
               fake-riot:
@@ -69,7 +69,7 @@ public sealed class ScenarioFileTests : IDisposable
                 after: first
             """);
 
-        Assert.Equal(Verdict.DoesNotHold, scenario.ExpectedVerdict);
+        Assert.Equal(Verdict.Holds, scenario.ExpectedVerdict);
         Assert.Equal(2, scenario.Initial.Terminals);
         Assert.Equal(2.5, scenario.Initial.FakeRiotSpeedup);
         Assert.Equal(40, scenario.Initial.FakeRiotVehicles.Single().Battery);
@@ -108,11 +108,15 @@ public sealed class ScenarioFileTests : IDisposable
     [InlineData("title: t\nsite: sample\nexpectations:\n  - never: { event: x }\n    for: 1s\n    after: nothing\n", 6, "no event is called 'nothing'")]
     [InlineData("title: t\nsite: sample\nevents:\n  - at: 1s\n    scan: { terminal: 2, text: x }\nexpectations: [{ never: { event: x }, for: 1s }]\n", 5, "there is no terminal 2")]
     [InlineData("title: t\nsite: sample\ninitial: { terminals: 1 }\nevents:\n  - at: 1s\n    stop-process: { process: terminal-1 }\nexpectations: [{ never: { event: x }, for: 1s }]\n", 6, "the system has no process 'terminal-1'")]
+    [InlineData("title: t\nsite: sample\nexpectations:\n  - always: { event: x }\n    for: 1s\n", 4, "always does not take an event condition")]
+    [InlineData("title: t\nsite: sample\nexpectations:\n  - never: { event: x }\n    for: 1s\n    only-if: { event: y }\n", 6, "only-if takes a status condition")]
+    [InlineData("title: t\nsite: sample\nexpected-verdict: cannot-tell\nexpectations:\n  - never: { event: x }\n    for: 1s\n  - never: { event: y }\n    for: 1s\n", 3, "exactly one expectation, not 2")]
     // The site.
     [InlineData("title: t\nsite: nowhere\nexpectations: [{ never: { event: x }, for: 1s }]\n", 2, "site 'nowhere' has no")]
     [InlineData("title: t\nsite: sample\ninitial: { terminals: 4 }\nexpectations: [{ never: { event: x }, for: 1s }]\n", 3, "site 'sample' has 3 vehicles, not 4")]
     [InlineData("title: t\nsite: sample\nevents:\n  - at: 1s\n    add-mes-row: { task-type: SAMPLE_TO_OVEN, sublot: s, area: D8-9 }\nexpectations: [{ never: { event: x }, for: 1s }]\n", 5, "site 'sample' has no area 'D8-9'")]
     [InlineData("title: t\nsite: sample\nevents:\n  - at: 1s\n    set-riot-vehicle: { device-key: BROKERX-x, battery: 5 }\nexpectations: [{ never: { event: x }, for: 1s }]\n", 5, "site 'sample' has no vehicle with RIoT device key 'BROKERX-x'")]
+    [InlineData("title: t\nsite: sample\nevents:\n  - at: 1s\n    remove-mes-row: { task-type: D8_TASK, sublot: s }\nexpectations: [{ never: { event: x }, for: 1s }]\n", 5, "site 'sample' has no task type 'D8_TASK'")]
     public void AFileThatIsNotValidSaysWhatAndOnWhichLine(string yaml, int line, string message)
     {
         var path = Write(yaml);

@@ -124,6 +124,85 @@ public sealed class ExpectationTrackerTests
     }
 
     [Fact]
+    public void AnEventAfterTheWindowDoesNotCount()
+    {
+        var tracker = Open(ExpectationKind.Eventually, new EventCondition("mes.recovered", null, null), TimeSpan.FromSeconds(2));
+
+        tracker.Look(Look(1, "{}"));
+        tracker.Look(Look(4, "{}", Event(7, 2.5, "mes.recovered")));
+
+        Assert.Equal(Verdict.DoesNotHold, tracker.Verdict);
+    }
+
+    [Fact]
+    public void ALookBeforeTheWindowOpensIsNotJudged()
+    {
+        var tracker = Open(ExpectationKind.Eventually, RiotConnected, TimeSpan.FromSeconds(5));
+
+        Assert.False(tracker.Look(Look(-1, """{"riot":{"state":"connected"}}""")));
+
+        Assert.Null(tracker.Verdict);
+    }
+
+    [Theory]
+    [InlineData(ExpectationKind.Always, "connected")]
+    [InlineData(ExpectationKind.Never, "unreachable")]
+    public void AStatusWindowWithAStretchNoLookSawCannotBeTold(ExpectationKind kind, string state)
+    {
+        // One look early on, the next long after the window: an event that
+        // held the loop back. What the status showed in between was not seen.
+        var tracker = Open(kind, Status("riot.state", Comparison.EqualTo, state == "connected" ? "connected" : "disconnected"), TimeSpan.FromSeconds(5));
+
+        var status = "{\"riot\":{\"state\":\"" + state + "\"}}";
+        tracker.Look(Look(0.1, status));
+        tracker.Look(Look(10, status));
+
+        Assert.Equal(Verdict.CannotTell, tracker.Verdict);
+        Assert.Contains("not looked at for 4.9 s", tracker.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EventuallyNotSeenWithAStretchNoLookSawCannotBeTold()
+    {
+        var tracker = Open(ExpectationKind.Eventually, RiotConnected, TimeSpan.FromSeconds(5));
+
+        tracker.Look(Look(0.1, """{"riot":{"state":"unreachable"}}"""));
+        tracker.Look(Look(0.3, """{"riot":{"state":"unreachable"}}"""));
+        tracker.Look(Look(4.5, """{"riot":{"state":"unreachable"}}"""));
+        tracker.Look(Look(6, """{"riot":{"state":"unreachable"}}"""));
+
+        Assert.Equal(Verdict.CannotTell, tracker.Verdict);
+        Assert.Contains("not looked at for 4.2 s", tracker.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEventDecisionTheFinalRecordContradictsCannotBeTold()
+    {
+        var tracker = Open(ExpectationKind.Never, new EventCondition("onboard.refused", null, null), TimeSpan.FromSeconds(1));
+        tracker.Look(Look(0.5, "{}"));
+        tracker.Look(Look(3, "{}"));
+        Assert.Equal(Verdict.Holds, tracker.Verdict);
+
+        // Stamped inside the window, it reached the record only after the deciding look.
+        Assert.True(tracker.Recheck(Look(5, "{}", Event(9, 0.9, "onboard.refused"))));
+
+        Assert.Equal(Verdict.CannotTell, tracker.Verdict);
+        Assert.Contains("disagrees", tracker.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEventDecisionTheFinalRecordAgreesWithStands()
+    {
+        var tracker = Open(ExpectationKind.Eventually, new EventCondition("mes.recovered", null, null), TimeSpan.FromSeconds(2));
+        tracker.Look(Look(1, "{}", Event(3, 0.5, "mes.recovered")));
+
+        Assert.False(tracker.Recheck(Look(5, "{}", Event(3, 0.5, "mes.recovered"))));
+        Assert.False(tracker.Recheck(Unreadable(6)));
+
+        Assert.Equal(Verdict.Holds, tracker.Verdict);
+    }
+
+    [Fact]
     public void AnEventRecordedLateButOccurringInTheWindowIsFoundAfterTheWindow()
     {
         var tracker = Open(ExpectationKind.Eventually, new EventCondition("mes.recovered", null, null), TimeSpan.FromSeconds(2));

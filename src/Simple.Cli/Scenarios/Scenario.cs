@@ -63,7 +63,7 @@ public enum ExpectationKind
 
 /// <param name="Label">How the timeline and the result name it: its id, or "expectation N".</param>
 /// <param name="Window">How long the window stays open: within for eventually, for for always and never.</param>
-/// <param name="After">The event whose completion opens the window; null: the start of the scenario.</param>
+/// <param name="After">The event whose action, as it starts, opens the window; null: the start of the scenario.</param>
 /// <param name="OnlyIf">Judged when the window opens; when it does not hold, the expectation is not applicable.</param>
 public sealed record Expectation(
     string? Id,

@@ -16,9 +16,20 @@ public sealed class ExpectationTracker(Expectation expectation)
     /// </summary>
     public static readonly TimeSpan Settle = TimeSpan.FromSeconds(1.5);
 
+    /// <summary>
+    /// The longest a status condition may go unlooked-at within its window
+    /// for the window's end to decide: looks come every 250 ms, but an event
+    /// that takes long (stopping a process) holds the next look back, and
+    /// what happened in between was not seen.
+    /// </summary>
+    public static readonly TimeSpan MaxGap = TimeSpan.FromSeconds(1);
+
     private int looks;
     private int unseen;
     private bool applies;
+    private DateTimeOffset? lastLook;
+    private TimeSpan widestGap;
+    private DateTimeOffset widestGapFrom;
 
     public Expectation Expectation { get; } = expectation;
 
@@ -77,6 +88,7 @@ public sealed class ExpectationTracker(Expectation expectation)
             var seen = condition.Observe(snapshot, from, snapshot.At);
             Last = seen;
             looks++;
+            Covered(snapshot.At);
             switch (seen.Truth, Expectation.Kind)
             {
                 case (Truth.True, ExpectationKind.Eventually):
@@ -120,6 +132,15 @@ public sealed class ExpectationTracker(Expectation expectation)
         }
 
         var last = Last?.Detail ?? "nothing";
+        Covered(until);
+        if (widestGap > MaxGap)
+        {
+            return Decide(
+                Scenarios.Verdict.CannotTell,
+                $"not looked at for {Seconds(widestGap)} of the window, from {widestGapFrom.ToLocalTime():HH:mm:ss.fff}: what the status showed then was not seen; last look: {last}",
+                snapshot.At);
+        }
+
         if (looks == 0 || unseen > 0)
         {
             return Decide(
@@ -131,6 +152,55 @@ public sealed class ExpectationTracker(Expectation expectation)
         return Expectation.Kind == ExpectationKind.Eventually
             ? Decide(Scenarios.Verdict.DoesNotHold, $"not seen in {looks.ToString(CultureInfo.InvariantCulture)} looks within {Seconds(Expectation.Window)}; last look: {last}", snapshot.At)
             : Decide(Scenarios.Verdict.Holds, $"{looks.ToString(CultureInfo.InvariantCulture)} looks in {Seconds(Expectation.Window)}; last look: {last}", snapshot.At);
+    }
+
+    /// <summary>
+    /// Judges an expectation on the event record once more, as the run's last
+    /// look has it: an entry is stamped when it occurs but may reach the
+    /// record later than the look that decided. True when the two disagree:
+    /// the expectation then cannot be told.
+    /// </summary>
+    public bool Recheck(Snapshot final)
+    {
+        ArgumentNullException.ThrowIfNull(final);
+        if (Verdict is not ({ } decided and (Scenarios.Verdict.Holds or Scenarios.Verdict.DoesNotHold))
+            || OpenedAt is not { } from
+            || !Expectation.Condition.IsEvent
+            || Expectation.Kind == ExpectationKind.Always)
+        {
+            return false;
+        }
+
+        var seen = Expectation.Condition.Observe(final, from, from + Expectation.Window);
+        if (seen.Truth == Truth.Unknown)
+        {
+            return false;
+        }
+
+        // Eventually holds and never does not hold when an entry is there.
+        var wanted = (Expectation.Kind == ExpectationKind.Eventually) == (decided == Scenarios.Verdict.Holds) ? Truth.True : Truth.False;
+        if (seen.Truth == wanted)
+        {
+            return false;
+        }
+
+        Verdict = Scenarios.Verdict.CannotTell;
+        Reason = $"the event record at the end of the run disagrees with the look that judged it {decided.Name()} ({Reason}): {seen.Detail}";
+        DecidedAt = final.At;
+        return true;
+    }
+
+    /// <summary>Notes the stretch since the previous look (or since the window opened) that no look saw.</summary>
+    private void Covered(DateTimeOffset at)
+    {
+        var since = lastLook ?? OpenedAt!.Value;
+        if (at - since > widestGap)
+        {
+            widestGap = at - since;
+            widestGapFrom = since;
+        }
+
+        lastLook = at;
     }
 
     private bool Decide(Verdict verdict, string reason, DateTimeOffset at)

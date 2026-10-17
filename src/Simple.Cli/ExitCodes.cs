@@ -52,7 +52,9 @@ public static class ExitCodes
               be driven as written (the system did not come up, an event failed or its
               condition never came). Never a pass.
           12  not applicable: no expectation applied (their only-if did not hold)
-        A scenario file that is not valid ends simple scenario run and validate with 2.
+        A scenario file that is not valid ends simple scenario run and validate with 2; a run
+        whose system could not be stopped afterwards ends with 1, whatever its verdict; a run
+        that waited too long for another run on the same instance ends with 7.
 
         simple remote ends with the exit code of the command it ran on the remote machine
         (a test run's own codes included), or with one of its own:

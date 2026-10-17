@@ -313,13 +313,20 @@ public static partial class ScenarioFile
             var initial = Initial(root["initial"] as JsonObject);
             var events = Events(root["events"] as JsonArray, initial.Terminals);
             var expectations = Expectations((JsonArray)root["expectations"]!, events);
+            var expectedVerdict = root["expected-verdict"] is { } expected ? Verdicts.Parse((string)expected!) : Verdict.Holds;
+            if (expectedVerdict != Verdict.Holds && expectations.Count != 1)
+            {
+                // With more, the other expectations could hide which one gave the verdict.
+                Problem("expected-verdict", $"a scenario that expects {expectedVerdict.Name()} proves one thing: it has exactly one expectation, not {expectations.Count}");
+            }
+
             return new Scenario(
                 name,
                 path,
                 (string)root["title"]!,
                 (string?)root["description"],
                 siteName,
-                root["expected-verdict"] is { } expected ? Verdicts.Parse((string)expected!) : Verdict.Holds,
+                expectedVerdict,
                 initial,
                 events,
                 expectations);
@@ -431,6 +438,7 @@ public static partial class ScenarioFile
                     MesRow(arguments, at);
                     break;
                 case "remove-mes-row":
+                    MesRow(arguments, at);
                     break;
                 case "set-riot-vehicle":
                     Vehicle(arguments, at);
@@ -482,6 +490,16 @@ public static partial class ScenarioFile
                 if (window is null)
                 {
                     Problem(at, $"{kinds[0]} needs {windowKey}: how long the window stays open");
+                }
+
+                if (kind == ExpectationKind.Always && e[kinds[0]]?["event"] is not null)
+                {
+                    Problem($"{at}.always", "always does not take an event condition: an entry, once recorded, stays recorded; write eventually (it is recorded) or never (it is not)");
+                }
+
+                if (e["only-if"]?["event"] is not null)
+                {
+                    Problem($"{at}.only-if", "only-if takes a status condition: it is judged once, as the window opens, when no entry of the window can be there yet");
                 }
 
                 var after = (string?)e["after"];
