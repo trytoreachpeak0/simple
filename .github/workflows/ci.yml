@@ -189,10 +189,13 @@ jobs:
       # account is shared with the other runners on this machine (see Record
       # machine load), so only keys in the tests' own naming are deleted, the
       # formats of RemoteSweep.TestKeys in src/Simple.Cli/Remote/RemoteSweep.cs:
-      # Simple-Server-test_ and 12 hex digits, Simple-Test- and 32. Any other
-      # Simple-* key is reported and left for a person to look at. The machine
-      # store is not looked at: tests use it only under simple remote. .NET
-      # opens a key by name but cannot list keys, so the names come from
+      # Simple-Server-test_ and 12 hex digits, Simple-Test- and 32 ($tests
+      # below; RemoteLeftoversTests checks the two are the same). Any other
+      # Simple-* key is no test's leftover and may be another runner's: it is
+      # left alone and only warned about, with how to delete it, since a
+      # failure here would stay red until a person on vm01 deleted it. The
+      # machine store is not looked at: tests use it only under simple remote.
+      # .NET opens a key by name but cannot list keys, so the names come from
       # NCryptEnumKeys; failing to list fails the step.
       - name: No test keys left behind
         if: always()
@@ -260,12 +263,15 @@ jobs:
             Write-Output "::error::Test keys left behind (now deleted): $($left -join ', ')"
           }
           if ($other) {
-            Write-Output "::error::Simple-* keys not named like a test's (not deleted; look at them and delete by hand): $($other -join ', ')"
+            Write-Output "::warning::Simple-* keys not named like a test's, left alone: $($other -join ', '). They are in the user key store of the runner account, $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name), so only a process running as that account can delete one, for example a one-off scheduled task on this machine running pwsh as that account with the lines below in this step's log. Ask the product owner (through the coordinator) before touching vm01."
+            foreach ($name in $other) {
+              Write-Output "  [System.Security.Cryptography.CngKey]::Open('$name', [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider).Delete()"
+            }
           }
-          if ($left -or $other) {
+          if ($left) {
             exit 1
           }
-          Write-Output 'No Simple-* keys left behind.'
+          Write-Output ($other ? 'No test keys left behind.' : 'No Simple-* keys left behind.')
 
       # Tests and the local system give every program a log directory of its
       # own (a temp folder, or %LOCALAPPDATA%\simple through simple up), so a
