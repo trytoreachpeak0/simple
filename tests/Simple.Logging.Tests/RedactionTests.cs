@@ -67,6 +67,18 @@ public sealed partial class RedactionTests
     [InlineData("pushed with ghp_0123456789abcdefghijABCDEFGHIJ0123456789", "ghp_0123456789", "pushed with ***")]
     [InlineData("vehicle-2 shows pairing code 482913", "482913", "vehicle-2 shows pairing code ***")]
     [InlineData("vehicle-2 配对码：482913", "482913", "vehicle-2 配对码：***")]
+    [InlineData("Authorization: Token Token-secret", "Token-secret", "Authorization: Token ***")]
+    [InlineData("Authorization: ApiKey ApiKey-secret", "ApiKey-secret", "Authorization: ApiKey ***")]
+    [InlineData("Cookie: .AspNetCore.Session=Cookie-secret; theme=dark", "Cookie-secret", "Cookie: ***")]
+    [InlineData("Set-Cookie: session=SetCookie-secret; Path=/", "SetCookie-secret", "Set-Cookie: ***")]
+    [InlineData("--Simple:Riot:Key=RiotKey-secret --urls=http://127.0.0.1:5000", "RiotKey-secret", "--Simple:Riot:Key=*** --urls=http://127.0.0.1:5000")]
+    [InlineData("SigningKey=Signing-secret", "Signing-secret", "SigningKey=***")]
+    [InlineData("--Simple:Mes:Password Spaced-secret --urls=http://127.0.0.1:5000", "Spaced-secret", "--Simple:Mes:Password *** --urls=http://127.0.0.1:5000")]
+    [InlineData("Server=db01;Password=\"ab\"\"Quoted-secret\";Encrypt=true", "Quoted-secret", "Server=db01;Password=***;Encrypt=true")]
+    [InlineData("Driver={ODBC};PWD={ab;Braced-secret};UID=simple", "Braced-secret", "Driver={ODBC};PWD=***;UID=simple")]
+    [InlineData("Server=db01;Password=with space-secret", "space-secret", "Server=db01;Password=***")]
+    [InlineData("GET https://simple:p@ss-At-secret@mes.example/api", "At-secret", "GET https://simple:***@mes.example/api")]
+    [InlineData("key -----BEGIN PRIVATE KEY-----\nMIIBCut-secret", "Cut-secret", "key ***")]
     public void ACredentialInFreeTextIsNotWritten(string message, string secret, string kept)
     {
         using var log = new TestLog();
@@ -90,6 +102,10 @@ public sealed partial class RedactionTests
     [InlineData("SAMPLE_TO_OVEN SMP0001.01 S1-1 SMP-DA-01 SMP-CURE 2026-01-05T08:00:00 SMP-PKG-A")]
     [InlineData("""{"taskType":"SAMPLE_TO_GATE","sublot":"482913.01","eqp":"100234","area":"S2-1"}""")]
     [InlineData("Scan 482913 received from vehicle-2; code 123456 is not a known lot")]
+    // Words that only look like credential markers stay.
+    [InlineData("Basic check passed for vehicle-2")]
+    [InlineData("Bearer of LOT 482913 is vehicle-2")]
+    [InlineData("Simple.Server.TokenExpiredException: The terminal must pair again")]
     public void AnOrdinaryLineIsWrittenAsItIs(string message)
     {
         using var log = new TestLog();
@@ -97,6 +113,46 @@ public sealed partial class RedactionTests
         Said(log.Logger, message);
 
         Assert.Contains(message, log.Text(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("GET /login?password=x&user=y took 12 ms", "GET /login?password=***&user=y took 12 ms")]
+    [InlineData("{ Password = x, User = simple }", "{ Password = ***, User = simple }")]
+    [InlineData("Server=db01;User ID=simple;Password=a b;Encrypt=true", "Server=db01;User ID=simple;Password=***;Encrypt=true")]
+    public void OnlyTheValueGoes(string text, string expected) => Assert.Equal(expected, Redaction.Redact(text));
+
+    /// <summary>
+    /// Redaction runs on the thread that logs (a UI thread included), so a
+    /// long value must not make it slow: no pattern may try every start
+    /// position against the rest of the line.
+    /// </summary>
+    [Theory]
+    [InlineData("hex")]
+    [InlineData("bytes")]
+    [InlineData("dotted")]
+    [InlineData("colons")]
+    [InlineData("base64")]
+    [InlineData("quotes")]
+    [InlineData("words")]
+    public void AMegabyteLongValueIsRedactedWithinASecond(string shape)
+    {
+        var text = shape switch
+        {
+            "hex" => Convert.ToHexString(new byte[512 * 1024]),
+            "bytes" => BitConverter.ToString(new byte[350 * 1024]),
+            "dotted" => string.Concat(Enumerable.Repeat("simple.server.", 75_000)),
+            "colons" => string.Concat(Enumerable.Repeat("Simple:Mes:", 95_000)),
+            "base64" => Convert.ToBase64String(new byte[768 * 1024]),
+            "quotes" => string.Concat(Enumerable.Repeat("\"a\":", 260_000)),
+            _ => string.Concat(Enumerable.Repeat("pass word token key ", 52_000)),
+        };
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var redacted = Redaction.Redact(text);
+        clock.Stop();
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(1), $"{text.Length} characters took {clock.Elapsed.TotalMilliseconds:F0} ms");
+        Assert.Equal(text, redacted);
     }
 
     [Fact]
