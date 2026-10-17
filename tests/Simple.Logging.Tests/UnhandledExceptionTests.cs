@@ -42,6 +42,33 @@ public sealed class UnhandledExceptionTests
         Assert.False(observed, "the log must not mark the exception observed");
     }
 
+    [Fact]
+    public void AnExceptionTheUiThreadRecordedIsNotRecordedAgainWhenItEndsTheProcess()
+    {
+        using var log = new TestLog();
+        var crash = new InvalidOperationException("Door-button-crash");
+
+        log.Provider.Unhandled.RecordUnhandled(crash, "the UI thread");
+        // What the runtime raises next, as the exception ends the process.
+        log.Provider.Unhandled.OnUnhandled(crash, isTerminating: true);
+
+        var text = log.Text();
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(text, "Door-button-crash"));
+        Assert.Contains("[FTL] Simple.Logging.UnhandledExceptions: The exception above, which nothing in the UI thread caught, ends the process", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnExceptionNothingCaughtIsRecordedWhenItEndsTheProcess()
+    {
+        using var log = new TestLog();
+
+        log.Provider.Unhandled.OnUnhandled(new InvalidOperationException("Worker-crash"), isTerminating: true);
+
+        var text = log.Text();
+        Assert.Contains("[FTL] Simple.Logging.UnhandledExceptions: Nothing in the process (it ends now) caught this exception", text, StringComparison.Ordinal);
+        Assert.Contains("System.InvalidOperationException: Worker-crash", text, StringComparison.Ordinal);
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void FaultAndForget() => _ = Task.FromException(new InvalidOperationException("Forgotten-task"));
 }

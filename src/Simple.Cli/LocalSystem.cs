@@ -398,7 +398,7 @@ public sealed partial class LocalSystem(
         IReadOnlyList<string> files = !LogName().IsMatch(name) ? []
             : output ? (File.Exists(store.LogPath(instance, name)) ? [store.LogPath(instance, name)] : [])
             : ProgramLog.Files(store.ProgramLogDirectory(instance, name));
-        var lines = files.SelectMany(ReadLines).ToList();
+        var lines = tail is { } count ? TailOf(files, count) : files.SelectMany(ReadLines).ToList();
         if (!output && lines.Count == 0 && LogName().IsMatch(name) && File.Exists(store.LogPath(instance, name)))
         {
             return Outcome.Fail(
@@ -422,11 +422,6 @@ public sealed partial class LocalSystem(
                 + (programLogs.Count + outputs.Count > 0
                     ? $"Program logs: {Names(programLogs)}. Console output (--output): {Names(outputs)}."
                     : "It has never been started here."));
-        }
-
-        if (tail is { } count)
-        {
-            lines = lines.TakeLast(count).ToList();
         }
 
         return Outcome.Ok(new { Instance = instance, Name = name, Output = output, Paths = files, Lines = lines }, lines);
@@ -678,6 +673,18 @@ public sealed partial class LocalSystem(
         while (reader.ReadLine() is { } line)
         {
             lines.Add(line);
+        }
+
+        return lines;
+    }
+
+    /// <summary>The last <paramref name="count"/> lines of the files together, read newest file first until there are enough.</summary>
+    private static List<string> TailOf(IReadOnlyList<string> files, int count)
+    {
+        var lines = new List<string>();
+        for (var i = files.Count - 1; i >= 0 && lines.Count < count; i--)
+        {
+            lines.InsertRange(0, ReadLines(files[i]).TakeLast(count - lines.Count));
         }
 
         return lines;

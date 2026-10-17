@@ -28,6 +28,8 @@ internal sealed class TestLog : IDisposable
 
     public ILogger Logger { get; }
 
+    public ProgramLogProvider Provider => provider;
+
     public ILogger CreateLogger(string category) => factory.CreateLogger(category);
 
     /// <summary>Closes the log and returns everything in its files, oldest first.</summary>
