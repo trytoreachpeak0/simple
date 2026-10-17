@@ -311,6 +311,10 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
             ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "true",
             // No MSBuild node outlives the run holding its output open.
             ["MSBUILDDISABLENODEREUSE"] = "1",
+            // The tests' servers keep their keys in the machine's store: over
+            // an SSH key login the user's store cannot be used (no DPAPI).
+            // Read by the TestKeyStore of each test project.
+            ["SIMPLE_TEST_SERVER_KEY_STORE"] = "Machine",
         };
         foreach (var (name, value) in machine.Environment)
         {

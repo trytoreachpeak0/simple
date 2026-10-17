@@ -175,6 +175,7 @@ public sealed class ServerSettingsTests
             {
                 $"--{ServerSettings.InstanceKey}={instance}",
                 $"--{ServerSettings.ConnectionStringKey}=Server=tcp:127.0.0.1,1;Integrated Security=true;Connect Timeout=1",
+                $"--{ServerSettings.ServerKeyStoreKey}={TestKeyStore.Name}",
                 argument,
             },
         };
@@ -202,7 +203,7 @@ public sealed class ServerSettingsTests
             // A server that wrongly went on starting has made its key by now.
             if (OperatingSystem.IsWindows())
             {
-                Simple.Server.OnboardTerminals.ServerCertificate.Delete(new ServerSettings { Instance = instance }.ServerKeyName, machineKey: false);
+                Simple.Server.OnboardTerminals.ServerCertificate.Delete(new ServerSettings { Instance = instance }.ServerKeyName, TestKeyStore.IsMachine);
             }
         }
     }

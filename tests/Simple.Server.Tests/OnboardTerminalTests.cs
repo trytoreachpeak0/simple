@@ -220,8 +220,11 @@ public sealed class OnboardTerminalTests
             Assert.Equal(server.Database.ServerKeyName, Assert.IsType<ECDsaCng>(key).Key.KeyName);
         }
 
-        // A new key is said so, with its pin, in the event record; a key found again is not.
+        // A new key is said so, with its pin and its store, in the event
+        // record; a key found again is not. The store is the one the tests
+        // were told to use, never another one quietly.
         Assert.Equal(pin, Assert.Single(created).Text("pin"));
+        Assert.Equal(TestKeyStore.IsMachine ? "machine" : "user", Assert.Single(created).Text("store"));
         await server.StopAsync();
 
         using var again = server.Start();

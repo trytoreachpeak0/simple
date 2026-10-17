@@ -68,6 +68,12 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
             start.ArgumentList.Add(arg);
         }
 
+        if (args is ["up", ..])
+        {
+            start.ArgumentList.Add(SimpleCommand.ServerKeyStoreOption);
+            start.ArgumentList.Add(TestKeyStore.Store.ToString());
+        }
+
         start.Environment[InstanceStore.HomeVariable] = Home;
         start.Environment[SqlServerTarget.Variable] = SqlServer;
 

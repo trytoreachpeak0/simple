@@ -40,6 +40,20 @@ public sealed class RemoteRunTests
     }
 
     [Fact]
+    public async Task TestsRunThereAreToldToKeepServerKeysInTheMachineStore()
+    {
+        // An SSH key login cannot use the user's key store (no DPAPI), so the
+        // tests' servers must make their keys in the machine's.
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+
+        var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "\"store=$env:SIMPLE_TEST_SERVER_KEY_STORE\"");
+
+        Assert.True(exitCode == 0, stderr);
+        Assert.Equal(["store=Machine"], Lines(stdout));
+    }
+
+    [Fact]
     public async Task ChineseOutputComesBackAsItWasWritten()
     {
         await using var sandbox = await GitSandbox.CreateAsync(Cancel);

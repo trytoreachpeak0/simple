@@ -68,6 +68,8 @@ dotnet test --solution simple.slnx
 
 需要数据库的测试每次建一个随机名字的库（`Simple_test_<随机串>`），测完删掉，几个 worktree 同时跑也互不干扰。默认建在本机 LocalDB 上；要用别的 SQL Server 实例，把不带库名的连接串放进环境变量 `SIMPLE_TEST_SQLSERVER`，例如 `Server=.\SQLEXPRESS;Integrated Security=true;TrustServerCertificate=true`。
 
+测试里起的服务端，其证书钥匙默认放在当前用户的密钥存储里。环境变量 `SIMPLE_TEST_SERVER_KEY_STORE` 可以改成 `Machine`（本机级存储，建和删都要管理员）。`simple remote` 在远端运行时会设成 `Machine`，因为经 SSH 密钥登录的会话用不了用户级存储。取 `User`、`Machine` 以外的值时测试直接失败，不会悄悄改用用户级存储。
+
 ## 在本机起停整套系统
 
 仓库根的 `simple.ps1` 先编译命令行本身（安静地编译，失败才显示输出），再把参数原样交给它。在 PowerShell 7 里：
@@ -122,7 +124,12 @@ dotnet test --solution simple.slnx
 - **排队**：同一个实例同一时刻只跑一条远程命令，后来的等着，并打印在等谁；`build`、`test`、`exec`、`up` 还要占用整机 4 个名额中的一个。等 30 分钟还轮不到就以退出码 22 结束。
 - **结果**：输出实时回传；退出码是远端命令自己的（例如测试的 2、8 原样返回）。`simple remote` 自己的失败用 20（没跑成：git、ssh、scp 出错，或远端在起命令之前失败）、21（快照含大文件，没送）、22（等不到实例或名额）；`--json` 时标准输出是一个 `{exitCode, error, result}`，`result` 里有提交号、`HEAD`、未提交文件数和远端退出码。`build`、`test`、`exec` 的输出和测试结果（TRX）拷回本机 `artifacts/remote/<实例名>/<时刻>-<提交号前 8 位>/`；`exec` 的命令把文件写进 `%SIMPLE_REMOTE_RUN%` 也会拷回来。
 - **远端也只起本机的假系统**：远端的命令把 `SIMPLE_SQLSERVER` 和 `SIMPLE_TEST_SQLSERVER` 指向那台机器上专给它用的命名实例 `.\SIMPLE_DEV`，`simple` 在那台机器上照样只接受本机的 LocalDB 或命名实例；`simple remote` 没有任何指向真实系统的开关。
-- **断线**：SSH 一断，远端会结束这次运行的所有进程，不会留下没人管的测试进程。`up` 起的部件是例外：它们脱离 SSH 会话继续运行，用 `simple remote down` 停。
+- **断线**：远端那台机器的 sshd 在笔记本这头断开后，既不结束会话，也不结束会话里的进程（simple01 上 2026-10-17 实测）。所以本机每 5 秒往 ssh 写一行心跳，远端每 0.5 秒检查一次：察觉断开后，结束这次运行的整棵进程树（包括它起的子进程、`up` 已经起来的部件），然后退出，实例锁和名额随之放掉。察觉要多久：
+  - 强杀本机的 `simple` 或 ssh：约 1–2 秒（远端读到输入结束）；
+  - Ctrl+C：同上，约 1–2 秒；
+  - 断网：远端在最后一次心跳之后约 30 秒结束运行；本机 ssh 也在约 30 秒内放弃（`ServerAliveInterval=10` × 3），以 20 结束。
+
+  `up` 已经成功返回之后再断开不影响它起的系统：部件脱离 SSH 会话继续运行，用 `simple remote down` 停。
 - **远端的服务端钥匙在本机级存储里**：经 SSH 密钥登录的会话用不了按用户加密的 Windows 存储（DPAPI），所以 `simple remote up` 让服务端把钥匙放在那台机器的本机级密钥存储里。**本机级的钥匙只有管理员能建、能删**，所以远端的 SSH 账户必须是那台机器的本机管理员。`simple remote down --reset` 和 `forget` 按 `up` 时的记录把它删掉。
 
 为什么手写这一层：现成的同步工具（Mutagen、Syncthing 等）都是持续同步型的，说不出某一次运行看到的是哪个状态的树，"同步到一半就开跑"正是要避免的；`simple remote` 只是 git、ssh、scp 之上的一层薄胶水，"这次跑的是哪棵树"由提交号保证。
