@@ -3,6 +3,8 @@
     <Project Path="src/Simple.Cli/Simple.Cli.csproj" />
     <Project Path="src/Simple.IoSimulator/Simple.IoSimulator.csproj" />
     <Project Path="src/Simple.MesGateway/Simple.MesGateway.csproj" />
+    <Project Path="src/Simple.OnboardTerminal.Core/Simple.OnboardTerminal.Core.csproj" />
+    <Project Path="src/Simple.OnboardTerminal.Headless/Simple.OnboardTerminal.Headless.csproj" />
     <Project Path="src/Simple.OnboardTerminal/Simple.OnboardTerminal.csproj" />
     <Project Path="src/Simple.Protocol/Simple.Protocol.csproj" />
     <Project Path="src/Simple.Server.Console/Simple.Server.Console.csproj" />
@@ -11,6 +13,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Simple.Cli.Tests/Simple.Cli.Tests.csproj" />
+    <Project Path="tests/Simple.OnboardTerminal.Core.Tests/Simple.OnboardTerminal.Core.Tests.csproj" />
     <Project Path="tests/Simple.Server.Tests/Simple.Server.Tests.csproj" />
   </Folder>
 </Solution>

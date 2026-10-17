@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Simple.Server.Configuration;
 using Simple.Server.Events;
+using Simple.Server.OnboardTerminals;
 using Simple.Server.Persistence;
 using Simple.Server.Status;
 
@@ -37,21 +38,30 @@ builder.Services.AddDbContext<SimpleDbContext>((services, options) =>
 builder.Services.AddScoped<EventStore>();
 builder.Services.AddSingleton<ServerInfo>();
 builder.Services.AddHostedService<ServerLifecycleRecorder>();
+builder.Services.AddSingleton<OnboardEndpoint>();
+builder.Services.AddSingleton<OnboardTerminalRegistry>();
+builder.Services.AddGrpc();
+builder.WebHost.ConfigureKestrel(kestrel => kestrel.ApplicationServices.GetRequiredService<OnboardEndpoint>().Configure(kestrel));
 builder.Services.AddHealthChecks().AddDbContextCheck<SimpleDbContext>(tags: ["ready"]);
 builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 
-var app = builder.Build();
-
-app.MapOpenApi();
-// Live: the process answers. Ready: it can also reach its database.
-app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
-app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
-app.MapStatusEndpoints();
-app.MapEventEndpoints();
-
+// Building already reads the settings (Kestrel binds from them), so an
+// invalid configuration can surface here as well as at start.
 try
 {
+    var app = builder.Build();
+
+    app.UseRouting();
+    app.Use(OnboardEndpoint.KeepToOwnListener);
+    app.MapGrpcService<OnboardLinkService>();
+    app.MapOpenApi();
+    // Live: the process answers. Ready: it can also reach its database.
+    app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+    app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
+    app.MapStatusEndpoints();
+    app.MapEventEndpoints();
+
     await app.RunAsync();
     return 0;
 }

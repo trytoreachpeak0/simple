@@ -45,9 +45,70 @@ public sealed partial class ServerSettingsValidator : IValidateOptions<ServerSet
                 failures.Add(
                     $"{key} '{address}' is not a loopback address. The server API has no authentication yet and listens on loopback only (127.0.0.1, [::1] or localhost).");
             }
+            else if (key == "urls" && !address.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            {
+                failures.Add($"{key} '{address}' is not http://. The server API is plain HTTP on loopback; only the onboard terminal endpoint uses TLS.");
+            }
         }
 
+        CheckOnboardTerminals(settings, failures);
         return failures;
+    }
+
+    /// <summary>
+    /// The onboard terminal endpoint, unlike the API, may listen where other
+    /// machines reach it (ADR 0025): terminals connect from the vehicles, and
+    /// nothing but the terminal protocol is served there, over TLS with the
+    /// pinned certificate. It names one interface: a wildcard would also open
+    /// it on every other network the server sits on.
+    /// </summary>
+    private static void CheckOnboardTerminals(ServerSettings settings, List<string> failures)
+    {
+        const string key = ServerSettings.OnboardTerminalsUrlKey;
+        if (settings.OnboardTerminalsUrl is { } url)
+        {
+            BindingAddress? address = null;
+            try
+            {
+                address = BindingAddress.Parse(url);
+            }
+            catch (FormatException)
+            {
+                // Reported below.
+            }
+
+            if (address is null || !string.Equals(address.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+            {
+                failures.Add($"{key} '{url}' is not an https:// address. Terminals connect over TLS only; give for example https://127.0.0.1:5181.");
+            }
+            else if (!string.Equals(address.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                && !System.Net.IPAddress.TryParse(address.Host.Trim('[', ']'), out _))
+            {
+                failures.Add(
+                    $"{key} '{url}' does not name an IP address. Give the address of the one network interface terminals connect to, for example https://172.19.205.222:5181.");
+            }
+            else if (System.Net.IPAddress.TryParse(address.Host.Trim('[', ']'), out var ip)
+                && (ip.Equals(System.Net.IPAddress.Any) || ip.Equals(System.Net.IPAddress.IPv6Any)))
+            {
+                failures.Add(
+                    $"{key} '{url}' listens on every network interface. Give the address of the one interface terminals connect to.");
+            }
+        }
+
+        // Named after the instance unless configured: an invalid instance
+        // name is reported once, above, not again as a key name.
+        if (InstanceName().IsMatch(settings.Instance ?? string.Empty) && !KeyName().IsMatch(settings.ServerKeyName))
+        {
+            failures.Add(
+                $"{ServerSettings.ServerKeyNameKey} '{settings.ServerKeyName}' is not a valid key name: use 1-100 letters, digits, '.', '-' or '_'.");
+        }
+
+        if (settings.ServerKeyStore is { Length: > 0 } store
+            && !string.Equals(store, "User", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(store, "Machine", StringComparison.OrdinalIgnoreCase))
+        {
+            failures.Add($"{ServerSettings.ServerKeyStoreKey} '{store}' is neither User nor Machine.");
+        }
     }
 
     public static bool IsLoopbackHost(string host)
@@ -104,4 +165,7 @@ public sealed partial class ServerSettingsValidator : IValidateOptions<ServerSet
 
     [GeneratedRegex("^[A-Za-z0-9_-]{1,50}$")]
     private static partial Regex InstanceName();
+
+    [GeneratedRegex("^[A-Za-z0-9_.-]{1,100}$")]
+    private static partial Regex KeyName();
 }

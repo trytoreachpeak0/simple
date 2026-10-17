@@ -32,8 +32,52 @@ public sealed class ServerSettingsTests
     [Theory]
     [InlineData("http://127.0.0.1:5180;http://[::1]:5180")]
     [InlineData("http://localhost:5180")]
-    [InlineData("https://127.0.0.2:5181")]
+    [InlineData("http://127.0.0.2:5181")]
     public void LoopbackAddressesAreAccepted(string urls) => Assert.Empty(Check(("urls", urls)));
+
+    [Fact]
+    public void TheApiIsPlainHttpOnly()
+    {
+        // TLS is the terminal endpoint's; the API is bound without a certificate.
+        var failure = Assert.Single(Check(("urls", "https://127.0.0.1:5181")));
+        Assert.Contains("is not http://", failure, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("https://127.0.0.1:5181")]
+    [InlineData("https://localhost:5181")]
+    [InlineData("https://172.19.205.222:5181")]
+    [InlineData("https://[fe80::1]:5181")]
+    public void TheTerminalEndpointMayListenWhereVehiclesReachIt(string url) =>
+        Assert.Empty(Check((ServerSettings.OnboardTerminalsUrlKey, url)));
+
+    [Theory]
+    [InlineData("http://172.19.205.222:5181", "is not an https:// address")]
+    [InlineData("https://0.0.0.0:5181", "listens on every network interface")]
+    [InlineData("https://[::]:5181", "listens on every network interface")]
+    [InlineData("https://*:5181", "does not name an IP address")]
+    [InlineData("https://+:5181", "does not name an IP address")]
+    [InlineData("https://factory01:5181", "does not name an IP address")]
+    [InlineData("not a url", "is not an https:// address")]
+    public void ATerminalEndpointOnEveryInterfaceOrWithoutTlsIsRefusedByName(string url, string reason)
+    {
+        var failure = Assert.Single(Check((ServerSettings.OnboardTerminalsUrlKey, url)));
+        Assert.StartsWith($"{ServerSettings.OnboardTerminalsUrlKey} '", failure, StringComparison.Ordinal);
+        Assert.Contains(reason, failure, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(ServerSettings.ServerKeyNameKey, "has space")]
+    [InlineData(ServerSettings.ServerKeyStoreKey, "Elsewhere")]
+    public void ABadServerKeySettingIsRefusedByName(string key, string value) =>
+        Assert.StartsWith($"{key} '", Assert.Single(Check((key, value))), StringComparison.Ordinal);
+
+    [Fact]
+    public void TheServerKeyIsNamedAfterTheInstanceUnlessConfigured()
+    {
+        Assert.Equal("Simple-Server-wt25", new ServerSettings { Instance = "wt25" }.ServerKeyName);
+        Assert.Equal("Other", new ServerSettings { Instance = "wt25", ServerKeyName = "Other" }.ServerKeyName);
+    }
 
     [Theory]
     [InlineData("http://0.0.0.0:5180")]
@@ -105,6 +149,7 @@ public sealed class ServerSettingsTests
     [Theory]
     [InlineData("--Simple:Instance=not valid!", "Simple:Instance 'not valid!' is not a valid instance name")]
     [InlineData("--urls=http://0.0.0.0:5180", "urls 'http://0.0.0.0:5180' is not a loopback address")]
+    [InlineData("--Simple:OnboardTerminals:Url=https://0.0.0.0:5181", "Simple:OnboardTerminals:Url 'https://0.0.0.0:5181' listens on every network interface")]
     [InlineData("--Simple:SettingsFile=no-such-settings.json", "Simple:SettingsFile")]
     public async Task TheServerRefusesToStartAndNamesTheSetting(string argument, string message)
     {
