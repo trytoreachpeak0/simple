@@ -158,12 +158,16 @@ single-context layout). Do not start a parallel set of these by hand.
 ## Toolchain
 
 - **.NET 10** (LTS until 2028-11-14), pinned in `global.json`:
-  `10.0.302` with `rollForward: disable`, so development machines and CI
-  need exactly that SDK; the first CI step fails otherwise. Upgrade the
-  SDK on development machines and on the CI machine together, in the
-  same PR that changes `global.json`. This departs from the older
-  repositories' .NET 8 baseline (ADR-cross-0056); the exception is
-  recorded in `docs/adr/0001-dotnet-10-and-mtp.md`.
+  `10.0.113` with `rollForward: latestPatch`: a machine needs an SDK of
+  the 10.0.1xx feature band at that patch or newer, and the first CI step
+  (`scripts/ci/Assert-SdkVersion.ps1`) fails otherwise. Keep every machine
+  (development machines, the CI machine, `simple01`) on the latest
+  10.0.1xx patch. The 1xx band is serviced for the whole LTS; the 3xx band
+  stopped at 10.0.303. Change `global.json` only to move to another feature
+  band or to raise the minimum patch, and install that SDK on the machines
+  before merging. This departs from the older repositories' .NET 8 baseline
+  (ADR-cross-0056); the exception and the reasons for the band and for
+  `latestPatch` are recorded in `docs/adr/0001-dotnet-10-and-mtp.md`.
 - The onboard PCs stay on Windows 10 Pro 22H2, which is not on the .NET 10
   supported-OS list. This is accepted.
 - `.slnx` solution format: `simple.slnx`.
