@@ -44,16 +44,30 @@ public static partial class Redaction
     public static bool IsSecretName(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
-        // An exception type such as TokenExpiredException names what went wrong, not a value.
-        return !name.EndsWith("Exception", StringComparison.OrdinalIgnoreCase)
-            && (SecretNamePart().IsMatch(name) || name.EndsWith("key", StringComparison.OrdinalIgnoreCase));
+        try
+        {
+            TestHook?.Invoke();
+            // An exception type such as TokenExpiredException names what went wrong, not a value.
+            return !name.EndsWith("Exception", StringComparison.OrdinalIgnoreCase)
+                && (SecretNamePart().IsMatch(name) || name.EndsWith("key", StringComparison.OrdinalIgnoreCase));
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            // When in doubt, a credential.
+            return true;
+        }
     }
+
+    /// <summary>Runs at the start of every redaction and name check, so tests can make them fail.</summary>
+    internal static Action? TestHook { get; set; }
 
     public static string Redact(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
         try
         {
+            TestHook?.Invoke();
+
             // Each pattern runs only where a plain search finds what it needs,
             // so most lines skip most patterns. Whole values first, then values
             // found by the name in front of them.
