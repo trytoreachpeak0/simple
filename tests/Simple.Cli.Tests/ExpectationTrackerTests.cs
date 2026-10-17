@@ -162,6 +162,23 @@ public sealed class ExpectationTrackerTests
     }
 
     [Fact]
+    public void TheStretchBeforeTheFirstLookCounts()
+    {
+        // The window opened 1.5 s before anything was looked at.
+        var tracker = Open(ExpectationKind.Always, RiotConnected, TimeSpan.FromSeconds(3));
+
+        for (var at = 1.5; at <= 3; at += 0.25)
+        {
+            tracker.Look(Look(at, """{"riot":{"state":"connected"}}"""));
+        }
+
+        tracker.Look(Look(3.5, """{"riot":{"state":"connected"}}"""));
+
+        Assert.Equal(Verdict.CannotTell, tracker.Verdict);
+        Assert.Contains("not looked at for 1.5 s", tracker.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EventuallyNotSeenWithAStretchNoLookSawCannotBeTold()
     {
         var tracker = Open(ExpectationKind.Eventually, RiotConnected, TimeSpan.FromSeconds(5));

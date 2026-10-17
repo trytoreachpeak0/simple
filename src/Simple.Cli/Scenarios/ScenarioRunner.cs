@@ -41,6 +41,9 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
     /// </summary>
     public static readonly TimeSpan TeardownLimit = TimeSpan.FromMinutes(5);
 
+    /// <summary>Makes a run's evidence (<see cref="Evidence.Create"/>); tests give evidence that cannot be written.</summary>
+    internal Func<string, string, DateTimeOffset, Evidence> CreateEvidence { get; init; } = Evidence.Create;
+
     public async Task<Outcome> RunAsync(Scenario scenario, string instance, string sqlServer, ServerKeyStore keyStore, string evidenceRoot, bool keepUp, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(scenario);
@@ -54,7 +57,7 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
         }
 
         var startedAt = DateTimeOffset.Now;
-        using var evidence = Evidence.Create(evidenceRoot, scenario.Name, startedAt);
+        using var evidence = CreateEvidence(evidenceRoot, scenario.Name, startedAt);
         evidence.CopyFile(scenario.Path, Evidence.ScenarioCopy);
         evidence.Write("run-started", new { Scenario = scenario.Name, scenario.Title, File = scenario.Path, Instance = instance, evidence.RunId, Repository = repository });
         progress.WriteLine($"Scenario {scenario.Name}: {scenario.Title}");
@@ -62,30 +65,34 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
 
         var system = new LocalSystem(repository, store, progress);
         var run = new Run(scenario, evidence);
+        TeardownResult? teardown = null;
         try
         {
-            var setupFailure = await SetUpAsync(system, scenario, instance, sqlServer, keyStore, evidence, cancellationToken);
-            if (setupFailure is null)
+            try
             {
-                await DriveAsync(system, run, instance, cancellationToken);
-                await CollectAsync(system, run, instance, evidence, cancellationToken);
+                var setupFailure = await SetUpAsync(system, scenario, instance, sqlServer, keyStore, evidence, cancellationToken);
+                if (setupFailure is null)
+                {
+                    await DriveAsync(system, run, instance, cancellationToken);
+                    await CollectAsync(system, run, instance, evidence, cancellationToken);
+                }
+                else
+                {
+                    run.CannotDrive(setupFailure);
+                }
             }
-            else
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                run.CannotDrive(setupFailure);
+                run.CannotDrive("the run was interrupted");
+                evidence.Write("interrupted");
             }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            run.CannotDrive("the run was interrupted");
-            evidence.Write("interrupted");
-        }
-        catch (Exception e)
-        {
-            // Whatever went wrong, the system is still stopped and the result
-            // still written: a run that broke off cannot tell.
-            run.CannotDrive($"the run broke off: {e.GetType().Name}: {e.Message}");
-            evidence.Write("run-error", new { Error = e.ToString() });
+            catch (Exception e)
+            {
+                // Whatever went wrong, the system is still stopped and the result
+                // still written: a run that broke off cannot tell.
+                run.CannotDrive($"the run broke off: {e.GetType().Name}: {e.Message}");
+                evidence.Write("run-error", new { Error = e.ToString() });
+            }
         }
         finally
         {
@@ -100,6 +107,10 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
                     // Logging out is a courtesy; a login ends by itself.
                 }
             }
+
+            // Whatever happened above, the system is stopped.
+            teardown = keepUp ? new TeardownResult(Stopped: false, Kept: true, null, null) : await TearDownAsync(system, instance, sqlServer);
+            evidence.Write("down", teardown);
         }
 
         foreach (var tracker in run.Trackers.Where(t => t.Verdict is null))
@@ -107,7 +118,6 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
             tracker.Abandon($"never judged: {run.DriveFailure}", DateTimeOffset.UtcNow);
         }
 
-        var teardown = keepUp ? new TeardownResult(Stopped: false, Kept: true, null, null) : await TearDownAsync(system, instance, sqlServer, evidence);
         evidence.CopyDirectory(store.LogDirectory(instance), Evidence.Logs);
 
         var verdict = Verdicts.Combine(run.Trackers.Select(t => t.Verdict ?? Verdict.CannotTell), run.Driven);
@@ -184,25 +194,41 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
     /// Stops the system with a time limit of its own: the run's cancellation
     /// (Ctrl+C) is what may have brought it here, and it must stop all the same.
     /// </summary>
-    private static async Task<TeardownResult> TearDownAsync(LocalSystem system, string instance, string sqlServer, Evidence evidence)
+    private static async Task<TeardownResult> TearDownAsync(LocalSystem system, string instance, string sqlServer)
     {
         using var limit = new CancellationTokenSource(TeardownLimit);
+        Outcome down;
         try
         {
-            var down = await system.DownAsync(instance, sqlServer, reset: false, limit.Token);
-            evidence.Write("down", new { down.ExitCode, down.Error });
-            return down.ExitCode switch
-            {
-                ExitCodes.Success => new TeardownResult(Stopped: true, Kept: false, down.ExitCode, null),
-                // Stopped all the same, by killing what did not stop in time.
-                ExitCodes.StopForced => new TeardownResult(Stopped: true, Kept: false, down.ExitCode, down.Error),
-                _ => new TeardownResult(Stopped: false, Kept: false, down.ExitCode, $"simple down ended with {down.ExitCode}: {down.Error}"),
-            };
+            down = await system.DownAsync(instance, sqlServer, reset: false, limit.Token);
         }
         catch (Exception e)
         {
-            evidence.Write("down", new { Error = e.ToString() });
-            return new TeardownResult(Stopped: false, Kept: false, null, $"stopping the system failed: {e.GetType().Name}: {e.Message}");
+            return new TeardownResult(!Running(), Kept: false, null, $"stopping the system failed: {e.GetType().Name}: {e.Message}");
+        }
+
+        // Whether it stopped is what the processes say: down also ends with 1
+        // when they are gone but files they ran from are still held.
+        var stopped = !Running();
+        return down.ExitCode switch
+        {
+            ExitCodes.Success => new TeardownResult(stopped, Kept: false, down.ExitCode, stopped ? null : "simple down ended with 0 but a process is still running"),
+            // Stopped all the same, by killing what did not stop in time.
+            ExitCodes.StopForced => new TeardownResult(stopped, Kept: false, down.ExitCode, down.Error),
+            _ => new TeardownResult(stopped, Kept: false, down.ExitCode, $"simple down ended with {down.ExitCode}: {down.Error}"),
+        };
+
+        // A state file that cannot be read cannot vouch for anything: taken as still running.
+        bool Running()
+        {
+            try
+            {
+                return system.IsAnyRunning(instance);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+            {
+                return true;
+            }
         }
     }
 
@@ -270,6 +296,10 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
         var urls = system.Urls(instance);
         var observer = new Observer(Http, urls[Components.Server.Name], store.ReadAdminPassword(instance), run.Evidence);
         run.Observer = observer;
+        // One look before the scenario starts: the first one logs in and reads
+        // the whole event record so far, and that time must not count as a
+        // stretch of the first windows that no look saw.
+        await observer.LookAsync(cancellationToken);
         var start = DateTimeOffset.UtcNow;
         run.Evidence.Write("started", new { Terminals = run.Scenario.Initial.Terminals });
         foreach (var tracker in run.Trackers.Where(t => t.Expectation.After is null))

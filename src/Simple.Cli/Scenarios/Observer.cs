@@ -25,6 +25,7 @@ public sealed class Observer(HttpClient http, Uri server, string? password, Evid
     {
         JsonElement? status = null;
         string? statusError = null;
+        DateTimeOffset at;
         try
         {
             status = await (await ApiAsync(cancellationToken)).GetJsonAsync("/api/v1/status", cancellationToken);
@@ -36,6 +37,10 @@ public sealed class Observer(HttpClient http, Uri server, string? password, Evid
             // Logged in again at the next look: the server may have restarted.
             api = null;
         }
+
+        // The look is as of when the status was read: logging in and reading
+        // the event record afterwards is not part of what it saw.
+        at = DateTimeOffset.UtcNow;
 
         string? eventsError = null;
         try
@@ -84,7 +89,7 @@ public sealed class Observer(HttpClient http, Uri server, string? password, Evid
             lastEventsError = eventsError;
         }
 
-        return new Snapshot(DateTimeOffset.UtcNow, status, statusError, eventsError is null ? [.. events] : null, eventsError);
+        return new Snapshot(at, status, statusError, eventsError is null ? [.. events] : null, eventsError);
     }
 
     /// <summary>Logs out the last login, so the run leaves none behind.</summary>

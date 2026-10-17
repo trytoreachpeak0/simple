@@ -485,6 +485,9 @@ public sealed partial class LocalSystem(
         return await StopAsync(process, cancellationToken);
     }
 
+    /// <summary>Whether any process the instance recorded is still running.</summary>
+    public bool IsAnyRunning(string instance) => store.Read(instance)?.Processes.Any(p => IsAlive(p)) ?? false;
+
     /// <summary>Where each process of a running instance answers HTTP, by name; empty when it is not running.</summary>
     public IReadOnlyDictionary<string, Uri> Urls(string instance) =>
         store.Read(instance)?.Processes.ToDictionary(p => p.Name, ApiUri) ?? new Dictionary<string, Uri>();

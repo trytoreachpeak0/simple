@@ -25,18 +25,21 @@ public sealed class Evidence : IDisposable
 
     private static readonly JsonSerializerOptions JsonLine = new(Outcome.JsonOptions) { WriteIndented = false };
 
-    private readonly StreamWriter timeline;
+    private readonly TextWriter timeline;
     private readonly Lock gate = new();
+    private bool timelineBroken;
 
     private Evidence(string directory, string runId)
+        : this(directory, runId, OpenTimeline(directory))
+    {
+    }
+
+    /// <summary>Evidence written through <paramref name="timeline"/>; tests give one that fails.</summary>
+    internal Evidence(string directory, string runId, TextWriter timeline)
     {
         Directory = directory;
         RunId = runId;
-        System.IO.Directory.CreateDirectory(directory);
-        timeline = new StreamWriter(new FileStream(System.IO.Path.Combine(directory, Timeline), FileMode.CreateNew, FileAccess.Write, FileShare.Read), new System.Text.UTF8Encoding(false))
-        {
-            AutoFlush = true,
-        };
+        this.timeline = timeline;
     }
 
     public string Directory { get; }
@@ -54,7 +57,11 @@ public sealed class Evidence : IDisposable
         return new Evidence(System.IO.Path.Combine(root, name), runId);
     }
 
-    /// <summary>Appends one line to the timeline: when, what, and its details.</summary>
+    /// <summary>
+    /// Appends one line to the timeline: when, what, and its details. Like
+    /// every piece of evidence it never fails the run: a line that cannot be
+    /// written (a full disk) is listed in <see cref="Missing"/>, once.
+    /// </summary>
     public void Write(string kind, object? details = null)
     {
         var line = new JsonObject
@@ -72,7 +79,18 @@ public sealed class Evidence : IDisposable
 
         lock (gate)
         {
-            timeline.WriteLine(line.ToJsonString(JsonLine));
+            try
+            {
+                timeline.WriteLine(line.ToJsonString(JsonLine));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
+            {
+                if (!timelineBroken)
+                {
+                    timelineBroken = true;
+                    Missing.Add($"{Timeline}: lines from '{kind}' on could not be written: {e.Message}");
+                }
+            }
         }
     }
 
@@ -112,7 +130,14 @@ public sealed class Evidence : IDisposable
     {
         lock (gate)
         {
-            timeline.Flush();
+            try
+            {
+                timeline.Flush();
+            }
+            catch (IOException)
+            {
+                // Already listed as missing when its line failed.
+            }
         }
 
         var lines = System.IO.Directory.EnumerateFiles(Directory, "*", SearchOption.AllDirectories)
@@ -128,7 +153,26 @@ public sealed class Evidence : IDisposable
         File.WriteAllLines(System.IO.Path.Combine(Directory, Manifest), lines);
     }
 
-    public void Dispose() => timeline.Dispose();
+    public void Dispose()
+    {
+        try
+        {
+            timeline.Dispose();
+        }
+        catch (IOException)
+        {
+            // The last lines are lost; the run's outcome stands.
+        }
+    }
+
+    private static StreamWriter OpenTimeline(string directory)
+    {
+        System.IO.Directory.CreateDirectory(directory);
+        return new StreamWriter(new FileStream(System.IO.Path.Combine(directory, Timeline), FileMode.CreateNew, FileAccess.Write, FileShare.Read), new System.Text.UTF8Encoding(false))
+        {
+            AutoFlush = true,
+        };
+    }
 
     private void Collect(string file, Action collect)
     {

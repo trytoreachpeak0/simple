@@ -60,6 +60,10 @@ public sealed class ScenarioTests
             var manifest = File.ReadAllLines(Path.Combine(evidence, Evidence.Manifest));
             Assert.Contains(manifest, line => line.EndsWith($"  {Evidence.Result}", StringComparison.Ordinal));
             Assert.Contains(manifest, line => line.EndsWith($"  {Evidence.Timeline}", StringComparison.Ordinal));
+
+            // The run stops what it started.
+            var status = await cli.RunAsync("status", "--instance", instance);
+            Assert.Equal(ExitCodes.NotRunning, status.ExitCode);
         }
         catch
         {
@@ -68,10 +72,41 @@ public sealed class ScenarioTests
             Keep(evidence);
             throw;
         }
+    }
 
-        // The run stops what it started.
+    [Fact(Timeout = 300_000)]
+    public async Task ARunWhoseEvidenceCannotBeWrittenStillStopsItsSystem()
+    {
+        // A full disk: not one evidence file can be written, the timeline included.
+        await using var cli = new CliRunner(TestContext.Current.CancellationToken);
+        var instance = cli.NewInstance();
+        var found = ScenarioFile.Find(Repository, "deliberately-wrong")!.Value;
+        var scenario = ScenarioFile.Load(Repository, found.Name, found.Path).Scenario!;
+        var runner = new ScenarioRunner(Repository, new Instances.InstanceStore(cli.Home), TextWriter.Null)
+        {
+            CreateEvidence = (root, name, _) => new Evidence(Path.Combine(root, "never-created", name), "unwritable", new FailingWriter()),
+        };
+
+        var outcome = await runner.RunAsync(
+            scenario, instance, CliRunner.SqlServer, TestKeyStore.Store, Path.Combine(cli.Home, "evidence"), keepUp: false, TestContext.Current.CancellationToken);
+
+        var result = Assert.IsType<ScenarioResult>(outcome.Result);
+        Assert.True(result.Teardown.Stopped, result.Teardown.Error);
+        Assert.Equal(Verdict.DoesNotHold.ExitCode(), outcome.ExitCode);
+        Assert.False(result.EvidenceComplete);
+        Assert.Contains(result.EvidenceMissing, m => m.StartsWith(Evidence.Timeline, StringComparison.Ordinal));
         var status = await cli.RunAsync("status", "--instance", instance);
         Assert.Equal(ExitCodes.NotRunning, status.ExitCode);
+    }
+
+    /// <summary>A timeline on a full disk.</summary>
+    private sealed class FailingWriter : TextWriter
+    {
+        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+
+        public override void Write(char value) => throw new IOException("There is not enough space on the disk.");
+
+        public override void WriteLine(string? value) => throw new IOException("There is not enough space on the disk.");
     }
 
     [Fact(Timeout = 300_000)]
