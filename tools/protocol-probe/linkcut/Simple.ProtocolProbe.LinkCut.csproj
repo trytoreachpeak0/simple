@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Loopback stand-in for a silently dropped link (#18 step 4/5 on the
+       development machine, where Windows Firewall does not filter loopback
+       traffic). Not used on real machines. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <AssemblyName>simple-probe-linkcut</AssemblyName>
+    <RootNamespace>Simple.ProtocolProbe.LinkCut</RootNamespace>
+  </PropertyGroup>
+
+</Project>

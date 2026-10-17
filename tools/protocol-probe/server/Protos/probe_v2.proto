@@ -1,0 +1,28 @@
+// Probe protocol, major version 2. It exists only so that the server serves
+// two majors side by side (ADR 0026); its content is a stand-in for an
+// incompatible change (vehicle_id renamed and retyped).
+syntax = "proto3";
+
+package simple.probe.v2;
+
+option csharp_namespace = "Simple.ProtocolProbe.V2";
+
+service Probe {
+  rpc Connect(stream Report) returns (stream Downstream);
+}
+
+message Report {
+  uint64 seq = 1;
+  uint64 elapsed_ms = 2;
+  string instance_id = 3;
+  reserved 4;
+  reserved "vehicle_id";
+  repeated uint64 received_command_ids = 5;
+  string client_version = 6;
+  uint32 protocol_minor = 7;
+  uint32 vehicle_number = 8;
+}
+
+message Downstream {
+  string message = 1;
+}
