@@ -24,6 +24,17 @@ public sealed partial class LocalSystem(string repository, InstanceStore store, 
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(5) };
 
+    /// <summary>
+    /// The configuration the command line itself was built in (Debug through
+    /// simple.ps1, Release on CI). Components are built the same way, so on CI
+    /// the solution's Release build is reused instead of building Debug anew.
+    /// </summary>
+    private static readonly string Configuration =
+        typeof(LocalSystem).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyConfigurationAttribute), false)
+            .OfType<System.Reflection.AssemblyConfigurationAttribute>().FirstOrDefault()?.Configuration is { Length: > 0 } configuration
+            ? configuration
+            : "Debug";
+
     public string Repository { get; } = repository;
 
     public async Task<Outcome> UpAsync(string instance, string sqlServer, UpOptions options, TimeSpan timeout, CancellationToken cancellationToken)
@@ -346,7 +357,7 @@ public sealed partial class LocalSystem(string repository, InstanceStore store, 
             RedirectStandardError = true,
             UseShellExecute = false,
         };
-        foreach (var argument in new[] { "build", project, "-nologo", "-nodeReuse:false", "-t:Build", "-getProperty:TargetPath" })
+        foreach (var argument in new[] { "build", project, "-c", Configuration, "-nologo", "-nodeReuse:false", "-t:Build", "-getProperty:TargetPath" })
         {
             start.ArgumentList.Add(argument);
         }
