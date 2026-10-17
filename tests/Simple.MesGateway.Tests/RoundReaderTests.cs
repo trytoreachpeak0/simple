@@ -12,6 +12,9 @@ public sealed class RoundReaderTests : IDisposable
 {
     private static readonly TimeSpan Step = TimeSpan.FromSeconds(1);
 
+    /// <summary>The first waits of an exponential backoff from 1 s without jitter.</summary>
+    private static readonly TimeSpan[] PlainBackoff = [.. new[] { 1, 2, 4, 8, 16 }.Select(s => TimeSpan.FromSeconds(s))];
+
     private readonly Clock time = new();
     private readonly SnapshotStore snapshots = new();
     private readonly ScriptedSource source;
@@ -118,6 +121,36 @@ public sealed class RoundReaderTests : IDisposable
         Assert.InRange(Gaps(source.Reads)[0], TimeSpan.Zero, TimeSpan.FromSeconds(4));
     }
 
+    [Fact]
+    public async Task ASourceThatReturnsNothingIsAFormatFailureAndTheReaderGoesOn()
+    {
+        source.ReturnNothingLeft = 2;
+
+        await reader.StartAsync(Cancel);
+        await AdvanceUntilAsync(() => snapshots.Latest.Round >= 1);
+        var nothing = snapshots.Latest;
+        await AdvanceUntilAsync(() => snapshots.Latest.Succeeded);
+        await reader.StopAsync(Cancel);
+
+        Assert.Equal(new MesReadFailure(MesReadFailure.Format, "The source returned no result."), nothing.Failure);
+        Assert.Equal(3, snapshots.Latest.Round);
+    }
+
+    [Fact]
+    public async Task RetryWaitsAreJittered()
+    {
+        source.FailuresLeft = int.MaxValue;
+
+        // A fine clock, so a jittered wait shows as such: without jitter the
+        // first waits would be exactly 1, 2, 4, 8 and 16 s.
+        await reader.StartAsync(Cancel);
+        await AdvanceUntilAsync(() => source.Reads.Count >= 6, TimeSpan.FromMilliseconds(100), 5000);
+        await reader.StopAsync(Cancel);
+
+        var gaps = Gaps(source.Reads).Take(5).ToList();
+        Assert.False(gaps.SequenceEqual(PlainBackoff), $"The waits are not jittered: {string.Join(", ", gaps)}");
+    }
+
     private static List<TimeSpan> Gaps(IReadOnlyList<DateTimeOffset> times) =>
         times.Zip(times.Skip(1), (a, b) => b - a).ToList();
 
@@ -126,9 +159,9 @@ public sealed class RoundReaderTests : IDisposable
     /// Before each step it waits until the reader is parked on its next wait,
     /// so no step happens while the reader is between a read and its wait.
     /// </summary>
-    private async Task AdvanceUntilAsync(Func<bool> condition)
+    private async Task AdvanceUntilAsync(Func<bool> condition, TimeSpan? step = null, int steps = 2000)
     {
-        for (var i = 0; i < 2000; i++)
+        for (var i = 0; i < steps; i++)
         {
             await WaitUntilParkedAsync();
             if (condition())
@@ -136,10 +169,10 @@ public sealed class RoundReaderTests : IDisposable
                 return;
             }
 
-            time.Advance(Step);
+            time.Advance(step ?? Step);
         }
 
-        Assert.Fail("The condition did not hold within 2000 steps of the fake clock.");
+        Assert.Fail($"The condition did not hold within {steps} steps of the fake clock.");
     }
 
     /// <summary>Every read is followed by exactly one wait (a retry wait or the round interval); parked means that wait is pending.</summary>
@@ -191,6 +224,8 @@ public sealed class RoundReaderTests : IDisposable
 
         public int MalformedLeft { get; set; }
 
+        public int ReturnNothingLeft { get; set; }
+
         public Action? OnRead { get; set; }
 
         public IReadOnlyList<DateTimeOffset> Reads
@@ -216,6 +251,12 @@ public sealed class RoundReaderTests : IDisposable
             {
                 FailuresLeft--;
                 throw new IOException(FailureMessage);
+            }
+
+            if (ReturnNothingLeft > 0)
+            {
+                ReturnNothingLeft--;
+                return Task.FromResult<MesReadResult>(null!);
             }
 
             object?[] values = [Row.TaskType, Row.Sublot, Row.Area, Row.Eqp, Row.Step, Row.Dates, Row.Package];

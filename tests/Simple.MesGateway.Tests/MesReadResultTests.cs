@@ -47,6 +47,19 @@ public sealed class MesReadResultTests
         { [.. MesColumns.All], ["T", "S", "A1-1", "E", "ST", "2026-01-05", 42], "Row 1 has a value of type Int32 in PACKAGE; expected text or a date." },
     };
 
+    [Fact]
+    public void NullsWhereTheTypesPromiseNoneAreAWrongShapeNotACrash()
+    {
+        Assert.False(new MesReadResult(null!, []).TryGetRows(out _, out var noColumns));
+        Assert.Equal("The result has no column list.", noColumns);
+        Assert.False(new MesReadResult(MesColumns.All, null!).TryGetRows(out _, out var noRows));
+        Assert.Equal("The result has no row list.", noRows);
+        Assert.False(new MesReadResult([.. MesColumns.All.Take(6), null!], []).TryGetRows(out _, out var unnamed));
+        Assert.Equal("Column 7 has no name.", unnamed);
+        Assert.False(new MesReadResult(MesColumns.All, [Values, null!]).TryGetRows(out _, out var missing));
+        Assert.Equal("Row 2 is missing.", missing);
+    }
+
     [Theory]
     [MemberData(nameof(WrongShapes))]
     public void AResultOfTheWrongShapeIsRefusedWithTheReason(string[] columns, object?[] row, string reason)

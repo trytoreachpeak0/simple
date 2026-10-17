@@ -25,9 +25,22 @@ public sealed record MesReadResult(IReadOnlyList<string> Columns, IReadOnlyList<
     public bool TryGetRows(out IReadOnlyList<MesRow> rows, out string? error)
     {
         rows = [];
+        // The types say these are never null; a source that breaks that is malformed, not a crash.
+        if (Columns is null || Rows is null)
+        {
+            error = Columns is null ? "The result has no column list." : "The result has no row list.";
+            return false;
+        }
+
         var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < Columns.Count; i++)
         {
+            if (Columns[i] is null)
+            {
+                error = $"Column {i + 1} has no name.";
+                return false;
+            }
+
             if (!MesColumns.All.Contains(Columns[i], StringComparer.OrdinalIgnoreCase))
             {
                 error = $"The result has a column {Columns[i]} the query does not have.";
@@ -51,6 +64,12 @@ public sealed record MesReadResult(IReadOnlyList<string> Columns, IReadOnlyList<
         for (var r = 0; r < Rows.Count; r++)
         {
             var row = Rows[r];
+            if (row is null)
+            {
+                error = $"Row {r + 1} is missing.";
+                return false;
+            }
+
             if (row.Count != Columns.Count)
             {
                 error = $"Row {r + 1} has {row.Count} values for {Columns.Count} columns.";

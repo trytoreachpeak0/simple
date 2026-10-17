@@ -45,7 +45,7 @@ public sealed partial class RoundReader(
     {
         var round = snapshots.NextRound();
         var readAt = time.GetUtcNow();
-        MesReadResult result;
+        MesReadResult? result;
         try
         {
             result = await source.ReadAsync(cancellationToken);
@@ -57,9 +57,28 @@ public sealed partial class RoundReader(
             throw new RoundFailedException();
         }
 
-        if (!result.TryGetRows(out var rows, out var error))
+        IReadOnlyList<MesRow> rows;
+        string? error;
+        try
         {
-            Fail(round, readAt, new MesReadFailure(MesReadFailure.Format, error!), null);
+            if (result is null)
+            {
+                (rows, error) = ([], "The source returned no result.");
+            }
+            else
+            {
+                result.TryGetRows(out rows, out error);
+            }
+        }
+        catch (Exception e)
+        {
+            // Turning a result into rows must not stop the gateway either.
+            (rows, error) = ([], $"The result could not be turned into rows: {e.Message}");
+        }
+
+        if (error is not null)
+        {
+            Fail(round, readAt, new MesReadFailure(MesReadFailure.Format, error), null);
             throw new RoundFailedException();
         }
 

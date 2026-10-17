@@ -34,8 +34,12 @@ builder.Services.AddOptions<GatewaySettings>()
     .Configure<IConfiguration>((settings, configuration) => settings.ReadFrom(configuration))
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<GatewaySettings>, GatewaySettingsValidator>();
-builder.Services.AddSingleton<FakeMesSource>();
-builder.Services.AddSingleton<IMesSource>(services => services.GetRequiredService<FakeMesSource>());
+if (configured.UsesFakeSource)
+{
+    builder.Services.AddSingleton<FakeMesSource>();
+    builder.Services.AddSingleton<IMesSource>(services => services.GetRequiredService<FakeMesSource>());
+}
+
 builder.Services.AddSingleton<SnapshotStore>();
 builder.Services.AddHostedService<RoundReader>();
 builder.Services.AddHealthChecks().AddCheck<FirstRoundHealthCheck>("first-round", tags: ["ready"]);
@@ -49,6 +53,7 @@ app.MapOpenApi();
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") });
 app.MapSnapshotEndpoints();
+// The control API exists only with the fake source behind it.
 if (configured.UsesFakeSource)
 {
     app.MapFakeMesEndpoints();
@@ -56,6 +61,10 @@ if (configured.UsesFakeSource)
 
 try
 {
+    // Validate before the hosted services are built: without a known source
+    // there is nothing to build the round reader from, and the reason must
+    // be the setting, not a missing service.
+    _ = app.Services.GetRequiredService<IOptions<GatewaySettings>>().Value;
     await app.RunAsync();
     return 0;
 }

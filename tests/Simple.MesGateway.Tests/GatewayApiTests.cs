@@ -2,7 +2,12 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
+using Simple.MesGateway.Configuration;
 using Simple.MesGateway.Fake;
 using Simple.MesGateway.Rounds;
 using Simple.MesGateway.Sources;
@@ -115,6 +120,31 @@ public sealed class GatewayApiTests : IAsyncLifetime
         Assert.Equal(0, state.FailuresPending);
     }
 
+    [Fact]
+    public async Task WithAnotherSourceThereIsNoFakeAndNoControlApi()
+    {
+        await using var other = new OtherSourceFactory();
+        using var otherClient = other.CreateClient();
+
+        var control = await otherClient.GetAsync(new Uri("/fake-mes/", UriKind.Relative), Cancel);
+        var add = await otherClient.PostAsJsonAsync(new Uri("/fake-mes/rows", UriKind.Relative), new MesRow("X", "Y", null, null, null, null, null), Cancel);
+
+        Assert.Equal(HttpStatusCode.NotFound, control.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, add.StatusCode);
+        Assert.Null(other.Services.GetService<FakeMesSource>());
+        // The snapshot comes from that other source.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        MesSnapshot snapshot;
+        do
+        {
+            snapshot = (await otherClient.GetFromJsonAsync<MesSnapshot>(new Uri("/api/v1/snapshot", UriKind.Relative), Cancel))!;
+            Assert.True(DateTime.UtcNow < deadline, "No round from the other source within 10 s.");
+        }
+        while (!snapshot.Succeeded);
+
+        Assert.Equal(OtherSourceFactory.Row, Assert.Single(snapshot.Rows!));
+    }
+
     /// <summary>Reads the snapshot until it satisfies the condition, within 10 s (rounds here are 100 ms apart).</summary>
     private async Task<MesSnapshot> NextSnapshotAsync(Func<MesSnapshot, bool> condition)
     {
@@ -129,6 +159,31 @@ public sealed class GatewayApiTests : IAsyncLifetime
 
             Assert.True(DateTime.UtcNow < deadline, $"No such snapshot within 10 s; the last was round {snapshot.Round}, succeeded {snapshot.Succeeded}.");
             await Task.Delay(20, Cancel);
+        }
+    }
+
+    /// <summary>
+    /// The gateway with a source other than the fake, as a real one will be.
+    /// The validator still knows only the fake, so it is taken out here.
+    /// </summary>
+    private sealed class OtherSourceFactory : WebApplicationFactory<Program>
+    {
+        public static readonly MesRow Row = new("OTHER", "O1", "S9-9", "E", "ST", "2026-01-01T00:00:00", "P");
+
+        protected override void ConfigureWebHost(IWebHostBuilder builder) =>
+            builder
+                .UseSetting("Simple:Mes:Source", "Other")
+                .UseSetting("Simple:Mes:RoundInterval", "00:00:00.1")
+                .ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<IValidateOptions<GatewaySettings>>();
+                    services.AddSingleton<IMesSource, OtherSource>();
+                });
+
+        private sealed class OtherSource : IMesSource
+        {
+            public Task<MesReadResult> ReadAsync(CancellationToken cancellationToken) =>
+                Task.FromResult(new MesReadResult(MesColumns.All, [new object?[] { Row.TaskType, Row.Sublot, Row.Area, Row.Eqp, Row.Step, Row.Dates, Row.Package }]));
         }
     }
 
