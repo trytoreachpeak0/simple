@@ -39,7 +39,7 @@ internal sealed record ProbeServerOptions(
             LogFile: log,
             Tls: config["tls"] ?? "12",
             KeyAlgorithm: config["key-alg"] ?? "ecdsa",
-            KeyLoad: config["key-load"] ?? "user",
+            KeyLoad: OneOf(config["key-load"] ?? "user", "key-load", "user", "machine"),
             RequireClientCertificate: (config["client-cert"] ?? "require") == "require",
             CommandInterval: Seconds(config["command-interval"], 10),
             StaleAfter: Seconds(config["stale-after"], 10),
@@ -49,6 +49,9 @@ internal sealed record ProbeServerOptions(
             PingTimeout: Seconds(config["ping-timeout"], 20),
             ConsoleLog: (config["console-log"] ?? "true") == "true");
     }
+
+    private static string OneOf(string value, string name, params string[] allowed) =>
+        allowed.Contains(value) ? value : throw new ArgumentException($"--{name} must be one of {string.Join('|', allowed)}, not '{value}'");
 
     private static TimeSpan Seconds(string? value, double fallback) =>
         TimeSpan.FromSeconds(value is null ? fallback : double.Parse(value, System.Globalization.CultureInfo.InvariantCulture));

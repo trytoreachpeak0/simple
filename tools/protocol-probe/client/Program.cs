@@ -20,7 +20,17 @@ if (parsed.ContainsKey("reset"))
     return 0;
 }
 
-var options = ClientOptions.From(parsed);
+ClientOptions options;
+try
+{
+    options = ClientOptions.From(parsed);
+}
+catch (ArgumentException ex)
+{
+    await Console.Error.WriteLineAsync($"refusing to start: {ex.Message}");
+    return 2;
+}
+
 var loggerConfig = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Grpc", LogEventLevel.Information)

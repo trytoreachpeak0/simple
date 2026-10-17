@@ -22,13 +22,14 @@ other process. Step 4 uses linkcut on the vehicle PC (listening on 127.0.0.1
 only) because the vehicle PC's firewall profile is off.
 
 .EXAMPLE
-pwsh -File tools/protocol-probe/field/Run-Field.ps1 -Run F:/simple/probe-run/18-field -Steps 1,3
+pwsh -File tools/protocol-probe/field/Run-Field.ps1 -Run F:/simple/probe-run/18-field -ServerAlias factory01 -ClientAlias agv03 -ServerBind 172.19.205.222 -Steps 1,3,4,6,7,8,9,2
+pwsh -File tools/protocol-probe/field/Run-Field.ps1 -Run F:/simple/probe-run/18-field -ServerAlias factory01 -ClientAlias agv03 -ServerBind 172.19.205.222 -Steps Collect,Cleanup
 #>
 param(
     [Parameter(Mandatory)] [string] $Run,
     [Parameter(Mandatory)] [string[]] $Steps,
-    [string] $ServerAlias = 'factory01',
-    [string] $ClientAlias = 'agv03',
+    [Parameter(Mandatory)] [string] $ServerAlias,
+    [Parameter(Mandatory)] [string] $ClientAlias,
     [Parameter(Mandatory)] [string] $ServerBind,
     [string] $ServerRoot = 'D:/simple-probe',
     [string] $ClientRoot = 'C:/simple-probe',
@@ -76,8 +77,11 @@ function Select-Log([string] $Path, [string] $Pattern, [int] $After = 0) {
     for ($i = $After; $i -lt $lines.Count; $i++) { if ($lines[$i] -cmatch $Pattern) { $lines[$i] } }
 }
 
+# Runs a script on the remote machine. It travels as -EncodedCommand: piping it
+# to 'pwsh -Command -' silently skips a multi-line block at the end of the input.
 function Invoke-Remote([string] $Alias, [string] $Script) {
-    $Script | ssh -T $Alias 'pwsh -NoProfile -Command -'
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
+    ssh -T $Alias "pwsh -NoProfile -EncodedCommand $encoded"
 }
 
 function Start-Remote([string] $Name, [string] $Alias, [string] $Exe, [string[]] $ArgList) {
@@ -107,15 +111,21 @@ function Send-Line([string] $Name, [string] $Text) {
     $p.StandardInput.Flush()
 }
 
-function Stop-Remote([string] $Name) {
+# Stops a remote probe process: 'quit' on its console first (the server then
+# disposes its certificate, which removes the temporary key container), and
+# only if it has not exited after 10 s, or with -Kill, Stop-Process by its pid.
+function Stop-Remote([string] $Name, [switch] $Kill) {
     $entry = $script:Procs[$Name]
     if (-not $entry) { return }
-    $start = @(Select-Log $entry.Mirror 'START (server|client) pid=\d+') | Select-Object -Last 1
-    if ($start -match 'pid=(\d+)') {
-        Invoke-Remote $entry.Alias "Get-Process -Id $($Matches[1]) -ErrorAction SilentlyContinue | Where-Object { `$_.Path -like '*simple-probe*' } | Stop-Process -Force" | Out-Null
-    }
-    elseif (-not $entry.Process.HasExited) {
+    if (-not $Kill -and -not $entry.Process.HasExited) {
         try { Send-Line $Name 'quit' } catch { Write-Host "quit to $Name failed: $_" }
+    }
+    if ($Kill -or -not $entry.Process.WaitForExit(10000)) {
+        $start = @(Select-Log $entry.Mirror 'START (server|client) pid=\d+') | Select-Object -Last 1
+        if ($start -match 'pid=(\d+)') {
+            Invoke-Remote $entry.Alias "Get-Process -Id $($Matches[1]) -ErrorAction SilentlyContinue | Where-Object { `$_.Path -like '*simple-probe*' } | Stop-Process -Force" | Out-Null
+        }
+        Write-Host "killed $Name"
     }
     if (-not $entry.Process.WaitForExit(10000)) { $entry.Process.Kill($true) }
     $entry.OutTask.Wait(3000) | Out-Null
@@ -288,7 +298,7 @@ function Step-6 {
     if (-not $script:Procs['client-a']) { throw 'client-a must be running' }
     $rows = foreach ($down in 10, 60) {
         $cAfter = Get-LineCount (M 'client-a')
-        Stop-Remote 'server'
+        Stop-Remote 'server' -Kill
         $killed = Get-Date
         Start-Sleep -Seconds $down
         Start-Server 'server' "step6-server-down$down.log"
@@ -358,7 +368,7 @@ function Step-8 {
     # (d)1 quick reconnect with the same key while the server still holds the old connection.
     Start-LinkCut 'linkcut' 'step8-linkcut.log'
     Start-Client 'client-a' 'client-a' 'step8-client-a.log' -Server "https://127.0.0.1:$RelayPort"
-    if (-not (Wait-Line (M 'client-a') 'RX status=Accepted' 60 ((Get-LineCount (M 'client-a')) - 1))) { }
+    if (-not (Wait-Line (M 'client-a') 'RX status=Accepted' 60 ((Get-LineCount (M 'client-a')) - 1))) { throw 'client-a not accepted through linkcut before step 8 (d)' }
     Start-Sleep -Seconds 4
     $sAfter = Get-LineCount (M 'server')
     $rows = foreach ($i in 1..10) {
@@ -451,6 +461,50 @@ function Step-2 {
     Add-Excerpt '资源（服务端，首末）' (@(Select-Log (M 'server') 'RESOURCE' $sAfter | Select-Object -First 1) + @(Select-Log (M 'server') 'RESOURCE' $sAfter | Select-Object -Last 1))
     Add-Excerpt '资源（客户端，首末）' (@(Select-Log (M 'client-a') 'RESOURCE' | Select-Object -Last 31 | Select-Object -First 1) + @(Select-Log (M 'client-a') 'RESOURCE' | Select-Object -Last 1))
     Save-Result 'step2'
+}
+
+function Step-Collect {
+    foreach ($pair in @(@($ServerAlias, $ServerRoot), @($ClientAlias, $ClientRoot))) {
+        $target = Join-Path $Run "logs/$($pair[0])"
+        New-Item -ItemType Directory -Force $target | Out-Null
+        scp -q -r "$($pair[0]):$($pair[1])/logs/*" $target
+        Write-Host "collected $(@(Get-ChildItem $target).Count) log files from $($pair[0])"
+    }
+}
+
+function Step-Cleanup {
+    Start-Result '第 11 步：清理核对'
+    # Terminal identities first, while the client executable is still there.
+    $dirs = @(Invoke-Remote $ClientAlias "Get-ChildItem '$ClientRoot' -Directory -ErrorAction SilentlyContinue | Where-Object Name -like 'client-*' | ForEach-Object Name")
+    foreach ($d in $dirs) { Reset-Client $d.Trim() }
+    # Temporary key containers the server left behind when it was killed.
+    $names = @(Get-ChildItem (Join-Path $Run 'mirror') -Filter 'server*.log' | ForEach-Object { Select-Log $_.FullName 'keyContainer=\{[0-9A-Fa-f-]+\} machine=True' } |
+        ForEach-Object { [regex]::Match($_, 'keyContainer=(\{[0-9A-Fa-f-]+\})').Groups[1].Value } | Sort-Object -Unique)
+    $list = ($names | ForEach-Object { "'$_'" }) -join ','
+    $containerScript = @"
+`$p = [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider
+foreach (`$n in @($list)) {
+    `$before = [System.Security.Cryptography.CngKey]::Exists(`$n, `$p, 'MachineKey')
+    if (`$before) { [System.Security.Cryptography.CngKey]::Open(`$n, `$p, 'MachineKey').Delete() }
+    "container `$n existedBefore=`$before existsAfter=`$([System.Security.Cryptography.CngKey]::Exists(`$n, `$p, 'MachineKey'))"
+}
+"@
+    $containers = @(Invoke-Remote $ServerAlias $containerScript)
+    Add-Result "- factory01 上服务端留下的临时密钥容器（取自全部服务端日志的 keyContainer=，共 $($names.Count) 个）："
+    Add-Excerpt '按名删除' $containers
+    $check = @"
+"probeProcesses=`$(@(Get-Process | Where-Object { `$_.Path -like '*simple-probe*' }).Count)"
+"probeCertsLocalMachine=`$(@(Get-ChildItem Cert:\LocalMachine\My | Where-Object Subject -like '*simple-probe*').Count)"
+"probeCertsCurrentUser=`$(@(Get-ChildItem Cert:\CurrentUser\My | Where-Object Subject -like '*simple-probe*').Count)"
+"probeMachineKeyNames=`$(@(certutil -key -csp 'Microsoft Software Key Storage Provider' 2>&1 | Select-String 'simple-probe').Count)"
+"probeFirewallRules=`$(@(Get-NetFirewallRule -DisplayName 'simple-probe*' -ErrorAction SilentlyContinue).Count)"
+"@
+    foreach ($pair in @(@($ServerAlias, $ServerRoot), @($ClientAlias, $ClientRoot))) {
+        Invoke-Remote $pair[0] "Remove-Item -Recurse -Force '$($pair[1])' -ErrorAction SilentlyContinue" | Out-Null
+        $lines = @(Invoke-Remote $pair[0] ($check + "`n`"dirExists=`$(Test-Path '$($pair[1])')`""))
+        Add-Excerpt "$($pair[0]) 清理后核对（目录 $($pair[1]) 已删除）" $lines
+    }
+    Save-Result 'cleanup'
 }
 
 try {

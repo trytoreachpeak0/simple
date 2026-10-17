@@ -73,7 +73,12 @@ internal sealed record ClientOptions(
             KeepAlivePingTimeout: Seconds("keepalive-timeout", 10),
             KeyProvider: Get("key-provider", "software"),
             KeyAlgorithm: Get("key-alg", "ecdsa"),
-            MachineKeyStore: Get("key-store", "user") == "machine",
+            MachineKeyStore: Get("key-store", "user") switch
+            {
+                "machine" => true,
+                "user" => false,
+                var other => throw new ArgumentException($"--key-store must be user or machine, not '{other}'"),
+            },
             ClaimVehicle: args.GetValueOrDefault("claim-vehicle"),
             ConsoleLog: Get("console-log", "true") == "true");
     }

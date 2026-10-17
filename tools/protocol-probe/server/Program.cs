@@ -27,7 +27,17 @@ if (foreign.Count > 0)
     return 2;
 }
 
-var options = ProbeServerOptions.From(builder.Configuration);
+ProbeServerOptions options;
+try
+{
+    options = ProbeServerOptions.From(builder.Configuration);
+}
+catch (ArgumentException ex)
+{
+    await Console.Error.WriteLineAsync($"refusing to start: {ex.Message}");
+    return 2;
+}
+
 Directory.CreateDirectory(options.DataDirectory);
 
 var loggerConfig = new LoggerConfiguration()
@@ -47,7 +57,9 @@ builder.Host.UseSerilog();
 
 try
 {
-    var certificate = ServerCertificate.LoadOrCreate(options.DataDirectory, options.KeyAlgorithm, options.KeyLoad);
+    // Disposing the certificate at the end of the run removes the temporary key
+    // container the PFX was imported into; a killed process leaves it behind.
+    using var certificate = ServerCertificate.LoadOrCreate(options.DataDirectory, options.KeyAlgorithm, options.KeyLoad);
     Log.Information(
         "START server pid={Pid} os={Os} runtime={Runtime} arch={Arch} bind={Bind}:{Port} tls={Tls} data={Data} log={LogFile}",
         Environment.ProcessId, RuntimeInformation.OSDescription, RuntimeInformation.FrameworkDescription,

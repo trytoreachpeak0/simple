@@ -12,10 +12,12 @@ namespace Simple.ProtocolProbe.Server;
 /// <c>--key-load machine</c> imports the key into the machine key store instead
 /// of the user's. The probe uses it when it is run over SSH: an SSH public-key
 /// logon has no DPAPI master key, so the default import fails ("Access is
-/// denied"). In-memory keys (<c>--key-load ephemeral</c>) do not work either:
+/// denied"). In-memory keys (EphemeralKeySet) were tried and do not work:
 /// SChannel refuses them ("the platform does not support ephemeral keys").
-/// The imported key container is temporary and is removed when the process
-/// exits normally; its name is logged so that a killed process can be cleaned up.
+/// Either way the PFX is imported into a temporary key container, which is
+/// removed when the certificate is disposed (Program.cs does so when the server
+/// stops through its console). A killed process leaves the container behind;
+/// its name is logged at start so that it can be deleted afterwards.
 /// </summary>
 internal static class ServerCertificate
 {
@@ -27,12 +29,7 @@ internal static class ServerCertificate
             File.WriteAllBytes(path, Create(keyAlgorithm));
         }
 
-        var flags = keyLoad switch
-        {
-            "ephemeral" => X509KeyStorageFlags.EphemeralKeySet,
-            "machine" => X509KeyStorageFlags.MachineKeySet,
-            _ => X509KeyStorageFlags.DefaultKeySet,
-        };
+        var flags = keyLoad == "machine" ? X509KeyStorageFlags.MachineKeySet : X509KeyStorageFlags.DefaultKeySet;
         return X509CertificateLoader.LoadPkcs12FromFile(path, password: null, flags);
     }
 
@@ -42,7 +39,7 @@ internal static class ServerCertificate
         using var ecdsa = certificate.GetECDsaPrivateKey();
         using var rsa = ecdsa is null ? certificate.GetRSAPrivateKey() : null;
         var cng = (ecdsa as ECDsaCng)?.Key ?? (rsa as RSACng)?.Key;
-        return cng is null ? "unknown" : $"{cng.KeyName ?? "(ephemeral)"} machine={cng.IsMachineKey} provider={cng.Provider?.Provider}";
+        return cng is null ? "unknown" : $"{cng.KeyName} machine={cng.IsMachineKey} provider={cng.Provider?.Provider}";
     }
 
     /// <summary>Hex SHA-256 of the certificate's SubjectPublicKeyInfo: what the client pins.</summary>
