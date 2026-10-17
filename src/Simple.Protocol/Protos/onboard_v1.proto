@@ -1,0 +1,100 @@
+// Protocol major 1 between the server and an onboard terminal (ADR 0024,
+// 0025, 0026). One duplex stream per terminal, two kinds of message, each
+// sent whole: on every change at once, and once a second when nothing
+// changes. A lost message is made good by the next one, so there is no
+// heartbeat, handshake, acknowledgement, resend or deduplication table: the
+// first report and the first desired state are the handshake.
+//
+// Within major 1 only optional content is added. Existing fields never
+// change meaning, a removed field's number is reserved and never reused, and
+// a receiver ignores fields it does not know. Anything else is major 2, in a
+// package of its own (simple.protocol.v2).
+//
+// The terminal names the major it speaks in the request header
+// simple-protocol-major (ProtocolVersion.MajorHeader). The server refuses a
+// major it does not serve with FAILED_PRECONDITION and lists the majors it
+// serves in the trailer simple-supported-majors.
+syntax = "proto3";
+
+package simple.protocol.v1;
+
+option csharp_namespace = "Simple.Protocol.V1";
+
+service OnboardLink {
+  // Opened by the terminal; one at a time per terminal.
+  rpc Connect(stream OnboardReport) returns (stream DesiredState);
+}
+
+// Terminal to server: what the terminal sees.
+message OnboardReport {
+  // 1, 2, 3… on this stream.
+  uint64 seq = 1;
+  // The seq of the latest DesiredState the terminal had received on this
+  // stream when it wrote this report; 0 for none yet. The report was written
+  // no earlier than the server sent that state, which is how the server
+  // bounds the report's age on its own clock (ADR 0024).
+  uint64 last_received_seq = 2;
+  // The terminal program's version.
+  string terminal_version = 3;
+  // The vehicle this terminal is configured for (ADR 0007).
+  string vehicle_id = 4;
+  // Whether the terminal can read its IO module.
+  bool io_module_readable = 5;
+  // The raw value of every IO point (filled in by the IO module ticket).
+  repeated IoPoint io_points = 6;
+  // Onboard inputs not yet acknowledged: a report carries an input until a
+  // DesiredState arrives whose last_received_seq reaches the report that
+  // first carried it. Never carried over to a new stream.
+  repeated OnboardInput inputs = 7;
+  // Unlock requests executed or refused during this run of the terminal
+  // (filled in by the unlock ticket).
+  repeated UnlockExecution unlock_executions = 8;
+}
+
+// One IO point's raw value. Its fields come with the IO module.
+message IoPoint {
+}
+
+// One unlock request the terminal executed or refused. Its fields come with
+// unlock requests.
+message UnlockExecution {
+}
+
+// A person at the vehicle pressed a button or scanned a code.
+message OnboardInput {
+  // Unique within this run of the terminal; the server counts an input once
+  // however many reports carry it.
+  uint64 id = 1;
+  oneof kind {
+    Scan scan = 2;
+    ButtonPress button_press = 3;
+  }
+}
+
+// A barcode scanner types like a keyboard and ends with Enter; text is what
+// it typed before the Enter, as typed.
+message Scan {
+  string text = 1;
+}
+
+// A button on the screen, as the screen description named it.
+message ButtonPress {
+  string button = 1;
+}
+
+// Server to terminal: what the terminal should be.
+message DesiredState {
+  // 1, 2, 3… on this stream.
+  uint64 seq = 1;
+  // The seq of the latest OnboardReport the server had received on this
+  // stream; 0 for none yet.
+  uint64 last_received_seq = 2;
+  // What the screen shows.
+  Screen screen = 3;
+}
+
+// A generic screen description that the terminal draws without knowing the
+// business behind it (ADR 0024). Text only in this version.
+message Screen {
+  string text = 1;
+}

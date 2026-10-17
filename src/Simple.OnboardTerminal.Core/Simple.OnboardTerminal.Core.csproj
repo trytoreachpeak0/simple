@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The onboard terminal without a window: connection, messages, inputs.
+       The WPF shell and the headless host both run it. -->
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.Net.Client" />
+    <PackageReference Include="Polly.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Simple.Protocol\Simple.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Simple.OnboardTerminal.Core.Tests" />
+  </ItemGroup>
+
+</Project>

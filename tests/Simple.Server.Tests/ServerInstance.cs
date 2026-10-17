@@ -1,11 +1,15 @@
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Simple.Server.Configuration;
 using Simple.Server.Mes;
+using Simple.Server.OnboardTerminals;
 using Simple.Server.Persistence;
 
 namespace Simple.Server.Tests;
@@ -13,11 +17,18 @@ namespace Simple.Server.Tests;
 /// <summary>
 /// One server instance, run in process, with a database of its own: a random
 /// instance name, so concurrent tests and sessions never share a database.
-/// Disposing stops the server and drops the database. Its MES gateway is a
-/// <see cref="StubMesGateway"/> that answers a good, empty round unless a
-/// test tells it otherwise, so the MES adds nothing to the event record.
+/// Disposing stops the server, drops the database and deletes the instance's
+/// server key. Its MES gateway is a <see cref="StubMesGateway"/> that answers
+/// a good, empty round unless a test tells it otherwise, so the MES adds
+/// nothing to the event record.
 /// </summary>
-public sealed class ServerInstance : IAsyncDisposable
+/// <param name="kestrel">
+/// Listen on real loopback sockets (the API on http://127.0.0.1:0, the
+/// terminal endpoint on https://127.0.0.1:0) instead of the in-memory test
+/// server; needed to reach the terminal endpoint.
+/// </param>
+/// <param name="time">Replaces the server's clock, for example with a FakeTimeProvider.</param>
+public sealed class ServerInstance(string? instance = null, bool kestrel = false, TimeProvider? time = null) : IAsyncDisposable
 {
     /// <summary>
     /// The SQL Server instance the test databases are created on, without a
@@ -29,13 +40,29 @@ public sealed class ServerInstance : IAsyncDisposable
             ? configured
             : @"Server=(localdb)\MSSQLLocalDB;Integrated Security=true";
 
-    private readonly Dictionary<string, string?> settings;
     private WebApplicationFactory<Program>? factory;
 
-    public ServerInstance(string? instance = null)
+    public string Instance { get; } = instance ?? $"test_{Guid.NewGuid():N}"[..17];
+
+    public StubMesGateway MesGateway { get; } = new();
+
+    public ServerSettings Database => new() { Instance = Instance, ConnectionString = SqlServer };
+
+    public IServiceProvider Services =>
+        factory?.Services ?? throw new InvalidOperationException("The server is not running.");
+
+    /// <summary>With <c>kestrel</c>: where the API listens.</summary>
+    public Uri ApiAddress => Addresses().Single(a => a.Scheme == Uri.UriSchemeHttp);
+
+    /// <summary>Starts the server (migrating its database) and returns a client for its API.</summary>
+    public HttpClient Start()
     {
-        Instance = instance ?? $"test_{Guid.NewGuid():N}"[..17];
-        settings = new()
+        if (factory is not null)
+        {
+            throw new InvalidOperationException("The server is already running.");
+        }
+
+        var settings = new Dictionary<string, string?>
         {
             [ServerSettings.InstanceKey] = Instance,
             [ServerSettings.ConnectionStringKey] = SqlServer,
@@ -45,35 +72,36 @@ public sealed class ServerInstance : IAsyncDisposable
             [$"{MesGatewaySettings.Section}:RetryMaxDelay"] = "00:00:00.3",
             [$"{MesGatewaySettings.Section}:StaleAfter"] = "00:00:02",
         };
-        Database = new ServerSettings { Instance = Instance, ConnectionString = SqlServer };
-    }
-
-    public string Instance { get; }
-
-    public StubMesGateway MesGateway { get; } = new();
-
-    public ServerSettings Database { get; }
-
-    public IServiceProvider Services =>
-        factory?.Services ?? throw new InvalidOperationException("The server is not running.");
-
-    /// <summary>Starts the server (migrating its database) and returns a client for it.</summary>
-    public HttpClient Start()
-    {
-        if (factory is not null)
+        // Without real sockets there is no terminal endpoint to reach, so none
+        // is configured, and no server key is made for the test.
+        settings[ServerSettings.OnboardTerminalsUrlKey] = kestrel ? "https://127.0.0.1:0" : "";
+        if (kestrel)
         {
-            throw new InvalidOperationException("The server is already running.");
+            settings["urls"] = "http://127.0.0.1:0";
         }
 
-        var created = new Factory(settings, MesGateway);
+        var created = new Factory(settings, time, MesGateway);
         try
         {
-            var client = created.CreateClient();
-            factory = created;
+            HttpClient client;
+            if (kestrel)
+            {
+                created.UseKestrel();
+                created.StartServer();
+                factory = created;
+                client = new HttpClient { BaseAddress = ApiAddress };
+            }
+            else
+            {
+                client = created.CreateClient();
+                factory = created;
+            }
+
             return client;
         }
         catch
         {
+            factory = null;
             created.Dispose();
             throw;
         }
@@ -106,17 +134,36 @@ public sealed class ServerInstance : IAsyncDisposable
         }
         finally
         {
-            await DropDatabaseAsync();
+            try
+            {
+                await DropDatabaseAsync();
+            }
+            finally
+            {
+                if (OperatingSystem.IsWindows())
+                {
+                    ServerCertificate.Delete(Database.ServerKeyName, machineKey: false);
+                }
+            }
         }
     }
 
-    private sealed class Factory(Dictionary<string, string?> settings, StubMesGateway mesGateway) : WebApplicationFactory<Program>
+    private List<Uri> Addresses() =>
+        Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Select(a => new Uri(a)).ToList();
+
+    private sealed class Factory(Dictionary<string, string?> settings, TimeProvider? time, StubMesGateway mesGateway) : WebApplicationFactory<Program>
     {
-        protected override void ConfigureWebHost(IWebHostBuilder builder) =>
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
             builder
                 .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(settings))
                 .ConfigureTestServices(services => services
                     .AddHttpClient(MesGatewayPoller.HttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(mesGateway.CreateHandler));
+            if (time is not null)
+            {
+                builder.ConfigureTestServices(services => services.Replace(ServiceDescriptor.Singleton(time)));
+            }
+        }
     }
 }

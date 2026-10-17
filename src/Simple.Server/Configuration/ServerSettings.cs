@@ -10,8 +10,13 @@ namespace Simple.Server.Configuration;
 /// </summary>
 public sealed class ServerSettings
 {
+    private string? serverKeyName;
+
     public const string InstanceKey = "Simple:Instance";
     public const string ConnectionStringKey = "ConnectionStrings:Simple";
+    public const string OnboardTerminalsUrlKey = "Simple:OnboardTerminals:Url";
+    public const string ServerKeyNameKey = "Simple:OnboardTerminals:ServerKeyName";
+    public const string ServerKeyStoreKey = "Simple:OnboardTerminals:ServerKeyStore";
 
     /// <summary>
     /// Names this server instance. Two instances on one machine (for example
@@ -25,8 +30,30 @@ public sealed class ServerSettings
     /// </summary>
     public string? ConnectionString { get; set; }
 
-    /// <summary>Every address the server is configured to listen on, keyed by where it came from.</summary>
+    /// <summary>
+    /// Every address the server API is configured to listen on, keyed by where
+    /// it came from. The onboard terminal endpoint is not among them.
+    /// </summary>
     public IList<KeyValuePair<string, string>> ListenAddresses { get; } = [];
+
+    /// <summary>
+    /// The one address onboard terminals connect to (gRPC over TLS, ADR 0025),
+    /// for example <c>https://127.0.0.1:5181</c>; null for none. Unlike the
+    /// API it may be an address other machines reach.
+    /// </summary>
+    public string? OnboardTerminalsUrl { get; set; }
+
+    /// <summary>The name of the persisted key behind the certificate terminals pin (see OnboardTerminals.ServerCertificate).</summary>
+    public string ServerKeyName
+    {
+        get => serverKeyName ?? $"Simple-Server-{Instance}";
+        set => serverKeyName = value;
+    }
+
+    /// <summary><c>User</c> (default): the key store of the account the server runs as; <c>Machine</c>: the machine's.</summary>
+    public string? ServerKeyStore { get; set; }
+
+    public bool ServerKeyIsMachineKey => string.Equals(ServerKeyStore, "Machine", StringComparison.OrdinalIgnoreCase);
 
     public string DatabaseName => $"Simple_{Instance}";
 
@@ -37,6 +64,9 @@ public sealed class ServerSettings
     {
         Instance = configuration[InstanceKey];
         ConnectionString = configuration[ConnectionStringKey];
+        OnboardTerminalsUrl = configuration[OnboardTerminalsUrlKey] is { Length: > 0 } url ? url : null;
+        serverKeyName = configuration[ServerKeyNameKey] is { Length: > 0 } keyName ? keyName : null;
+        ServerKeyStore = configuration[ServerKeyStoreKey];
 
         ListenAddresses.Clear();
         AddList("urls", configuration["urls"]);

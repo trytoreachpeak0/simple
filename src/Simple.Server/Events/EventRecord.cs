@@ -31,10 +31,38 @@ public static class EventTypes
 
     /// <summary>The MES is available again after <see cref="MesUnreachable"/>.</summary>
     public const string MesRecovered = "mes.recovered";
+
+    /// <summary>
+    /// The server found no key for its terminal certificate and created one:
+    /// the certificate pin is new, and terminals pinned to an earlier key refuse
+    /// the server until they are given it.
+    /// </summary>
+    public const string OnboardServerKeyCreated = "onboard.server-key-created";
+
+    /// <summary>The first report arrived on a terminal's new stream.</summary>
+    public const string OnboardConnected = "onboard.connected";
+
+    /// <summary>A terminal's stream ended; data says why.</summary>
+    public const string OnboardDisconnected = "onboard.disconnected";
+
+    /// <summary>A terminal's freshest report has become older than ten seconds (ADR 0009, 0024): its reports are stale.</summary>
+    public const string OnboardStale = "onboard.stale";
+
+    /// <summary>A fresh report arrived from a terminal whose reports were stale.</summary>
+    public const string OnboardFresh = "onboard.fresh";
+
+    /// <summary>A stream was refused, for example for a protocol major the server does not serve (ADR 0026).</summary>
+    public const string OnboardRefused = "onboard.refused";
+
+    /// <summary>A person at the vehicle scanned or pressed a button. Recorded only, not acted on yet.</summary>
+    public const string OnboardInputReceived = "onboard.input-received";
 }
 
-/// <summary>The entries an event can come through (ADR 0019): the server itself, later the console, MCP and onboard terminals.</summary>
+/// <summary>The entries an event can come through (ADR 0019): the server itself and onboard terminals, later the console and MCP.</summary>
 public static class EventSources
 {
     public const string Server = "server";
+
+    /// <summary>A person at a vehicle, through its onboard terminal.</summary>
+    public const string OnboardTerminal = "onboard-terminal";
 }

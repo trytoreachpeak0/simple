@@ -26,7 +26,7 @@ public sealed partial class LocalSystem(
     /// the command line starts a local system only, and these are how a real
     /// endpoint or another database would reach a component.
     /// </summary>
-    private static readonly string[] ScrubbedPrefixes = ["Simple__", "ConnectionStrings__", "ASPNETCORE_"];
+    private static readonly string[] ScrubbedPrefixes = ["Simple__", "ConnectionStrings__", "ASPNETCORE_", "Kestrel__"];
 
     private static readonly string[] ScrubbedNames =
     [
@@ -54,10 +54,6 @@ public sealed partial class LocalSystem(
     {
         ArgumentNullException.ThrowIfNull(options);
         var components = Components.All.Where(c => c.Count(options) > 0).ToList();
-        if (options.Terminals > 0 && Components.All.All(c => c.Count(options) == c.Count(options with { Terminals = 0 })))
-        {
-            return Outcome.Fail(ExitCodes.Usage, "--terminals: no component of this build runs per onboard terminal yet.");
-        }
 
         using var held = await store.LockInstanceAsync(instance, LockWait, cancellationToken);
         if (held is null)
@@ -134,6 +130,7 @@ public sealed partial class LocalSystem(
 
         var processes = new List<ProcessRecord>();
         InstanceState state;
+        var contexts = new List<(Component Component, string Name, ComponentContext Context)>();
         using (var portsHeld = await store.LockPortsAsync(LockWait, cancellationToken))
         {
             if (portsHeld is null)
@@ -145,12 +142,13 @@ public sealed partial class LocalSystem(
             var needed = components.Sum(c => c.Count(options) * c.PortsPerProcess);
             var ports = PortAllocator.Allocate(instance, needed, port => !claimed.Contains(port) && PortAllocator.CanBind(port));
             state = new InstanceState(instance, Repository, sqlServer, DateTimeOffset.UtcNow, ports, processes);
+            // Recorded before anything starts: from here on, these ports are
+            // claimed and no other instance chooses them.
             store.Write(state);
 
             // Hand the ports out in start order.
             var next = 0;
             var portsOf = new Dictionary<string, IReadOnlyList<int>>();
-            var contexts = new List<(Component Component, string Name, ComponentContext Context)>();
             foreach (var component in components)
             {
                 var index = 0;
@@ -159,12 +157,19 @@ public sealed partial class LocalSystem(
                     index++;
                     portsOf[name] = ports.Skip(next).Take(component.PortsPerProcess).ToList();
                     next += component.PortsPerProcess;
-                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf)));
+                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name))));
                 }
             }
+        }
 
-            var environment = ComponentEnvironment();
-            foreach (var (component, name, context) in contexts)
+        // One component at a time, each ready before the next starts: a
+        // component may need one before it (terminals need the server's
+        // certificate pin).
+        var deadline = Stopwatch.StartNew();
+        var environment = ComponentEnvironment();
+        foreach (var group in contexts.GroupBy(c => c.Component))
+        {
+            foreach (var (component, name, context) in group)
             {
                 var executable = executables[component.Name];
                 var log = store.LogPath(instance, name);
@@ -172,9 +177,15 @@ public sealed partial class LocalSystem(
                 (int Pid, DateTimeOffset StartedAt) started;
                 try
                 {
+                    if (component.Prepare is { } prepare)
+                    {
+                        await prepare(context, Http, cancellationToken);
+                    }
+
                     started = ChildProcess.Start(executable, component.Arguments(context), Path.GetDirectoryName(executable)!, environment, log);
                 }
-                catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException)
+                catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException or HttpRequestException or JsonException or InvalidOperationException
+                    || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
                 {
                     var stopped = await StopAllAsync(state, cancellationToken);
                     store.Delete(state);
@@ -184,19 +195,19 @@ public sealed partial class LocalSystem(
                 processes.Add(new ProcessRecord(name, component.Name, context.Index, started.Pid, started.StartedAt, executable, context.Ports, log));
                 store.Write(state);
             }
-        }
 
-        var failure = await WaitUntilReadyAsync(state, timeout, cancellationToken);
-        if (failure is not null)
-        {
-            var stopped = await StopAllAsync(state, cancellationToken);
-            store.Delete(state);
-            var tail = Tail(failure.Value.Process.Log, 20);
-            return Outcome.Fail(
-                ExitCodes.NotReady,
-                $"{failure.Value.Process.Name} {failure.Value.Reason}. Its log: {failure.Value.Process.Log}",
-                new { failure.Value.Process.Name, failure.Value.Reason, failure.Value.Process.Log, LogTail = tail, Stopped = stopped },
-                ["Last lines of the log:", .. tail]);
+            var failure = await WaitUntilReadyAsync(processes.Where(p => p.Component == group.Key.Name).ToList(), state, timeout - deadline.Elapsed, cancellationToken);
+            if (failure is not null)
+            {
+                var stopped = await StopAllAsync(state, cancellationToken);
+                store.Delete(state);
+                var tail = Tail(failure.Value.Process.Log, 20);
+                return Outcome.Fail(
+                    ExitCodes.NotReady,
+                    $"{failure.Value.Process.Name} {failure.Value.Reason}. Its log: {failure.Value.Process.Log}",
+                    new { failure.Value.Process.Name, failure.Value.Reason, failure.Value.Process.Log, LogTail = tail, Stopped = stopped },
+                    ["Last lines of the log:", .. tail]);
+            }
         }
 
         var ready = await ReportAsync(state, cancellationToken);
@@ -243,6 +254,7 @@ public sealed partial class LocalSystem(
             : stopped.Select(s => $"{s.Name} (pid {s.Pid}): {s.Outcome}"));
 
         bool? dropped = null;
+        bool? keyDeleted = null;
         if (reset)
         {
             if (await VerifySqlServerAsync(sqlServer, cancellationToken) is { } refused)
@@ -267,9 +279,16 @@ public sealed partial class LocalSystem(
             lines.Add(dropped.Value
                 ? $"Dropped database {SqlServerTarget.DatabaseName(instance)} on {SqlServerTarget.DataSource(sqlServer)}."
                 : $"Database {SqlServerTarget.DatabaseName(instance)} did not exist on {SqlServerTarget.DataSource(sqlServer)}.");
+
+            // The instance's server key goes with its database: the next up
+            // makes a new one, and its terminals' settings are written anew.
+            keyDeleted = ServerKey.Delete(Components.ServerKeyName(instance));
+            lines.Add(keyDeleted.Value
+                ? $"Deleted the server key {Components.ServerKeyName(instance)}."
+                : $"The server key {Components.ServerKeyName(instance)} did not exist.");
         }
 
-        var result = new { Instance = instance, WasRunning = state is not null, Stopped = stopped, DatabaseDropped = dropped };
+        var result = new { Instance = instance, WasRunning = state is not null, Stopped = stopped, DatabaseDropped = dropped, ServerKeyDeleted = keyDeleted };
         var forced = stopped.Where(s => s.Outcome == StopOutcome.Killed).ToList();
         return forced.Count > 0
             ? Outcome.Fail(
@@ -455,10 +474,11 @@ public sealed partial class LocalSystem(
         }
     }
 
-    private async Task<(ProcessRecord Process, string Reason)?> WaitUntilReadyAsync(InstanceState state, TimeSpan timeout, CancellationToken cancellationToken)
+    private async Task<(ProcessRecord Process, string Reason)?> WaitUntilReadyAsync(
+        IReadOnlyList<ProcessRecord> processes, InstanceState state, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var deadline = Stopwatch.StartNew();
-        var waiting = state.Processes.ToList();
+        var waiting = processes.ToList();
         progress.WriteLine($"Waiting for {string.Join(", ", waiting.Select(p => p.Name))} to be ready...");
         while (true)
         {
@@ -482,18 +502,20 @@ public sealed partial class LocalSystem(
 
             if (deadline.Elapsed > timeout)
             {
-                return (waiting[0], $"was not ready within {timeout.TotalSeconds} s");
+                return (waiting[0], "was not ready within --timeout");
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
         }
     }
 
-    private static Task<bool> IsReadyAsync(InstanceState state, ProcessRecord process, CancellationToken cancellationToken)
+    private Task<bool> IsReadyAsync(InstanceState state, ProcessRecord process, CancellationToken cancellationToken)
     {
         var component = Components.All.First(c => c.Name == process.Component);
         var portsOf = state.Processes.ToDictionary(p => p.Name, p => p.Ports);
-        return component.IsReady(new ComponentContext(state.Instance, state.SqlServer, process.Index, process.Ports, portsOf), Http, cancellationToken);
+        var context = new ComponentContext(
+            state.Instance, state.SqlServer, process.Index, process.Ports, portsOf, store.ProcessDirectory(state.Instance, process.Name));
+        return component.IsReady(context, Http, cancellationToken);
     }
 
     /// <summary>Stops every recorded process, last started first.</summary>
@@ -537,7 +559,7 @@ public sealed partial class LocalSystem(
         return StopOutcome.Killed;
     }
 
-    private static async Task<InstanceReport> ReportAsync(InstanceState state, CancellationToken cancellationToken)
+    private async Task<InstanceReport> ReportAsync(InstanceState state, CancellationToken cancellationToken)
     {
         var processes = new List<ProcessReport>();
         JsonElement? server = null;
@@ -632,6 +654,7 @@ public sealed record InstanceReport(
         $"Instance {Instance} from {Repository}, database {Database} on {SqlServer}",
         .. Processes.Select(p => $"  {p.Name,-12} {(p.Ready ? "ready" : p.Alive ? "not ready" : "gone"),-10} pid {p.Pid,-7} {p.Url}  log {p.Log}"),
         .. MesLine(),
+        .. TerminalLines(),
     ];
 
     /// <summary>What the server last learned from the MES gateway, from its status.</summary>
@@ -673,4 +696,27 @@ public sealed record InstanceReport(
 
     private static string? Text(JsonElement element, string name) =>
         Field(element, name) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
+
+    /// <summary>The onboard terminals as the server sees them, from its status.</summary>
+    private IEnumerable<string> TerminalLines()
+    {
+        if (Server is not { } server
+            || !server.TryGetProperty("onboardTerminals", out var terminals)
+            || terminals.ValueKind != JsonValueKind.Array
+            || terminals.GetArrayLength() == 0)
+        {
+            yield break;
+        }
+
+        yield return "Onboard terminals, as the server sees them:";
+        foreach (var t in terminals.EnumerateArray())
+        {
+            var age = t.GetProperty("freshReportAgeSeconds") is { ValueKind: JsonValueKind.Number } seconds
+                ? $"freshest report {seconds.GetDouble().ToString("0.0", CultureInfo.InvariantCulture)} s old"
+                : "no fresh report yet";
+            yield return $"  {t.GetProperty("vehicleId").GetString(),-12} {(t.GetProperty("connected").GetBoolean() ? "connected" : "disconnected"),-12} "
+                + $"{(t.GetProperty("stale").GetBoolean() ? "STALE" : "fresh"),-6} {age}, version {t.GetProperty("terminalVersion").GetString()}, "
+                + $"screen \"{t.GetProperty("screenText").GetString()}\"";
+        }
+    }
 }
