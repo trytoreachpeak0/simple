@@ -12,5 +12,18 @@ if ($LASTEXITCODE -ne 0) {
     exit 3
 }
 
-& ([IO.Path]::ChangeExtension("$($built[-1])".Trim(), '.exe')) @args
-exit $LASTEXITCODE
+# Into a pipe the command line writes UTF-8 (Program.cs), but pwsh reads a
+# native command's output in [Console]::OutputEncoding, the console's code
+# page (936 on a Chinese Windows): a caller capturing `& ./simple.ps1 ... --json`
+# would get its Chinese mangled. Read it as UTF-8 for this call only.
+$encoding = [Console]::OutputEncoding
+try {
+    try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }
+    & ([IO.Path]::ChangeExtension("$($built[-1])".Trim(), '.exe')) @args
+    $exitCode = $LASTEXITCODE
+}
+finally {
+    try { [Console]::OutputEncoding = $encoding } catch { }
+}
+
+exit $exitCode
