@@ -24,7 +24,7 @@ public sealed class IntegrationLevelContracts : OrderContractTest
     /// product owner's statement (ADR 0011).
     /// </summary>
     [Fact]
-    [Contract("BC-VEH-004", "ADR 0011")]
+    [Contract("BC-VEH-004", "ADR 0011", "#11")]
     [NotVerifiedOnRealRiot("下线的车上，排队中的订单不开始执行（产品负责人，ADR 0011；实验室第 13 轮建单后立即取消，没有观测之后）")]
     public async Task AnOrderForAnOfflineVehicleIsMadeAndStaysQueued()
     {
@@ -43,7 +43,7 @@ public sealed class IntegrationLevelContracts : OrderContractTest
     /// to SUCCESS is the product owner's statement (ADR 0011).
     /// </summary>
     [Fact]
-    [Contract("BC-VEH-004", "ADR 0011")]
+    [Contract("BC-VEH-004", "ADR 0011", "#11")]
     [NotVerifiedOnRealRiot("执行中下线的单照常做完、到成功（产品负责人，ADR 0011；实验室第 13 轮只看到它保持执行中，之后取消了）")]
     public async Task DisablingAVehicleDoesNotStopItsExecutingOrder()
     {
@@ -60,7 +60,7 @@ public sealed class IntegrationLevelContracts : OrderContractTest
     /// The product owner's statement, seen only on the test RIoT (ADR 0011).
     /// </summary>
     [Fact]
-    [Contract("ADR 0011")]
+    [Contract("ADR 0011", "#11")]
     [NotVerifiedOnRealRiot("下线的车上，暂停、挂起的单仍能恢复执行（产品负责人，ADR 0011；只在测试环境观测过）")]
     public async Task AHeldOrderOfAnOfflineVehicleCanContinue()
     {
