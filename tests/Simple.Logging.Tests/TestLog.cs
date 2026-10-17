@@ -56,10 +56,10 @@ internal sealed class TestLog : IDisposable
         {
             System.IO.Directory.Delete(Directory, recursive: true);
         }
-        catch (System.IO.IOException)
+        catch (Exception e) when (e is System.IO.IOException or UnauthorizedAccessException)
         {
-            // Best effort: a log file just closed can still be held for a moment
-            // (a virus scan, for example), and a leftover temp folder does no harm.
+            // Best effort: a file just closed can still be held for a moment
+            // (a virus scan, or a process that has it loaded), and a leftover temp folder does no harm.
         }
     }
 }

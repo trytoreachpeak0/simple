@@ -33,10 +33,10 @@ public sealed class ShellLogTests
             {
                 Directory.Delete(directory, recursive: true);
             }
-            catch (IOException)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                // Best effort: a log file just closed can still be held for a moment
-                // (a virus scan, for example), and a leftover temp folder does no harm.
+                // Best effort: a file just closed can still be held for a moment
+                // (a virus scan, or a process that has it loaded), and a leftover temp folder does no harm.
             }
         }
     }
@@ -89,10 +89,10 @@ public sealed class ShellLogTests
             {
                 Directory.Delete(directory, recursive: true);
             }
-            catch (IOException)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                // Best effort: a log file just closed can still be held for a moment
-                // (a virus scan, for example), and a leftover temp folder does no harm.
+                // Best effort: a file just closed can still be held for a moment
+                // (a virus scan, or a process that has it loaded), and a leftover temp folder does no harm.
             }
         }
     }

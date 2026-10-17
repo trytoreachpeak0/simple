@@ -136,10 +136,10 @@ public sealed class TestInputTests
             {
                 Directory.Delete(directory, recursive: true);
             }
-            catch (IOException)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                // Best effort: a log file just closed can still be held for a moment
-                // (a virus scan, for example), and a leftover temp folder does no harm.
+                // Best effort: a file just closed can still be held for a moment
+                // (a virus scan, or a process that has it loaded), and a leftover temp folder does no harm.
             }
         }
 
@@ -165,6 +165,11 @@ public sealed class TestInputTests
                 catch (HttpRequestException)
                 {
                     // Not listening yet.
+                }
+                catch (TaskCanceledException) when (!Cancel.IsCancellationRequested)
+                {
+                    // The request timed out: on Windows a refused loopback connect
+                    // can take as long as the 2 s timeout. Not listening yet either.
                 }
 
                 Assert.True(DateTime.UtcNow < deadline, "The test input did not answer within 30 s.");
