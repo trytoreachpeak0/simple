@@ -28,8 +28,9 @@ permissions:
   contents: read
   # The timing summary reads this run's job and step times from the API.
   actions: read
-  # Restore reads RIoT.Sdk.* from GitHub Packages (nuget.config). The package
-  # settings grant this repository read access; see docs/adr/0027.
+  # Restore reads RIoT.Sdk.* from GitHub Packages (nuget.config). Those packages
+  # are public, so any repository's GITHUB_TOKEN may read them, but the NuGet
+  # registry still wants a token; see docs/adr/0027.
   packages: read
 
 defaults:

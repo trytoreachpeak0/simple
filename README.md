@@ -28,7 +28,7 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 
 ## 第一次还原之前
 
-RIoT 客户端库 `RIoT.Sdk.*` 来自 `trytoreachpeak0/riot-sdk`，发布在 GitHub Packages（`https://nuget.pkg.github.com/trytoreachpeak0/index.json`），其余包来自 nuget.org，见仓库根的 `nuget.config`。GitHub Packages 连读取也要令牌，所以每台开发机第一次还原（`dotnet restore`、`dotnet build`、`./simple up` 都会还原）之前，要在本机用户级的 NuGet 配置里存一次令牌：
+RIoT 客户端库 `RIoT.Sdk.*` 来自 `trytoreachpeak0/riot-sdk`，发布在 GitHub Packages（`https://nuget.pkg.github.com/trytoreachpeak0/index.json`），其余包来自 nuget.org，见仓库根的 `nuget.config`。这几个包是公开的，但 GitHub 的 NuGet 源连读取公开包也要令牌，所以每台开发机第一次还原（`dotnet restore`、`dotnet build`、`./simple up` 都会还原）之前，要在本机用户级的 NuGet 配置里存一次令牌：
 
 1. 在 GitHub 的 Settings → Developer settings → Personal access tokens → Tokens (classic) 新建一个令牌，只勾 `read:packages`。GitHub Packages 只认 classic 令牌。
 2. 在 PowerShell 7 里执行下面这条命令，把 `<令牌>` 换成刚建的令牌。源的名字必须是 `github`，和 `nuget.config` 里的一致：
