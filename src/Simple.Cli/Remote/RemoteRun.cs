@@ -27,6 +27,8 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
     public const int KeepRuns = 20;
 
     private const string BaseRef = "refs/remotes/origin/main";
+
+    /// <summary>The agent is missing there, or its content does not match the hash in its name.</summary>
     private const int AgentMissing = 199;
 
     private static readonly Lazy<byte[]> Agent = new(() =>
@@ -375,7 +377,9 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
 
             throw new RemoteException(
                 ExitCodes.RemoteFailed,
-                $"The remote side on {machine.Name} ended with exit code {exitCode} without reporting what happened.");
+                exitCode == AgentMissing
+                    ? $"{machine.Root}/bin/{AgentFile} on {machine.Name} is missing or does not match its name, even after copying it again."
+                    : $"The remote side on {machine.Name} ended with exit code {exitCode} without reporting what happened.");
         }
     }
 

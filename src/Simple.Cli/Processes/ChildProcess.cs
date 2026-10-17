@@ -34,12 +34,22 @@ public static class ChildProcess
     /// while it is still open, so even a process that exits at once is
     /// recorded as itself.
     /// </summary>
+    /// <param name="breakAway">
+    /// Start it outside the job the command line runs in. Only simple remote
+    /// up asks for it: over SSH the command line runs in the session's job,
+    /// which kills every process in it when the session ends (on simple01,
+    /// 2026-10-17: KILL_ON_JOB_CLOSE | BREAKAWAY_OK), and the components must
+    /// outlive it. Everywhere else they stay in the caller's job, so a job
+    /// that cleans up after a run (a CI runner's) still catches a component
+    /// a test failed to stop.
+    /// </param>
     public static unsafe (int Pid, DateTimeOffset StartedAt) Start(
         string executable,
         IReadOnlyList<string> arguments,
         string workingDirectory,
         IReadOnlyDictionary<string, string> environment,
-        string logPath)
+        string logPath,
+        bool breakAway = false)
     {
         ArgumentNullException.ThrowIfNull(arguments);
         ArgumentNullException.ThrowIfNull(environment);
@@ -80,51 +90,30 @@ public static class ChildProcess
                     lpAttributeList = attributes,
                 };
 
+                var commandLine = (CommandLine.Quote(executable) + " " + CommandLine.Join(arguments) + "\0").ToCharArray();
                 var block = EnvironmentBlock(environment);
-                PROCESS_INFORMATION information = default;
-                var flags = PROCESS_CREATION_FLAGS.CREATE_NO_WINDOW
-                    | PROCESS_CREATION_FLAGS.CREATE_UNICODE_ENVIRONMENT
-                    | PROCESS_CREATION_FLAGS.EXTENDED_STARTUPINFO_PRESENT;
-
-                // Started over SSH (simple remote up), the command line runs in
-                // the session's job, which kills every process in it when the
-                // session ends; the components must outlive it. On simple01 that
-                // job allows breaking away (2026-10-17: KILL_ON_JOB_CLOSE |
-                // BREAKAWAY_OK). A job that does not allow it refuses the flag
-                // with access denied, and the component starts inside it as
-                // before.
-                foreach (var breakaway in new[] { PROCESS_CREATION_FLAGS.CREATE_BREAKAWAY_FROM_JOB, default })
+                PROCESS_INFORMATION information;
+                fixed (char* commandLinePointer = commandLine)
+                fixed (char* blockPointer = block)
+                fixed (char* directory = workingDirectory)
+                fixed (char* application = executable)
                 {
-                    // CreateProcess may write into the command line, so each attempt gets its own copy.
-                    var commandLine = (CommandLine.Quote(executable) + " " + CommandLine.Join(arguments) + "\0").ToCharArray();
-                    bool created;
-                    fixed (char* commandLinePointer = commandLine)
-                    fixed (char* blockPointer = block)
-                    fixed (char* directory = workingDirectory)
-                    fixed (char* application = executable)
-                    {
-                        created = PInvoke.CreateProcess(
+                    if (!PInvoke.CreateProcess(
                             application,
                             commandLinePointer,
                             null,
                             null,
                             true,
-                            flags | breakaway,
+                            CreationFlags(breakAway),
                             blockPointer,
                             directory,
                             (STARTUPINFOW*)&startup,
-                            &information);
-                    }
-
-                    if (created)
+                            &information))
                     {
-                        break;
-                    }
-
-                    var error = Marshal.GetLastPInvokeError();
-                    if (breakaway == default || error != AccessDenied)
-                    {
-                        throw new Win32Exception(error, $"Could not start {executable}");
+                        var error = Marshal.GetLastPInvokeError();
+                        throw breakAway && error == AccessDenied
+                            ? new Win32Exception(error, $"Could not start {executable} outside this session's job: the job does not allow it, and inside it the component would end with the session.")
+                            : new Win32Exception(error, $"Could not start {executable}");
                     }
                 }
 
@@ -155,6 +144,13 @@ public static class ChildProcess
             NativeMemory.Free(attributes);
         }
     }
+
+    /// <summary>How <see cref="Start"/> creates the process.</summary>
+    internal static PROCESS_CREATION_FLAGS CreationFlags(bool breakAway) =>
+        PROCESS_CREATION_FLAGS.CREATE_NO_WINDOW
+            | PROCESS_CREATION_FLAGS.CREATE_UNICODE_ENVIRONMENT
+            | PROCESS_CREATION_FLAGS.EXTENDED_STARTUPINFO_PRESENT
+            | (breakAway ? PROCESS_CREATION_FLAGS.CREATE_BREAKAWAY_FROM_JOB : 0);
 
     /// <summary>
     /// Sends Ctrl+Break to the console of process <paramref name="pid"/>,

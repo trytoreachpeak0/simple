@@ -67,6 +67,36 @@ public sealed class RemoteCommandTests
         Assert.Equal((checkout, slot, true, command == "forget"), (plan.Checkout, plan.Slot, plan.RunsSimple, plan.Forget));
     }
 
+    [Fact]
+    public void OnlyRemoteUpStartsTheComponentsOutsideTheSessionsJob()
+    {
+        var local = SimpleCommand.Create(Environment).Parse(["up"]);
+        var remote = RemotePlan.For("up", ["--terminals", "2"], "unused", json: false);
+
+        Assert.False(local.GetValue<bool>(SimpleCommand.BreakAwayOption));
+        Assert.Equal(["up", SimpleCommand.BreakAwayOption, "--terminals", "2"], remote.Arguments.Skip(4));
+    }
+
+    [Theory]
+    [InlineData("build")]
+    [InlineData("test")]
+    [InlineData("down")]
+    [InlineData("status")]
+    [InlineData("events")]
+    [InlineData("logs")]
+    [InlineData("forget")]
+    public void NoOtherRemoteCommandAsksToBreakAway(string command)
+    {
+        Assert.DoesNotContain(SimpleCommand.BreakAwayOption, RemotePlan.For(command, [], "unused", json: false).Arguments);
+    }
+
+    [Fact]
+    public void WithoutTheSwitchAComponentStaysInTheCallersJob()
+    {
+        Assert.False(Processes.ChildProcess.CreationFlags(breakAway: false).HasFlag(Windows.Win32.System.Threading.PROCESS_CREATION_FLAGS.CREATE_BREAKAWAY_FROM_JOB));
+        Assert.True(Processes.ChildProcess.CreationFlags(breakAway: true).HasFlag(Windows.Win32.System.Threading.PROCESS_CREATION_FLAGS.CREATE_BREAKAWAY_FROM_JOB));
+    }
+
     [Theory]
     [InlineData(null, "SIMPLE_REMOTE is not set")]
     [InlineData("-oProxyCommand=calc", "must be the alias")]

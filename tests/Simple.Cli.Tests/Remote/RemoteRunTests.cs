@@ -137,6 +137,23 @@ public sealed class RemoteRunTests
     }
 
     [Fact]
+    public async Task AnAgentThatDoesNotMatchItsNameIsReplacedBeforeItRuns()
+    {
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+        await RunOkAsync(sandbox, machine);
+        var agent = Path.Combine(sandbox.RemoteRoot, "bin", RemoteRun.AgentFile);
+        File.AppendAllText(agent, "Write-Output 'tampered'; exit 3");
+
+        var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "'ran'");
+
+        Assert.True(exitCode == 0, stderr);
+        Assert.Equal(["ran"], Lines(stdout));
+        Assert.Contains("not running it", stderr, StringComparison.Ordinal);
+        Assert.Equal(2, machine.Sent.Count(f => f == RemoteRun.AgentFile));
+    }
+
+    [Fact]
     public async Task ARunWaitsForTheInstanceAndSaysForWhom()
     {
         await using var sandbox = await GitSandbox.CreateAsync(Cancel);
@@ -217,7 +234,7 @@ public sealed class RemoteRunTests
         var up = await RunAsync(sandbox, machine, "up", "--terminals", "2");
         var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "status", "--json");
 
-        Assert.Equal(["fake simple up --terminals 2"], Lines(up.Stdout));
+        Assert.Equal(["fake simple up --break-away --terminals 2"], Lines(up.Stdout));
         Assert.True(exitCode == 0, stderr);
         using var output = JsonDocument.Parse(stdout);
         var result = output.RootElement.GetProperty("result");

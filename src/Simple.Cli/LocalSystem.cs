@@ -172,7 +172,7 @@ public sealed partial class LocalSystem(
                 (int Pid, DateTimeOffset StartedAt) started;
                 try
                 {
-                    started = ChildProcess.Start(executable, component.Arguments(context), Path.GetDirectoryName(executable)!, environment, log);
+                    started = ChildProcess.Start(executable, component.Arguments(context), Path.GetDirectoryName(executable)!, environment, log, options.BreakAway);
                 }
                 catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException)
                 {

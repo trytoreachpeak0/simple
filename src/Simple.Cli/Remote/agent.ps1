@@ -15,6 +15,16 @@
 param([Parameter(Mandatory)][string] $Request)
 
 $ErrorActionPreference = 'Stop'
+
+# The file is named after the hash of its content. A copy that does not match
+# (cut short, edited by hand) does not run; 199 makes the command line copy it
+# again, as when it is missing.
+$named = [IO.Path]::GetFileNameWithoutExtension($PSCommandPath) -replace '^agent-', ''
+$actual = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant().Substring(0, 12)
+if ($actual -ne $named) {
+    [Console]::Error.WriteLine("simple remote: $PSCommandPath has content hash $actual, not $named; not running it.")
+    exit 199
+}
 $spec = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Request)) | ConvertFrom-Json -AsHashtable
 $root = Split-Path -Parent $PSScriptRoot
 $repo = Join-Path $root 'repo.git'

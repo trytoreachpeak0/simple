@@ -29,10 +29,10 @@ public static class RemoteCommand
             $"Run a command on the remote machine named by {SshMachine.Variable} (an alias in your SSH configuration), against exactly this clone's "
             + "working tree: uncommitted changes and new files are sent as a snapshot commit, nothing is pushed. The instance there is the same "
             + "as here. Like simple itself it starts a local system only: on that machine, on loopback, with its own SQL Server instance. "
-            + "Exit codes: the remote command's own, or 2, 20, 21, 22 (see simple --help).");
+            + "It ends with the exit code of the command it ran there, or: " + SimpleCommand.ExitCodesOf("remote"));
         foreach (var name in RemotePlan.Commands)
         {
-            var command = new Command(name, Descriptions[name]) { TreatUnmatchedTokensAsErrors = false };
+            var command = new Command(name, $"{Descriptions[name]} Ends with that command's exit code, or: {SimpleCommand.ExitCodesOf("remote")}") { TreatUnmatchedTokensAsErrors = false };
             command.SetAction((parse, cancellationToken) => RunAsync(parse, environment, name, cancellationToken));
             remote.Add(command);
         }

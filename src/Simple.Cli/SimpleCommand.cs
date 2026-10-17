@@ -11,6 +11,7 @@ public static partial class SimpleCommand
 {
     public const string InstanceOption = "--instance";
     public const string JsonOption = "--json";
+    public const string BreakAwayOption = "--break-away";
 
     /// <summary>
     /// The exit codes each command can end with, listed in its help. Every
@@ -25,6 +26,8 @@ public static partial class SimpleCommand
         ["status"] = [0, 1, 2, 5, 6],
         ["events"] = [0, 1, 2, 5],
         ["logs"] = [0, 1, 2, 5],
+        // Besides the exit code of the command it ran on the remote machine.
+        ["remote"] = [1, 2, 5, 20, 21, 22],
     };
 
     /// <summary>Builds the command tree. The actions run against <paramref name="environment"/>.</summary>
@@ -106,6 +109,12 @@ public static partial class SimpleCommand
             }
         });
 
+        var breakAway = new Option<bool>(BreakAwayOption)
+        {
+            Description = "Internal, for simple remote up: start the components outside this session's job, so they outlive the SSH session.",
+            Hidden = true,
+        };
+
         var up = new Command(
             "up",
             "Build once, start every component of the local system from the build output, and return when all are ready. "
@@ -113,9 +122,15 @@ public static partial class SimpleCommand
         {
             terminals,
             timeout,
+            breakAway,
         };
         up.SetAction((parse, cancellationToken) => RunAsync(parse, environment, (system, instance) =>
-            system.UpAsync(instance, environment.SqlServer, new UpOptions(parse.GetValue(terminals)), TimeSpan.FromSeconds(parse.GetValue(timeout)), cancellationToken)));
+            system.UpAsync(
+                instance,
+                environment.SqlServer,
+                new UpOptions(parse.GetValue(terminals), parse.GetValue(breakAway)),
+                TimeSpan.FromSeconds(parse.GetValue(timeout)),
+                cancellationToken)));
 
         var down = new Command(
             "down",

@@ -78,7 +78,8 @@ public sealed record Component(
     int? ApiPort);
 
 /// <summary>What <c>up</c> was asked for.</summary>
-public sealed record UpOptions(int Terminals);
+/// <param name="BreakAway">Start the components outside the caller's job (<see cref="Processes.ChildProcess.Start"/>); only simple remote up asks for it.</param>
+public sealed record UpOptions(int Terminals, bool BreakAway = false);
 
 /// <summary>What one process of a component is started with.</summary>
 /// <param name="Index">1-based among the processes of its component.</param>
