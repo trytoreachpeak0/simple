@@ -96,12 +96,19 @@ public sealed class TerminalConnectionTests
         // whether it settled: the session has just seen that the terminal is
         // not stopping, and the retry has not yet looked. The stop lands
         // there, as it can on a busy machine (#55).
+        var before = terminal.Log.Count;
         time.OnNextReading = terminal.Stop;
         await server.StopAsync();
         await Until(() => time.OnNextReading is null);
 
         await terminal.Running;
         Assert.Equal(TerminalState.Disconnected, terminal.Connection.Status.State);
+        // The stop did land in that window: the stream failed while the
+        // terminal was not stopping, and the retry turned it down at once
+        // (a stop after that would have logged "Retry 1" first).
+        var after = terminal.Log.Skip(before).ToList();
+        Assert.Contains(after, l => l.StartsWith("Stream ended", StringComparison.Ordinal) || l.StartsWith("Disconnected (", StringComparison.Ordinal));
+        Assert.DoesNotContain(after, l => l.StartsWith("Retry ", StringComparison.Ordinal));
     }
 
     [Theory]
