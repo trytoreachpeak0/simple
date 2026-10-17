@@ -38,7 +38,7 @@ try
     Log.Information("START client pid={Pid} os={Os} runtime={Runtime} arch={Arch} data={Data} log={LogFile}",
         Environment.ProcessId, RuntimeInformation.OSDescription, RuntimeInformation.FrameworkDescription,
         RuntimeInformation.ProcessArchitecture, options.DataDirectory, options.LogFile);
-    var identity = TerminalIdentity.LoadOrCreate(options.DataDirectory, options.KeyProvider, options.KeyAlgorithm);
+    var identity = TerminalIdentity.LoadOrCreate(options.DataDirectory, options.KeyProvider, options.KeyAlgorithm, options.MachineKeyStore);
     identity.Describe();
 
     using var loggerFactory = new SerilogLoggerFactory(Log.Logger);

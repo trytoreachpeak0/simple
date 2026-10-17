@@ -47,15 +47,15 @@ builder.Host.UseSerilog();
 
 try
 {
-    var certificate = ServerCertificate.LoadOrCreate(options.DataDirectory, options.KeyAlgorithm);
+    var certificate = ServerCertificate.LoadOrCreate(options.DataDirectory, options.KeyAlgorithm, options.KeyLoad);
     Log.Information(
         "START server pid={Pid} os={Os} runtime={Runtime} arch={Arch} bind={Bind}:{Port} tls={Tls} data={Data} log={LogFile}",
         Environment.ProcessId, RuntimeInformation.OSDescription, RuntimeInformation.FrameworkDescription,
         RuntimeInformation.ProcessArchitecture, options.Bind, options.Port, options.Tls, options.DataDirectory, options.LogFile);
     File.WriteAllText(Path.Combine(options.DataDirectory, "server-pin.txt"), ServerCertificate.Pin(certificate));
     Log.Information(
-        "SERVER-CERT subject={Subject} keyAlg={KeyAlg} notAfter={NotAfter:o} pin(sha256 of SubjectPublicKeyInfo)={Pin}",
-        certificate.Subject, options.KeyAlgorithm, certificate.NotAfter, ServerCertificate.Pin(certificate));
+        "SERVER-CERT subject={Subject} keyAlg={KeyAlg} keyLoad={KeyLoad} keyContainer={Container} notAfter={NotAfter:o} pin(sha256 of SubjectPublicKeyInfo)={Pin}",
+        certificate.Subject, options.KeyAlgorithm, options.KeyLoad, ServerCertificate.KeyContainer(certificate), certificate.NotAfter, ServerCertificate.Pin(certificate));
 
     builder.WebHost.ConfigureKestrel(kestrel =>
     {

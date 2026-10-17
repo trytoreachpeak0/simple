@@ -20,6 +20,7 @@ internal sealed record ClientOptions(
     TimeSpan KeepAlivePingTimeout,
     string KeyProvider,
     string KeyAlgorithm,
+    bool MachineKeyStore,
     string? ClaimVehicle,
     bool ConsoleLog)
 {
@@ -72,6 +73,7 @@ internal sealed record ClientOptions(
             KeepAlivePingTimeout: Seconds("keepalive-timeout", 10),
             KeyProvider: Get("key-provider", "software"),
             KeyAlgorithm: Get("key-alg", "ecdsa"),
+            MachineKeyStore: Get("key-store", "user") == "machine",
             ClaimVehicle: args.GetValueOrDefault("claim-vehicle"),
             ConsoleLog: Get("console-log", "true") == "true");
     }

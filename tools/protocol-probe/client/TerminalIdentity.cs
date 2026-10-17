@@ -11,6 +11,11 @@ namespace Simple.ProtocolProbe.Client;
 /// Platform Crypto Provider), with a self-signed certificate in
 /// CurrentUser\My. <c>identity.json</c> in the data directory only records
 /// where they are and which vehicle the server confirmed; it holds no secret.
+///
+/// <c>--key-store machine</c> puts the key in the machine key store and the
+/// certificate in LocalMachine\My instead (needs an administrator). The probe
+/// uses it when it is run over SSH: an SSH public-key logon has no DPAPI master
+/// key, so a CurrentUser key cannot be created there ("Access is denied").
 /// </summary>
 internal sealed class TerminalIdentity
 {
@@ -34,21 +39,21 @@ internal sealed class TerminalIdentity
     /// <summary>Hex SHA-256 of the SubjectPublicKeyInfo; the server knows the terminal by it.</summary>
     public string Key => Convert.ToHexStringLower(SHA256.HashData(Certificate.PublicKey.ExportSubjectPublicKeyInfo()));
 
-    public static TerminalIdentity LoadOrCreate(string dataDirectory, string provider, string algorithm)
+    public static TerminalIdentity LoadOrCreate(string dataDirectory, string provider, string algorithm, bool machine)
     {
         var path = Path.Combine(dataDirectory, "identity.json");
         if (!System.IO.File.Exists(path))
         {
-            Create(path, provider, algorithm);
+            Create(path, provider, algorithm, machine);
         }
 
         var file = JsonSerializer.Deserialize<IdentityFile>(System.IO.File.ReadAllText(path), Json)!;
-        using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+        using var store = new X509Store(StoreName.My, file.Location);
         store.Open(OpenFlags.ReadOnly);
         var found = store.Certificates.Find(X509FindType.FindByThumbprint, file.Thumbprint, validOnly: false);
         if (found.Count == 0)
         {
-            throw new InvalidOperationException($"identity.json names certificate {file.Thumbprint}, which is not in CurrentUser\\My; run with --reset");
+            throw new InvalidOperationException($"identity.json names certificate {file.Thumbprint}, which is not in {file.Location}\\My; run with --reset");
         }
 
         return new TerminalIdentity(path, file, found[0]);
@@ -64,7 +69,7 @@ internal sealed class TerminalIdentity
         }
 
         var file = JsonSerializer.Deserialize<IdentityFile>(System.IO.File.ReadAllText(path), Json)!;
-        using (var store = new X509Store(StoreName.My, StoreLocation.CurrentUser))
+        using (var store = new X509Store(StoreName.My, file.Location))
         {
             store.Open(OpenFlags.ReadWrite);
             foreach (var certificate in store.Certificates.Find(X509FindType.FindByThumbprint, file.Thumbprint, validOnly: false))
@@ -72,18 +77,20 @@ internal sealed class TerminalIdentity
                 store.Remove(certificate);
             }
 
-            Log.Information("RESET certificate {Thumbprint} in CurrentUser\\My after removal: {Count}",
-                file.Thumbprint, store.Certificates.Find(X509FindType.FindByThumbprint, file.Thumbprint, validOnly: false).Count);
+            Log.Information("RESET certificate {Thumbprint} in {Location}\\My after removal: {Count}",
+                file.Thumbprint, file.Location, store.Certificates.Find(X509FindType.FindByThumbprint, file.Thumbprint, validOnly: false).Count);
         }
 
         var provider = new CngProvider(file.Provider);
-        if (CngKey.Exists(file.KeyName, provider))
+        var open = file.Machine ? CngKeyOpenOptions.MachineKey : CngKeyOpenOptions.None;
+        if (CngKey.Exists(file.KeyName, provider, open))
         {
-            using var key = CngKey.Open(file.KeyName, provider);
+            using var key = CngKey.Open(file.KeyName, provider, open);
             key.Delete();
         }
 
-        Log.Information("RESET key {KeyName} ({Provider}) exists after removal: {Exists}", file.KeyName, file.Provider, CngKey.Exists(file.KeyName, provider));
+        Log.Information("RESET key {KeyName} ({Provider}, machine={Machine}) exists after removal: {Exists}",
+            file.KeyName, file.Provider, file.Machine, CngKey.Exists(file.KeyName, provider, open));
         System.IO.File.Delete(path);
         Log.Information("RESET {Path} exists after removal: {Exists}", path, System.IO.File.Exists(path));
     }
@@ -99,12 +106,12 @@ internal sealed class TerminalIdentity
         using var ecdsa = Certificate.GetECDsaPrivateKey();
         using var rsa = ecdsa is null ? Certificate.GetRSAPrivateKey() : null;
         var cng = (ecdsa as ECDsaCng)?.Key ?? (rsa as RSACng)?.Key;
-        Log.Information("IDENTITY key={Key} thumbprint={Thumbprint} algorithm={Algorithm} provider={Provider} exportPolicy={Export} keyName={KeyName} vehicle={Vehicle}",
-            Key[..12], Certificate.Thumbprint, File.Algorithm, cng?.Provider?.Provider ?? "?", cng?.ExportPolicy.ToString() ?? "?",
-            File.KeyName, File.VehicleId ?? "-");
+        Log.Information("IDENTITY key={Key} thumbprint={Thumbprint} algorithm={Algorithm} provider={Provider} machineKey={Machine} exportPolicy={Export} store={Store}\\My keyName={KeyName} vehicle={Vehicle}",
+            Key[..12], Certificate.Thumbprint, File.Algorithm, cng?.Provider?.Provider ?? "?", cng?.IsMachineKey.ToString() ?? "?",
+            cng?.ExportPolicy.ToString() ?? "?", File.Location, File.KeyName, File.VehicleId ?? "-");
     }
 
-    private static void Create(string path, string providerChoice, string algorithm)
+    private static void Create(string path, string providerChoice, string algorithm, bool machine)
     {
         var provider = providerChoice == "tpm" ? new CngProvider(TpmProvider) : CngProvider.MicrosoftSoftwareKeyStorageProvider;
         var keyName = $"simple-probe-{Guid.NewGuid():N}";
@@ -114,12 +121,16 @@ internal sealed class TerminalIdentity
         var parameters = providerChoice == "tpm"
             ? new CngKeyCreationParameters { Provider = provider }
             : new CngKeyCreationParameters { Provider = provider, ExportPolicy = CngExportPolicies.None, KeyUsage = CngKeyUsages.AllUsages };
+        if (machine)
+        {
+            parameters.KeyCreationOptions = CngKeyCreationOptions.MachineKey;
+        }
         if (algorithm == "rsa")
         {
             parameters.Parameters.Add(new CngProperty("Length", BitConverter.GetBytes(2048), CngPropertyOptions.None));
         }
 
-        Log.Information("IDENTITY creating key {KeyName} in {Provider} ({Algorithm}, not exportable)", keyName, provider.Provider, algorithm);
+        Log.Information("IDENTITY creating key {KeyName} in {Provider} ({Algorithm}, not exportable, machine={Machine})", keyName, provider.Provider, algorithm, machine);
         using var key = CngKey.Create(algorithm == "rsa" ? CngAlgorithm.Rsa : CngAlgorithm.ECDsaP256, keyName, parameters);
         var subject = new X500DistinguishedName(Subject);
         using AsymmetricAlgorithm signer = algorithm == "rsa" ? new RSACng(key) : new ECDsaCng(key);
@@ -130,7 +141,7 @@ internal sealed class TerminalIdentity
         request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, true));
         request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid("1.3.6.1.5.5.7.3.2")], false));
         using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(20));
-        using (var store = new X509Store(StoreName.My, StoreLocation.CurrentUser))
+        using (var store = new X509Store(StoreName.My, machine ? StoreLocation.LocalMachine : StoreLocation.CurrentUser))
         {
             store.Open(OpenFlags.ReadWrite);
             store.Add(certificate);
@@ -142,6 +153,7 @@ internal sealed class TerminalIdentity
             Provider = provider.Provider,
             Algorithm = algorithm,
             Thumbprint = certificate.Thumbprint,
+            Machine = machine,
         };
         System.IO.File.WriteAllText(path, JsonSerializer.Serialize(file, Json));
     }
@@ -153,5 +165,9 @@ internal sealed class IdentityFile
     public required string Provider { get; init; }
     public required string Algorithm { get; init; }
     public required string Thumbprint { get; init; }
+    public bool Machine { get; init; }
     public string? VehicleId { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public StoreLocation Location => Machine ? StoreLocation.LocalMachine : StoreLocation.CurrentUser;
 }

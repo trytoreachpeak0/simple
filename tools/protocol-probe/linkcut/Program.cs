@@ -12,18 +12,28 @@ using System.Net.Sockets;
 //            it), as after a short Wi-Fi drop where only the client noticed.
 //   status | quit
 // It only stands in for a firewall or a radio switch, which this machine
-// cannot use on loopback.
+// cannot use on loopback. It always listens on loopback; --allow-remote-target
+// lets it forward to another machine, for a vehicle PC whose firewall profile
+// is off (#18 step 4 on agv03).
 var map = new Dictionary<string, string>();
-for (var i = 0; i + 1 < args.Length; i += 2)
+var allowRemoteTarget = false;
+for (var i = 0; i < args.Length; i++)
 {
-    map[args[i].TrimStart('-')] = args[i + 1];
+    if (args[i] == "--allow-remote-target")
+    {
+        allowRemoteTarget = true;
+    }
+    else if (i + 1 < args.Length)
+    {
+        map[args[i].TrimStart('-')] = args[++i];
+    }
 }
 
 var listen = IPEndPoint.Parse(map.GetValueOrDefault("listen", "127.0.0.1:6443"));
 var target = IPEndPoint.Parse(map.GetValueOrDefault("target", "127.0.0.1:5443"));
-if (!IPAddress.IsLoopback(listen.Address) || !IPAddress.IsLoopback(target.Address))
+if (!IPAddress.IsLoopback(listen.Address) || (!allowRemoteTarget && !IPAddress.IsLoopback(target.Address)))
 {
-    Console.Error.WriteLine($"linkcut only relays between loopback addresses; got --listen {listen} --target {target}");
+    Console.Error.WriteLine($"linkcut listens on loopback only, and forwards to loopback unless --allow-remote-target is given; got --listen {listen} --target {target}");
     return 2;
 }
 
