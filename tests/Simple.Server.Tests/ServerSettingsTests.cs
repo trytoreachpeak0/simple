@@ -195,7 +195,7 @@ public sealed class ServerSettingsTests
             Assert.Contains("The server refuses to start", error, StringComparison.Ordinal);
             Assert.Contains(message, error, StringComparison.Ordinal);
             // Run as a service, nobody reads standard error: the reason is in the program log too.
-            var log = string.Concat(Simple.Logging.ProgramLog.Files(logDirectory).Select(File.ReadAllText));
+            var log = Simple.Logging.ProgramLog.ReadText(logDirectory);
             Assert.Contains("[FTL] Simple.Logging.ProgramLog: The server refuses to start", log, StringComparison.Ordinal);
             Assert.Contains(message, log, StringComparison.Ordinal);
         }

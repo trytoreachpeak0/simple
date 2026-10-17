@@ -28,6 +28,9 @@ public sealed class GatewayApiTests : IAsyncLifetime
 
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
+    /// <summary>A count of reads no test outlives: every read fails until the test says otherwise.</summary>
+    private const int Persistent = 1_000_000;
+
     public ValueTask InitializeAsync()
     {
         client = factory.CreateClient();
@@ -89,12 +92,15 @@ public sealed class GatewayApiTests : IAsyncLifetime
     {
         await NextSnapshotAsync(s => s.Succeeded);
 
-        var told = await client.PostAsJsonAsync(new Uri("/fake-mes/failures", UriKind.Relative), new FailRequest(3, "ORA-03135: connection lost contact"), Cancel);
-        Assert.Equal(HttpStatusCode.OK, told.StatusCode);
+        await TellAsync("/fake-mes/failures", new FailRequest(Persistent, "ORA-03135: connection lost contact"), state => state.FailuresPending > 0);
 
         var failed = await NextSnapshotAsync(s => !s.Succeeded);
+        // Every round before the injection succeeded (waited for above), and the
+        // failure says what was injected: that is what ties it to the injection.
         Assert.Equal(new MesReadFailure(MesReadFailure.Read, "ORA-03135: connection lost contact"), failed.Failure);
         Assert.Null(failed.Rows);
+
+        await TellAsync("/fake-mes/failures", new FailRequest(0, null), state => state.FailuresPending == 0);
         var recovered = await NextSnapshotAsync(s => s.Succeeded && s.Round > failed.Round);
         Assert.NotEmpty(recovered.Rows!);
     }
@@ -104,20 +110,18 @@ public sealed class GatewayApiTests : IAsyncLifetime
     {
         await NextSnapshotAsync(s => s.Succeeded);
 
-        await client.PostAsJsonAsync(
-            new Uri("/fake-mes/failures", UriKind.Relative),
-            new FailRequest(1, "ORA-01017: invalid username/password for Data Source=mes01;User Id=simple;Password=Gateway-secret"),
-            Cancel);
+        await TellAsync(
+            "/fake-mes/failures",
+            new FailRequest(Persistent, "ORA-01017: invalid username/password for Data Source=mes01;User Id=simple;Password=Gateway-secret"),
+            state => state.FailuresPending > 0);
         await NextSnapshotAsync(s => !s.Succeeded);
         await factory.DisposeAsync();
 
         var file = Assert.Single(Simple.Logging.ProgramLog.Files(logDirectory));
         Assert.Equal("MesGateway.log", Path.GetFileName(file));
-        // Read the way simple logs reads. In process, the host is released by both the factory and
-        // Program; when the factory returns, Program's side may not have released the program log yet.
-        await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var reader = new StreamReader(stream);
-        var text = await reader.ReadToEndAsync(Cancel);
+        // In process, the host is released by both the factory and Program; when the factory returns,
+        // Program's side may not have released the program log yet, so it is read the way simple logs reads.
+        var text = Simple.Logging.ProgramLog.ReadText(logDirectory);
         Assert.DoesNotContain("Gateway-secret", text, StringComparison.Ordinal);
         Assert.Contains("failed (read), retrying with backoff: ORA-01017: invalid username/password for Data Source=mes01;User Id=simple;Password=***", text, StringComparison.Ordinal);
     }
@@ -127,9 +131,11 @@ public sealed class GatewayApiTests : IAsyncLifetime
     {
         await NextSnapshotAsync(s => s.Succeeded);
 
-        await client.PostAsJsonAsync(new Uri("/fake-mes/malformed", UriKind.Relative), new MalformedRequest(1), Cancel);
+        await TellAsync("/fake-mes/malformed", new MalformedRequest(Persistent), state => state.MalformedPending > 0);
 
         var failed = await NextSnapshotAsync(s => !s.Succeeded);
+        // Every round before the injection succeeded (waited for above), and the
+        // failure says what was injected: that is what ties it to the injection.
         Assert.Equal(MesReadFailure.Format, failed.Failure!.Kind);
         Assert.Matches("^Row [0-9]+ has 6 values for 7 columns\\.$", failed.Failure.Message);
     }
@@ -148,8 +154,10 @@ public sealed class GatewayApiTests : IAsyncLifetime
     [Fact]
     public async Task ResetBringsBackTheSeed()
     {
-        await client.PostAsJsonAsync(new Uri("/fake-mes/rows", UriKind.Relative), new MesRow("X", "Y", null, null, null, null, null), Cancel);
-        await client.PostAsJsonAsync(new Uri("/fake-mes/failures", UriKind.Relative), new FailRequest(100, null), Cancel);
+        // Both must take, or the reset below would have nothing to undo.
+        var added = new MesRow("X", "Y", null, null, null, null, null);
+        await TellAsync("/fake-mes/rows", added, state => state.Rows.Contains(added));
+        await TellAsync("/fake-mes/failures", new FailRequest(100, null), state => state.FailuresPending > 0);
 
         var reset = await client.PostAsync(new Uri("/fake-mes/reset", UriKind.Relative), null, Cancel);
         var state = await reset.Content.ReadFromJsonAsync<FakeMesState>(Cancel);
@@ -181,6 +189,20 @@ public sealed class GatewayApiTests : IAsyncLifetime
         while (!snapshot.Succeeded);
 
         Assert.Equal(OtherSourceFactory.Row, Assert.Single(snapshot.Rows!));
+    }
+
+    /// <summary>
+    /// Tells the fake MES what to do and checks that it took. A failure told
+    /// for one read shows in the snapshot only until the retry 50 ms or so
+    /// later succeeds, which a slow poll misses (#68); the tests therefore
+    /// make every read fail (<see cref="Persistent"/>) and end it themselves.
+    /// </summary>
+    private async Task TellAsync(string path, object request, Func<FakeMesState, bool> took)
+    {
+        using var response = await client.PostAsJsonAsync(new Uri(path, UriKind.Relative), request, Cancel);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var state = await response.Content.ReadFromJsonAsync<FakeMesState>(Cancel);
+        Assert.True(state is not null && took(state), $"The fake MES did not take {path}: {await response.Content.ReadAsStringAsync(Cancel)}");
     }
 
     /// <summary>Reads the snapshot until it satisfies the condition, within 10 s (rounds here are 100 ms apart).</summary>

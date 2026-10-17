@@ -162,6 +162,24 @@ public static partial class ProgramLog
             .ToList();
     }
 
+    /// <summary>
+    /// Everything in a program's log directory, oldest file first, read the way
+    /// <c>simple logs</c> reads it: while the program, or another process such as
+    /// a virus scan, still has a file open.
+    /// </summary>
+    public static string ReadText(string directory)
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (var file in Files(directory))
+        {
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            text.Append(reader.ReadToEnd());
+        }
+
+        return text.ToString();
+    }
+
     private static int Sequence(string name)
     {
         var separator = name.LastIndexOf('_');

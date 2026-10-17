@@ -33,12 +33,10 @@ public sealed class TestInputTests
 
         var file = Assert.Single(ProgramLog.Files(terminal.LogDirectory));
         Assert.Equal("OnboardTerminal.log", Path.GetFileName(file));
-        // The file is still open in the terminal, which shares it for reading.
-        await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var reader = new StreamReader(stream);
+        // The file is still open in the terminal; it is read the way simple logs reads.
         Assert.Contains(
             "[INF] Simple.OnboardTerminal.Core.TerminalConnection: Onboard terminal for vehicle vehicle-1, server https://127.0.0.1:1",
-            await reader.ReadToEndAsync(Cancel),
+            ProgramLog.ReadText(terminal.LogDirectory),
             StringComparison.Ordinal);
     }
 

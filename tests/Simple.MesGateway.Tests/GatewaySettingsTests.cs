@@ -83,7 +83,7 @@ public sealed class GatewaySettingsTests
             // too, unless the log settings themselves are what is wrong.
             if (!argument.StartsWith("--Simple:Logs:", StringComparison.Ordinal))
             {
-                var log = string.Concat(Simple.Logging.ProgramLog.Files(logDirectory).Select(File.ReadAllText));
+                var log = Simple.Logging.ProgramLog.ReadText(logDirectory);
                 Assert.Contains("[FTL] Simple.Logging.ProgramLog: The MES gateway refuses to start", log, StringComparison.Ordinal);
                 Assert.Contains(message, log, StringComparison.Ordinal);
             }
