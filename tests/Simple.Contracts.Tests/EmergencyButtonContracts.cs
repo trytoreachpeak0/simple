@@ -2,24 +2,30 @@ namespace Simple.Contracts.Tests;
 
 /// <summary>
 /// The emergency-stop button on the vehicle, and how it meets RIoT's software
-/// stop. All of it is the product owner's statements (ADR 0009, ADR 0010;
-/// #11). Someone presses the button at the vehicle, so on real RIoT these skip.
+/// stop (ADR 0009, ADR 0010; #11). Someone presses the button at the vehicle,
+/// so on real RIoT these skip.
 /// </summary>
 public sealed class EmergencyButtonContracts : OrderContractTest
 {
-    /// <summary>Pressing the button hangs the executing order (a software stop does not, BC-ORDER-015).</summary>
+    /// <summary>
+    /// Pressing the button does not hang the executing order: it stays
+    /// EXECUTING, held by the stop at speed 0, and the vehicle reads
+    /// CAN_NOT_RECOVER. Round 28 watched for about 14 minutes and saw no HANG.
+    /// ADR 0010 said the opposite until the product owner corrected it to the
+    /// lab's result on 2026-10-18.
+    /// </summary>
     [Fact]
-    [Contract("ADR 0010", "#11")]
-    [NotVerifiedOnRealRiot("按车上的急停按钮会让执行中的订单进挂起（产品负责人，ADR 0010；#7 评论第 5 条；和时间的关系不知道，假 RIoT 当即挂起）")]
-    public async Task PressingTheButtonHangsTheExecutingOrder()
+    [Contract("round 27", "round 28", "Q-035", "BC-ORDER-015", "ADR 0010", "#11")]
+    public async Task PressingTheButtonDoesNotHangTheExecutingOrder()
     {
         var control = Target.RequireControl("按下车上的急停按钮");
-        var (upperId, _) = await ExecutingAsync("button-hang");
+        var (upperId, _) = await ExecutingAsync("button-no-hang");
 
         await control.SetVehicleAsync(Facts.VehicleKey, emergencyButtonPressed: true);
+        await UntilAsync(_ => VehicleAsync(), v => v.EmergencyState == "CAN_NOT_RECOVER", "急停（CAN_NOT_RECOVER）");
 
-        await UntilStateAsync(upperId, OrderStates.Hang);
-        Assert.Equal("CAN_NOT_RECOVER", (await VehicleAsync()).EmergencyState);
+        await ThroughoutAsync(_ => ReadAsync(upperId), o => o.OrderState == OrderStates.Executing, "执行中、不进挂起");
+        Assert.Equal(0d, (await VehicleAsync()).Speed);
     }
 
     /// <summary>

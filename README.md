@@ -269,7 +269,7 @@ RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。�
   | `POST /fake-riot/orders/web` | 正文 `{"vehicleKey", "mapId", "station", "orderName"}`：像有人在 RIoT 网页上手动派单，`upperId` 是空串（Q-043、`cs#617`），回 `{"orderId"}` |
   | `POST /fake-riot/faults/create-00002` | 正文 `{"orderMade": true, "times": 1}`：接下来几次建单回 `00002`；`orderMade` 为 `true` 时单其实建成了，为 `false` 时没建。真 RIoT 的 `00002` 两种都可能，要按"结果未知"对待（R6） |
   | `PUT /fake-riot/order-list/churn` | 正文 `{"ordersPerRead": 1}`：每读一次订单列表之前，别的产线先建这么多单，翻页途中总数会变（`cs#573`）；0 停止 |
-  | `PUT /fake-riot/vehicles/{deviceKey}` | 正文里给哪项改哪项：`battery`（0～100）、`brakeReleased`（松抱闸：执行中的单挂起，`breakSwitchState` 读 `UNMOVABLE`；抱闸还松着时从挂起继续回 `14013` 车辆状态异常）、`mode`（`MODE_AUTO` 或 `MODE_MANUAL`）、`manualCharger`（插手动充电器：`batteryState` 读 `CHARGING`）、`emergencyButtonPressed`（按下车上的急停按钮：`CAN_NOT_RECOVER`、执行中的单挂起，在 RIoT 里解除无效；松开后变 `CAN_RECOVER`，要在 RIoT 里解除）。松抱闸、不是 `MODE_AUTO`、插着手动充电器时，车不接新单、手上的单也不走 |
+  | `PUT /fake-riot/vehicles/{deviceKey}` | 正文里给哪项改哪项：`battery`（0～100）、`brakeReleased`（松抱闸：执行中的单挂起，`breakSwitchState` 读 `UNMOVABLE`；抱闸还松着时从挂起继续回 `14013` 车辆状态异常）、`mode`（`MODE_AUTO` 或 `MODE_MANUAL`）、`manualCharger`（插手动充电器：`batteryState` 读 `CHARGING`）、`emergencyButtonPressed`（按下车上的急停按钮：`CAN_NOT_RECOVER`、执行中的单保持执行中、车停住，在 RIoT 里解除无效；松开后变 `CAN_RECOVER`，要在 RIoT 里解除）。松抱闸、不是 `MODE_AUTO`、插着手动充电器时，车不接新单、手上的单也不走 |
   | `POST /fake-riot/vehicles/{deviceKey}/drive` | 正文 `{"station": 3}`：人不经订单把车开过去，像用手控器（先把 `mode` 切成 `MODE_MANUAL`）或在 Matrix 上操作（`mode` 仍是 `MODE_AUTO`）；车在动、读 `MT_RUNNING`、`procState` 是 `IDLE`，RIoT 里没有订单；这时建的单排着，车到站后才执行（第 38 轮）。车有订单（包括挂起的）时不让开 |
   | `PUT /fake-riot/maps/{mapId}/chargers/{stationId}` | 正文 `{"connected": false}`：拔掉充电器，之后去这个桩的充电单挂起、结果码 `407802` |
   | `POST /fake-riot/maps/{mapId}/stations`、`DELETE /fake-riot/maps/{mapId}/stations/{stationId}` | 像在 RIoT 的地图编辑里新建、删除站点。新站点的站号是这张图有过的最大站号加一，删掉的站号不再分配（ADR 0015）；车站着、出发或要去的站点删不掉（409） |
@@ -283,7 +283,7 @@ RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。�
   - upperId 超过 52 个字符一律回 `00002`：真实上限在 52 到 68 之间，没测出来（BC-ORDER-022），假 RIoT 取最严的一头；
   - 从不出现状态 8：它的含义没查明（U1），实验室一次都没见过，假 RIoT 编不出它会怎样出现；
   - 列表里网页手派单的 `upperId` 是什么形状没观测过（Q-043 第 2 问），假 RIoT 和按 orderId 查一样给空串；
-  - 按急停按钮后订单"多久"进挂起不知道，假 RIoT 当即挂起；从挂起继续后有没有起步延迟没观测过，假 RIoT 不加；
+  - 从挂起继续后有没有起步延迟没观测过，假 RIoT 不加；
   - 充电速度没量过（假 RIoT 用每 1% 36 秒）；行驶不耗电；
   - 没被急停过的暂停，继续后不加起步延迟：约 16 秒只在"暂停 + 急停 + 解除"之后见过（BC-ORDER-020 第 3 条），没有不急停的对照；第 10 轮暂停后继续，约 9 秒已经到站，不支持每次都有 16 秒；
   - 暂停中松抱闸会怎样没观测过（第 27 轮 F 节只看了执行中的单），假 RIoT 让暂停的单保持暂停；
@@ -306,7 +306,7 @@ dotnet test --project tests/Simple.Contracts.Tests --filter-trait "Contract=BC-O
 | --- | --- | --- | --- |
 | 站号永不改变，新站点只递增、删掉的不再分配；站号跨图不唯一 | `StationContracts.ANewStationGetsANumberNoStationHadBefore`、`MapContracts.TwoMapsHaveAStationWithTheSameId` | 0015 | 前者未实测；后者实验室见过（BC-MAP-002） |
 | 订单只在刚创建、还没排队时失败，车在原地 | `FailedOrderContracts.AJustMadeOrderFailsWithTheVehicleWhereItIs`（假 RIoT 拒绝让执行中的单失败，由 `Simple.FakeRiot.Tests` 测） | 0010 | 未实测 |
-| 按急停按钮进挂起；服务端下的急停不进挂起 | `EmergencyButtonContracts.PressingTheButtonHangsTheExecutingOrder`、`EmergencyStopContracts.AnEmergencyStopKeepsTheExecutingOrderExecuting` | 0010 | 前者未实测；后者实验室见过（BC-ORDER-015） |
+| 按急停按钮、服务端下的急停会不会让订单挂起 | `EmergencyButtonContracts.PressingTheButtonDoesNotHangTheExecutingOrder`、`EmergencyStopContracts.AnEmergencyStopKeepsTheExecutingOrderExecuting` | 0010 | 都不会，实验室见过：按按钮第 27、28 轮约 15 分钟订单一直执行中（Q-035），服务端下的急停见 BC-ORDER-015。ADR 0010 原先写"按急停按钮会进挂起"，产品负责人 2026-10-18 按实测改正 |
 | 对挂起的单发取消，变成已取消 | `OrderCommandContracts.CancellingAHungOrderCancelsIt` | 0010 | 未实测 |
 | 一类急停软件解不开；一类触发同时触发二类，一类消除后二类还在；按钮按着时在 RIoT 里解除会立刻再触发 | `EmergencyButtonContracts.WhileTheButtonIsPressedAReleaseInRiotDoesNotReleaseTheStop`、`OnceTheButtonIsLetGoTheStopStaysUntilReleasedInRiot` | 0009 | 部分实测：第 27 轮 A 节见过硬件急停要物理松开后 `cancelEmergency` 才回 `OK`；"立刻再触发""一类带出二类"是产品负责人的说法 |
 | 三类急停解除后车接着走原来的单 | `EmergencyStopContracts.AfterTheStopIsReleasedTheVehicleGoesOnWithItsOrder` | 0009 | 未实测（BC-ORDER-020 第 5 条只是推断） |

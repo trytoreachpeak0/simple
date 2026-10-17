@@ -729,10 +729,12 @@ public sealed class FakeRiotWorld
     /// charger is plugged in or the battery is at the no-order level or below,
     /// RIoT gives the vehicle no order and the vehicle does not move (rounds
     /// 29-F and 30; ADR 0022 and BC-VEH-007, the product owner's statements).
-    /// Pressing the emergency-stop button stops the vehicle (CAN_NOT_RECOVER)
-    /// and hangs its executing order; RIoT cannot release it while the button
-    /// is pressed; letting go leaves the software stop set, CAN_RECOVER, until
-    /// it is released in RIoT (the product owner, ADR 0009 and ADR 0010).
+    /// Pressing the emergency-stop button stops the vehicle (CAN_NOT_RECOVER);
+    /// the executing order stays EXECUTING, held by the stop (rounds 27 A and
+    /// 28: about 14 minutes, never HANG; Q-035). RIoT cannot release it while
+    /// the button is pressed; letting go leaves the software stop set,
+    /// CAN_RECOVER, until it is released in RIoT (round 27 A; the product
+    /// owner, ADR 0009).
     /// </summary>
     public VehicleChange SetVehicle(string key, int? battery, bool? brakeReleased, string? mode, bool? manualCharger, bool? emergencyButtonPressed)
     {
@@ -767,11 +769,6 @@ public sealed class FakeRiotWorld
                 v.ButtonPressed = pressed;
                 v.EmergencyTarget = null;
                 v.Emergency = pressed ? EmergencyStates.CanNotRecover : EmergencyStates.CanRecover;
-                if (pressed && v.Current is { State: OrderStates.Executing } executing)
-                {
-                    executing.State = OrderStates.Hang;
-                    executing.Touch(now);
-                }
             }
 
             return VehicleChange.Done;
