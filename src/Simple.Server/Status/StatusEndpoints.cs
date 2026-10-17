@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using Simple.Server.Configuration;
 using Simple.Server.Mes;
 using Simple.Server.OnboardTerminals;
+using Simple.Server.Riot;
 
 namespace Simple.Server.Status;
 
@@ -9,7 +10,7 @@ public static class StatusEndpoints
 {
     public static void MapStatusEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/status", (ServerInfo info, IOptions<ServerSettings> settings, OnboardTerminalRegistry terminals, OnboardEndpoint endpoint, MesGatewayMonitor mes) =>
+        app.MapGet("/api/v1/status", (ServerInfo info, IOptions<ServerSettings> settings, OnboardTerminalRegistry terminals, OnboardEndpoint endpoint, MesGatewayMonitor mes, RiotConnectionMonitor riot) =>
                 new StatusResponse(
                     info.Version,
                     info.StartedAt,
@@ -17,7 +18,7 @@ public static class StatusEndpoints
                     settings.Value.DatabaseName,
                     endpoint.Describe(),
                     OnboardTerminals: terminals.Snapshot(),
-                    Riot: null,
+                    Riot: riot.Status(),
                     MesGateway: mes.Status()))
             .WithName("GetStatus")
             .WithSummary("Server version, start time and instance, and the state of every connected part.");
@@ -26,7 +27,7 @@ public static class StatusEndpoints
 
 /// <param name="OnboardTerminalEndpoint">Where onboard terminals connect and the pin they check; null when the server has no terminal endpoint.</param>
 /// <param name="OnboardTerminals">Every onboard terminal that has reported since the server started.</param>
-/// <param name="Riot">The fleet manager connection; null until the RIoT adapter is wired in.</param>
+/// <param name="Riot">Whether the server reaches the fleet manager.</param>
 /// <param name="MesGateway">What the server last learned from the MES gateway.</param>
 public sealed record StatusResponse(
     string Version,
@@ -35,7 +36,7 @@ public sealed record StatusResponse(
     string Database,
     OnboardTerminalEndpointStatus? OnboardTerminalEndpoint,
     IReadOnlyList<OnboardTerminalStatus> OnboardTerminals,
-    RiotStatus? Riot,
+    RiotStatus Riot,
     MesGatewayStatus MesGateway);
 
 /// <param name="Url">The address terminals are configured with.</param>
@@ -62,6 +63,3 @@ public sealed record OnboardTerminalStatus(
     bool Stale,
     bool IoModuleReadable,
     string? ScreenText);
-
-// Placeholders: the tickets that connect each part give these their fields.
-public sealed record RiotStatus;

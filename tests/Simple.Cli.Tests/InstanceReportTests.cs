@@ -31,4 +31,20 @@ public sealed class InstanceReportTests
     [InlineData("""{ "reachable": true, "lastRound": { "round": 5, "succeeded": true, "readAt": null }, "rowCount": null }""", "MES gateway reachable; round 5 at an unknown time, rows unknown")]
     [InlineData("""{ "reachable": true, "lastRound": { "round": 5, "succeeded": false, "failure": null } }""", "MES gateway reachable; round 5 failed: no reason given")]
     public void MissingOrNullFieldsStillGiveALine(string mesGateway, string line) => Assert.Equal(line, MesLine(mesGateway));
+
+    private static string RiotLine(string riot)
+    {
+        using var server = JsonDocument.Parse($$"""{ "riot": {{riot}} }""");
+        var report = new InstanceReport("i", false, "repo", "sql", "db", DateTimeOffset.UnixEpoch, [], server.RootElement.Clone());
+        return Assert.Single(report.Lines(), l => l.Contains("RIoT", StringComparison.Ordinal)).Trim();
+    }
+
+    [Theory]
+    [InlineData("""{ "state": "connected", "url": "http://127.0.0.1:5200/", "mapCount": 2 }""", "RIoT connected at http://127.0.0.1:5200/, 2 maps")]
+    [InlineData("""{ "state": "unreachable", "url": "http://127.0.0.1:5200/", "error": "refused" }""", "RIoT unreachable at http://127.0.0.1:5200/ (refused)")]
+    [InlineData("""{ "state": "unreachable", "url": "http://127.0.0.1:5200/", "error": null }""", "RIoT unreachable at http://127.0.0.1:5200/ (no reason given)")]
+    [InlineData("""{ "state": "not-configured", "url": null }""", "RIoT not configured")]
+    [InlineData("""{ "state": "connecting", "url": "http://127.0.0.1:5200/" }""", "RIoT not asked yet at http://127.0.0.1:5200/")]
+    [InlineData("""{ }""", "RIoT state unknown")]
+    public void TheRiotLineSaysWhetherTheServerReachesIt(string riot, string line) => Assert.Equal(line, RiotLine(riot));
 }

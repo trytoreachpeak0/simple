@@ -43,6 +43,19 @@ public sealed class SmokeTests
         Assert.Equal(a, server.GetProperty("instance").GetString());
         Assert.Equal($"Simple_{a}", server.GetProperty("database").GetString());
 
+        // The server reaches the fake fleet manager up started (it checks every 10 s).
+        var fakeRiot = Process(ups[0].Output, "fake-riot");
+        var riot = server.GetProperty("riot");
+        for (var tries = 0; riot.GetProperty("state").GetString() != "connected" && tries < 30; tries++)
+        {
+            await Task.Delay(1000, TestContext.Current.CancellationToken);
+            riot = (await cli.RunJsonAsync("status", "--instance", a)).Output.GetProperty("result").GetProperty("server").GetProperty("riot");
+        }
+
+        Assert.Equal("connected", riot.GetProperty("state").GetString());
+        Assert.Equal(new Uri(fakeRiot.Url), new Uri(riot.GetProperty("url").GetString()!));
+        Assert.Contains($"RIoT connected at {new Uri(fakeRiot.Url)}", (await cli.RunAsync("status", "--instance", a)).Output, StringComparison.Ordinal);
+
         var events = await cli.RunJsonAsync("events", "--instance", a);
         Assert.Equal(ExitCodes.Success, events.ExitCode);
         Assert.Contains(
@@ -66,7 +79,7 @@ public sealed class SmokeTests
         var down = await cli.RunJsonAsync("down", "--instance", a);
         Assert.True(down.ExitCode == ExitCodes.Success, $"down exited with {down.ExitCode}: {down.Output}{Environment.NewLine}{down.Error}");
         var stopped = down.Output.GetProperty("result").GetProperty("stopped").EnumerateArray().ToList();
-        Assert.Equal(["server", "mes-gateway"], stopped.Select(s => s.GetProperty("name").GetString()));
+        Assert.Equal(["server", "mes-gateway", "fake-riot"], stopped.Select(s => s.GetProperty("name").GetString()));
         Assert.All(stopped, s => Assert.Equal("stopped", s.GetProperty("outcome").GetString()));
         using (var gone = ChildProcess.Find(serverA.Pid, startedA))
         {

@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Simple.Cli/Simple.Cli.csproj" />
+    <Project Path="src/Simple.FakeRiot/Simple.FakeRiot.csproj" />
     <Project Path="src/Simple.IoSimulator/Simple.IoSimulator.csproj" />
     <Project Path="src/Simple.Logging/Simple.Logging.csproj" />
     <Project Path="src/Simple.MesGateway/Simple.MesGateway.csproj" />
@@ -14,6 +15,8 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Simple.Cli.Tests/Simple.Cli.Tests.csproj" />
+    <Project Path="tests/Simple.Contracts.Tests/Simple.Contracts.Tests.csproj" />
+    <Project Path="tests/Simple.FakeRiot.Tests/Simple.FakeRiot.Tests.csproj" />
     <Project Path="tests/Simple.Logging.Tests/Simple.Logging.Tests.csproj" />
     <Project Path="tests/Simple.MesGateway.Tests/Simple.MesGateway.Tests.csproj" />
     <Project Path="tests/Simple.OnboardTerminal.Core.Tests/Simple.OnboardTerminal.Core.Tests.csproj" />

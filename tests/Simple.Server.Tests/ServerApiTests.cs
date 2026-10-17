@@ -50,7 +50,7 @@ public sealed class ServerApiTests(RunningServer running) : IClassFixture<Runnin
         Assert.Equal(running.Server.Instance, status.Instance);
         Assert.Equal($"Simple_{running.Server.Instance}", status.Database);
         Assert.Empty(status.OnboardTerminals);
-        Assert.Null(status.Riot);
+        Assert.Equal(new Uri("http://127.0.0.1:9"), status.Riot.Url);
         Assert.Equal(new Uri("http://127.0.0.1:9"), status.MesGateway.Url);
     }
 

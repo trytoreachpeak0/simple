@@ -71,6 +71,7 @@ reviewed in pull requests like the code is.
 | `src/Simple.OnboardTerminal.Core` | Onboard terminal core without WPF: connection to the server, messages, onboard inputs |
 | `src/Simple.OnboardTerminal.Headless` | The onboard terminal without a window, for the local system, tests and CI; its test input listens on loopback only |
 | `src/Simple.MesGateway` | MES gateway, a small separate process |
+| `src/Simple.FakeRiot` | Fake fleet manager: answers the part of RIoT's HTTP API that SIMPLE uses, on loopback only, for the local system, tests and CI; it must pass `Simple.Contracts.Tests` |
 | `src/Simple.IoSimulator` | Simulator for the vehicle's IO module |
 | `src/Simple.Protocol` | Server ↔ onboard protocol contracts |
 | `src/Simple.Logging` | Program logs every program writes: Serilog behind Microsoft.Extensions.Logging, size-limited local files, credentials redacted, unhandled exceptions recorded (ADR 0034) |

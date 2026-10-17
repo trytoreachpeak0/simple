@@ -739,6 +739,7 @@
       "simple.server.riot": {
         "type": "Project",
         "dependencies": {
+          "Polly.Core": "[8.8.0, )",
           "RIoT.Sdk.Facade": "[0.3.1, )"
         }
       },

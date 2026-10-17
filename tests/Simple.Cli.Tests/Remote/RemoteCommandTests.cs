@@ -104,7 +104,7 @@ public sealed class RemoteCommandTests
     [InlineData(ServerKeyStore.Machine)]
     public void TheServerIsToldWhichKeyStoreToUse(ServerKeyStore store)
     {
-        var context = new ComponentContext("i", SqlServerTarget.LocalDb, 1, [20000, 20001], new Dictionary<string, IReadOnlyList<int>> { ["mes-gateway"] = [20002] }, "d", "l", store);
+        var context = new ComponentContext("i", SqlServerTarget.LocalDb, 1, [20000, 20001], new Dictionary<string, IReadOnlyList<int>> { ["mes-gateway"] = [20002], ["fake-riot"] = [20003] }, "d", "l", store);
 
         Assert.Contains($"--Simple:OnboardTerminals:ServerKeyStore={store}", Components.Server.Arguments(context));
     }

@@ -764,6 +764,7 @@ public sealed record InstanceReport(
         $"Instance {Instance} from {Repository}, database {Database} on {SqlServer}",
         .. Processes.Select(p => $"  {p.Name,-12} {(p.Ready ? "ready" : p.Alive ? "not ready" : "gone"),-10} pid {p.Pid,-7} {p.Url}  log {p.Log}"),
         .. MesLine(),
+        .. RiotLine(),
         .. TerminalLines(),
     ];
 
@@ -799,6 +800,26 @@ public sealed record InstanceReport(
         }
 
         yield return $"  MES gateway {gateway}{available}; {last}";
+    }
+
+    /// <summary>Whether the server reaches the fleet manager, from its status.</summary>
+    private IEnumerable<string> RiotLine()
+    {
+        if (Server is not { } server || !server.TryGetProperty("riot", out var riot) || riot.ValueKind != JsonValueKind.Object)
+        {
+            yield break;
+        }
+
+        var url = Text(riot, "url");
+        var maps = Field(riot, "mapCount") is { ValueKind: JsonValueKind.Number } count ? $", {count.GetInt32()} maps" : string.Empty;
+        yield return Text(riot, "state") switch
+        {
+            "connected" => $"  RIoT connected at {url}{maps}",
+            "unreachable" => $"  RIoT unreachable at {url} ({Text(riot, "error") ?? "no reason given"})",
+            "not-configured" => "  RIoT not configured",
+            "connecting" => $"  RIoT not asked yet at {url}",
+            var other => $"  RIoT {other ?? "state unknown"}",
+        };
     }
 
     private static JsonElement? Field(JsonElement element, string name) =>

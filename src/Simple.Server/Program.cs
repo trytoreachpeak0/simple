@@ -7,6 +7,7 @@ using Simple.Server.Events;
 using Simple.Server.Mes;
 using Simple.Server.OnboardTerminals;
 using Simple.Server.Persistence;
+using Simple.Server.Riot;
 using Simple.Server.Status;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -62,6 +63,7 @@ builder.Services.AddHttpClient(MesGatewayPoller.HttpClientName)
         client.Timeout = services.GetRequiredService<IOptions<MesGatewaySettings>>().Value.RequestTimeout);
 builder.Services.AddSingleton<MesGatewayMonitor>();
 builder.Services.AddHostedService<MesGatewayPoller>();
+builder.Services.AddRiotConnection();
 builder.Services.AddSingleton<OnboardEndpoint>();
 builder.Services.AddSingleton<OnboardTerminalRegistry>();
 builder.Services.AddGrpc();
