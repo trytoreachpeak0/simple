@@ -265,7 +265,7 @@ dotnet test --project tests/Simple.Contracts.Tests --filter-trait "Contract=BC-O
 
 **默认、CI 上永远只对假 RIoT 跑**：每条测试在测试进程里起一个新的假 RIoT，不开端口。
 
-**对真 RIoT 跑**要人明确选定，并且只跑只读的契约：
+**对真 RIoT 跑**要人明确选定，并且只跑只读的契约（ADR 0047）：
 
 1. 在任何 git 克隆之外写一个 JSON 文件，例如：
 
