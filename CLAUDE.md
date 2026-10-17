@@ -77,11 +77,11 @@ reviewed in pull requests like the code is.
 | `src/Simple.IoSimulator.Headless` | The IO simulator without a window, for the local system, tests and CI; its Modbus face and control API listen on loopback only |
 | `src/Simple.Protocol` | Server ↔ onboard protocol contracts |
 | `src/Simple.Logging` | Program logs every program writes: Serilog behind Microsoft.Extensions.Logging, size-limited local files, credentials redacted, unhandled exceptions recorded (ADR 0034) |
-| `src/Simple.Cli` | The `simple` command line: brings the local system up and down, shows status, events and logs, and runs builds, tests and the system on a remote machine (`simple remote`) |
+| `src/Simple.Cli` | The `simple` command line: brings the local system up and down, shows status, events and logs, runs scenarios (`simple scenario`), and runs builds, tests and the system on a remote machine (`simple remote`) |
 | `tests/` | One `<Project>.Tests` per project, plus `Simple.Contracts.Tests` |
-| `scenarios/` | Scenarios in the shared format |
+| `scenarios/` | Scenarios in the shared format (`scenarios/scenario.schema.json`); `simple scenario run` and `dotnet test` (`ScenarioTests`) run the same files |
 | `samples/replay/` | Replay samples recorded from the real systems |
-| `sites/<site>/` | Per-site starting business configuration |
+| `sites/<site>/` | Per-site starting business configuration; `sites/sample/` is a fictional small site that scenarios use by default |
 
 Planned, not created yet: `Simple.Mcp`, the thin AI layer above the command line and the server API.
 

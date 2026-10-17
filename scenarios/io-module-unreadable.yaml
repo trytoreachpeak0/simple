@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=scenario.schema.json
+title: IO 模块读不到，恢复后又读得到
+description: >
+  车载终端读得到它的 IO 模块以后，让 IO 模拟器不再应答 Modbus 请求。终端应当报告
+  读不到，服务端记下 onboard.io-unreadable，状态里这台终端的 IO 模块读不到；
+  故障解除后，服务端记下 onboard.io-readable。仓 1 和仓 3 起始有货，读得到时
+  光幕输入（DI9、DI11）读 0。
+site: sample
+
+initial:
+  terminals: 1
+  slots:
+    - terminal: 1
+      cargo: [1, 3]
+
+events:
+  - id: stop-answering
+    when: { status: "onboardTerminals[vehicleId=vehicle-1].ioModuleReadable", equals: true }
+    within: 20s
+    fault-io-module: { terminal: 1, mode: no-response }
+  - id: answer-again
+    when: { event: onboard.io-unreadable, data: { vehicleId: vehicle-1 } }
+    within: 20s
+    fault-io-module: { terminal: 1, mode: none }
+
+expectations:
+  - id: cargo-in-slot-1-seen
+    title: 仓 1 起始有货，光幕 DI9 读 0
+    eventually: { status: "onboardTerminals[vehicleId=vehicle-1].io.inputs[number=9].value", equals: 0 }
+    within: 20s
+  - id: slot-2-empty-seen
+    title: 仓 2 起始无货，光幕 DI10 读 1
+    eventually: { status: "onboardTerminals[vehicleId=vehicle-1].io.inputs[number=10].value", equals: 1 }
+    within: 20s
+  - id: unreadable-recorded
+    after: stop-answering
+    eventually: { event: onboard.io-unreadable, data: { vehicleId: vehicle-1 } }
+    within: 15s
+  - id: status-shows-unreadable
+    after: stop-answering
+    eventually: { status: "onboardTerminals[vehicleId=vehicle-1].ioModuleReadable", equals: false }
+    within: 15s
+  - id: readable-again
+    after: answer-again
+    eventually: { event: onboard.io-readable, data: { vehicleId: vehicle-1 } }
+    within: 15s

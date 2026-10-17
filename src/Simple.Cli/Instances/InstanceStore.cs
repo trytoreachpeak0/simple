@@ -202,6 +202,14 @@ public sealed class InstanceStore(string home)
     public Task<IDisposable?> LockInstanceAsync(string instance, TimeSpan wait, CancellationToken cancellationToken) =>
         LockAsync(Path.Combine(InstanceDirectory(instance), "lock"), wait, cancellationToken);
 
+    /// <summary>
+    /// Held for one whole scenario run, which resets, starts and stops the
+    /// instance in turn: a second run on the instance waits instead of
+    /// resetting the first one's system under it.
+    /// </summary>
+    public Task<IDisposable?> LockScenarioAsync(string instance, TimeSpan wait, CancellationToken cancellationToken) =>
+        LockAsync(Path.Combine(InstanceDirectory(instance), "scenario.lock"), wait, cancellationToken);
+
     /// <summary>Held while ports are chosen and recorded, so two instances never choose the same ones.</summary>
     public Task<IDisposable?> LockPortsAsync(TimeSpan wait, CancellationToken cancellationToken) =>
         LockAsync(Path.Combine(Home, "ports.lock"), wait, cancellationToken);

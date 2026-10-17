@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=scenario.schema.json
+title: 空系统起来后，车载终端在线、RIoT 已连上、MES 可达
+description: >
+  起两台车载终端（各带一个 IO 模拟器），不做任何事件，只看服务端自己报告的状态：
+  两台终端都已连上，假 RIoT 已连上，假 MES 经网关可达；期间终端数一直是两台，
+  也没有终端连接被拒绝。
+site: sample
+
+initial:
+  terminals: 2
+  fake-riot:
+    speedup: 10
+
+expectations:
+  - id: terminal-1-connected
+    eventually: { status: "onboardTerminals[vehicleId=vehicle-1].connected", equals: true }
+    within: 20s
+  - id: terminal-2-connected
+    eventually: { status: "onboardTerminals[vehicleId=vehicle-2].connected", equals: true }
+    within: 20s
+  - id: riot-connected
+    eventually: { status: riot.state, equals: connected }
+    within: 30s
+  - id: mes-available
+    eventually: { status: mesGateway.available, equals: true }
+    within: 30s
+  - id: two-terminals-throughout
+    always: { status: onboardTerminals.count, equals: 2 }
+    for: 5s
+  - id: no-terminal-refused
+    never: { event: onboard.refused }
+    for: 10s

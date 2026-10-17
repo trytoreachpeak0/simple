@@ -135,6 +135,9 @@ jobs:
         timeout-minutes: 15
         env:
           SIMPLE_TEST_SQLSERVER: Server=.\SQLEXPRESS;Integrated Security=true;TrustServerCertificate=true
+          # A scenario test that fails keeps its run's evidence here, so the
+          # upload below carries it (tests/Simple.Cli.Tests/ScenarioTests.cs).
+          SIMPLE_SCENARIO_EVIDENCE: ${{ runner.temp }}/test-results/scenario-evidence
         run: dotnet test --solution simple.slnx -c Release --no-build --results-directory "$env:RUNNER_TEMP/test-results" --report-xunit-trx
 
       # Diagnostics only: the Test step has already judged the run, so a

@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=scenario.schema.json
+title: MES 来源读取失败后又恢复
+description: >
+  MES 可达以后，让假 MES 接下来三次读取失败。网关的这几轮读取失败，服务端应当
+  记下 mes.unreachable（原因是读取失败），状态里 MES 不可用；网关退避重试成功后，
+  服务端记下 mes.recovered，MES 重新可用。
+site: sample
+
+events:
+  - id: fail-reads
+    when: { status: mesGateway.available, equals: true }
+    within: 30s
+    fail-mes-reads: { count: 3, message: scenario mes-source-fails-and-recovers }
+
+expectations:
+  - id: unreachable-recorded
+    after: fail-reads
+    eventually: { event: mes.unreachable, data: { cause: read } }
+    within: 20s
+  - id: status-shows-unavailable
+    after: fail-reads
+    eventually: { status: mesGateway.available, equals: false }
+    within: 20s
+  - id: recovery-recorded
+    after: fail-reads
+    eventually: { event: mes.recovered }
+    within: 60s

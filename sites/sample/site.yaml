@@ -1,0 +1,20 @@
+# A fictional small site for scenarios and tests (sites/sample/README.md).
+# Its values match the fakes' starting data: the areas and task types of the
+# fake MES's seed rows (src/Simple.MesGateway/Fake/seed-rows.json) and the
+# vehicles of the fake RIoT's world (src/Simple.FakeRiot/seed.json).
+name: sample
+description: 虚构的小厂区，给场景和测试用
+areas:
+  - S1-1
+  - S1-2
+  - S2-1
+task-types:
+  - SAMPLE_TO_OVEN
+  - SAMPLE_TO_GATE
+vehicles:
+  - name: fake-vehicle-1
+    riot-device-key: BROKERX-0000000000000000000000000000fa01
+  - name: fake-vehicle-2
+    riot-device-key: BROKERX-0000000000000000000000000000fa02
+  - name: fake-vehicle-3
+    riot-device-key: BROKERX-0000000000000000000000000000fa03

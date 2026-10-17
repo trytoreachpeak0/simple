@@ -128,6 +128,7 @@ public sealed class CommandLineTests
     [InlineData("events")]
     [InlineData("logs")]
     [InlineData("remote")]
+    [InlineData("scenario")]
     public async Task EachCommandsHelpListsItsExitCodes(string command)
     {
         using var stdout = new StringWriter();

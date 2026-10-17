@@ -29,6 +29,9 @@ public static partial class SimpleCommand
         ["logs"] = [0, 1, 2, 5],
         // Besides the exit code of the command it ran on the remote machine.
         ["remote"] = [1, 2, 5, 20, 21, 22],
+        // run: the verdict, 1 when its system could not be stopped, 7 when
+        // another run holds the instance; validate: 2 for a file that is not valid.
+        ["scenario"] = [0, 1, 2, 7, 10, 11, 12],
     };
 
     /// <summary>Builds the command tree. The actions run against <paramref name="environment"/>.</summary>
@@ -208,6 +211,7 @@ public static partial class SimpleCommand
             events,
             logs,
             Remote.RemoteCommand.Create(environment),
+            Scenarios.ScenarioCommand.Create(environment),
             signal,
         };
     }
@@ -224,7 +228,15 @@ public static partial class SimpleCommand
                 .Write(parse.GetValue<bool>(JsonOption), environment.Out, environment.Error);
         }
 
-        return await parse.InvokeAsync(new InvocationConfiguration { Output = environment.Out, Error = environment.Error }, cancellationToken);
+        var configuration = new InvocationConfiguration { Output = environment.Out, Error = environment.Error };
+        if (Scenarios.ScenarioCommand.IsRun(parse))
+        {
+            // On Ctrl+C a scenario run still stops its system and writes its
+            // result; the default would end the process two seconds later.
+            configuration.ProcessTerminationTimeout = Scenarios.ScenarioRunner.TeardownLimit + TimeSpan.FromMinutes(1);
+        }
+
+        return await parse.InvokeAsync(configuration, cancellationToken);
     }
 
     /// <summary>The instance a command acts on: --instance, or the clone's folder name.</summary>
