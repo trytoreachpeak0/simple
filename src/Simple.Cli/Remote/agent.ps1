@@ -48,20 +48,63 @@ function Say([string] $text) {
     [Console]::Error.WriteLine("simple remote: $text")
 }
 
+# Exits the process outright: the reader below may be blocked on the input,
+# and nothing else is left to do.
 function Finish([hashtable] $result) {
     [Console]::Error.WriteLine("##simple-remote-$($spec.nonce) $($result | ConvertTo-Json -Compress -Depth 5)")
-    exit 0
+    [Environment]::Exit(0)
+}
+
+# The laptop's end of the connection. The command line writes a heartbeat
+# line into this session's input every few seconds: a killed ssh or Ctrl+C
+# ends the input, a lost network silences it. sshd ends neither the session
+# nor its processes on its own (simple01, 2026-10-17), so this does. Reading
+# the input blocks with no timeout (ReadLineAsync too), so a
+# reader of its own notes when each line came, and every wait below checks.
+$alive = [hashtable]::Synchronized(@{ Last = [DateTime]::UtcNow; Ended = $false })
+$reader = [PowerShell]::Create()
+[void]$reader.AddScript({
+        param($alive)
+        # A reader of its own on the raw input, not [Console]::In: that one is
+        # shared and locked while a read waits, and starting a native command
+        # (git) waits for that lock, so a silent connection would hang the run.
+        $heartbeats = [IO.StreamReader]::new([Console]::OpenStandardInput())
+        while ($null -ne $heartbeats.ReadLine()) {
+            $alive.Last = [DateTime]::UtcNow
+        }
+
+        $alive.Ended = $true
+    }).AddArgument($alive)
+[void]$reader.BeginInvoke()
+
+function Test-Abandoned {
+    $alive.Ended -or ($spec.aliveSeconds -and ([DateTime]::UtcNow - $alive.Last).TotalSeconds -gt $spec.aliveSeconds)
+}
+
+# Ends the run: the command with every process it started (broken-away
+# components of simple up are its descendants too), then this process,
+# which frees the instance's lock and the slot.
+function Stop-Abandoned([Diagnostics.Process] $process) {
+    if ($process) {
+        try { $process.Kill($true) } catch { }
+    }
+
+    [Console]::Error.WriteLine('simple remote: the connection to the command line is gone; the run is ended.')
+    [Environment]::Exit(3)
 }
 
 function Invoke-Git {
-    $output = & git @args 2>&1
+    # Every git here gets an empty input ($null |). Started without one, a
+    # native command blocks while the heartbeat reader waits on this
+    # session's input: a silent connection hung git init (2026-10-17).
+    $output = $null | & git @args 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "git $($args -join ' ') exited with $LASTEXITCODE`: $($output -join ' ')"
     }
 }
 
 function Test-Commit([string] $commit) {
-    & git -C $repo cat-file -e "$commit^{commit}" 2>$null
+    $null | & git -C $repo cat-file -e "$commit^{commit}" 2>$null
     $LASTEXITCODE -eq 0
 }
 
@@ -104,6 +147,10 @@ function Wait-Lock([string[]] $locks, [string] $what) {
             Finish @{ status = 'busy'; error = "Waited $($spec.waitSeconds) s for $what, held by $holders." }
         }
 
+        if (Test-Abandoned) {
+            Stop-Abandoned $null
+        }
+
         Start-Sleep -Milliseconds 500
     }
 }
@@ -114,7 +161,7 @@ function Fetch-Origin {
     }
 
     Say "fetching $($spec.originBranch) from $($spec.originUrl)"
-    & git -C $repo fetch --quiet $spec.originUrl "+refs/heads/$($spec.originBranch):refs/remotes/origin/$($spec.originBranch)" 2>&1 |
+    $null | & git -C $repo fetch --quiet $spec.originUrl "+refs/heads/$($spec.originBranch):refs/remotes/origin/$($spec.originBranch)" 2>&1 |
         ForEach-Object { Say "$_" }
 }
 
@@ -122,11 +169,11 @@ function Receive-Snapshot {
     if ($spec.bundle) {
         $bundle = Join-Path $root $spec.bundle
         try {
-            & git -C $repo bundle verify --quiet $bundle 2>$null
+            $null | & git -C $repo bundle verify --quiet $bundle 2>$null
             if ($LASTEXITCODE -ne 0) {
                 # Most likely the cache lacks what the bundle builds on.
                 Fetch-Origin
-                & git -C $repo bundle verify --quiet $bundle 2>$null
+                $null | & git -C $repo bundle verify --quiet $bundle 2>$null
                 if ($LASTEXITCODE -ne 0) {
                     Finish @{ status = 'needFullBundle' }
                 }
@@ -172,14 +219,14 @@ function Checkout-Snapshot {
 
 function Remove-Instance {
     if (Test-Path -LiteralPath $worktree) {
-        & git -C $repo worktree remove --force $worktree 2>$null
+        $null | & git -C $repo worktree remove --force $worktree 2>$null
         if (Test-Path -LiteralPath $worktree) {
             Remove-Item -LiteralPath $worktree -Recurse -Force
         }
     }
 
     Remove-Item -LiteralPath (Join-Path $root "runs/$instance") -Recurse -Force -ErrorAction Ignore
-    & git -C $repo update-ref -d $spec.ref 2>$null
+    $null | & git -C $repo update-ref -d $spec.ref 2>$null
 }
 
 # Keeps the newest runs of the instance.
@@ -248,7 +295,16 @@ try {
 
             # Not redirected: the command writes straight into this process's
             # stdout and stderr, which are the SSH channel.
+            # Its own, empty input: the heartbeats are this process's.
+            $start.RedirectStandardInput = $true
             $process = [Diagnostics.Process]::Start($start)
+            $process.StandardInput.Close()
+            while (-not $process.WaitForExit(500)) {
+                if (Test-Abandoned) {
+                    Stop-Abandoned $process
+                }
+            }
+
             $process.WaitForExit()
             $exitCode = $process.ExitCode
             $ran = $true

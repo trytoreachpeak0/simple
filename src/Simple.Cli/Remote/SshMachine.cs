@@ -21,7 +21,17 @@ public sealed partial class SshMachine : IRemoteMachine
     /// </summary>
     public const string SqlServer = @"Server=.\SIMPLE_DEV;Integrated Security=true;TrustServerCertificate=true";
 
-    private static readonly string[] Options = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"];
+    /// <summary>
+    /// How often this end tells the remote side it is still there (the
+    /// agent's watch, RemoteRun.Alive). Well inside the 30 s after which the
+    /// remote side gives up.
+    /// </summary>
+    public static readonly TimeSpan Heartbeat = TimeSpan.FromSeconds(5);
+
+    // ServerAlive: with the network gone, this end gives up within about 30 s
+    // too (10 s × 3 unanswered probes) instead of waiting on TCP.
+    private static readonly string[] Options =
+        ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"];
 
     public SshMachine(string alias)
     {
@@ -60,7 +70,7 @@ public sealed partial class SshMachine : IRemoteMachine
             start.ArgumentList.Add(argument);
         }
 
-        var exitCode = await LineProcess.RunAsync(start, onOutput, onError, cancellationToken);
+        var exitCode = await LineProcess.RunAsync(start, onOutput, onError, cancellationToken, Heartbeat);
         // 255 is ssh's own: it could not connect, or the connection was lost.
         return exitCode == 255
             ? throw new RemoteException(ExitCodes.RemoteFailed, $"ssh {Name} failed (exit code 255): the machine could not be reached or the connection was lost.")

@@ -53,6 +53,13 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
     /// <summary>How long to wait for the instance or a slot on the remote machine.</summary>
     public TimeSpan Wait { get; init; } = TimeSpan.FromMinutes(30);
 
+    /// <summary>
+    /// How long the remote side goes on without a heartbeat from here before
+    /// it ends the run as abandoned: the network is gone. A killed ssh or
+    /// Ctrl+C ends the session's input, which it notices at once.
+    /// </summary>
+    public TimeSpan Alive { get; init; } = TimeSpan.FromSeconds(30);
+
     /// <summary>The agent's file name on the remote machine: a changed script never meets an old copy.</summary>
     public static string AgentFile => $"agent-{Convert.ToHexStringLower(SHA256.HashData(Agent.Value))[..12]}.ps1";
 
@@ -289,6 +296,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         Environment = RunEnvironment(),
         Run = run,
         WaitSeconds = (int)Wait.TotalSeconds,
+        AliveSeconds = Alive.TotalSeconds,
         KeepRuns,
     };
 
