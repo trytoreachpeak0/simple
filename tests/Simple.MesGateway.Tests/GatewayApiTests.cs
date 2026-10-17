@@ -113,7 +113,8 @@ public sealed class GatewayApiTests : IAsyncLifetime
 
         var file = Assert.Single(Simple.Logging.ProgramLog.Files(logDirectory));
         Assert.Equal("MesGateway.log", Path.GetFileName(file));
-        // Read the way simple logs reads: the file may still be open for a moment after the host has stopped.
+        // Read the way simple logs reads. In process, the host is released by both the factory and
+        // Program; when the factory returns, Program's side may not have released the program log yet.
         await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream);
         var text = await reader.ReadToEndAsync(Cancel);
