@@ -114,9 +114,9 @@ if ($Summary) {
     $soFar = Get-Seconds $job.created_at ([datetime]::UtcNow)
 
     $cache = $env:NUGET_PACKAGES
-    $cacheSize = (Test-Path -LiteralPath $cache) `
-        ? '{0:N0} MB' -f ((Get-ChildItem -LiteralPath $cache -Recurse -File -Force | Measure-Object Length -Sum).Sum / 1MB) `
-        : '不存在'
+    $cacheMB = (Test-Path -LiteralPath $cache) `
+        ? [Math]::Round((Get-ChildItem -LiteralPath $cache -Recurse -File -Force | Measure-Object Length -Sum).Sum / 1MB) `
+        : $null
 
     $lines = @(
         '## CI 各段耗时'
@@ -129,11 +129,13 @@ if ($Summary) {
         ''
         "本机其他 runner 正在跑的作业：开始时 $atStart 个，结束时 $atEnd 个（vm01 上的其他 runner 都属于 v2 线）。"
         ''
-        "NuGet 缓存：``$cache``，$cacheSize。"
+        "NuGet 缓存：``$cache``，$($null -eq $cacheMB ? '不存在' : "$cacheMB MB")。"
     )
     $lines -join "`n" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
 
-    $record = [ordered]@{ otherJobsAtStart = [int]$atStart; otherJobsAtEnd = $atEnd } + $timing
+    # The job has not ended yet, so its total is not known here.
+    $timing.Remove('total')
+    $record = [ordered]@{ otherJobsAtStart = [int]$atStart; otherJobsAtEnd = $atEnd; nugetCacheMB = $cacheMB } + $timing
     Write-Output "::notice title=$annotationTitle::$($record | ConvertTo-Json -Compress)"
     return
 }
