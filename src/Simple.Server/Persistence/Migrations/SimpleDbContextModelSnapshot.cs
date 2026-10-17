@@ -53,6 +53,8 @@ namespace Simple.Server.Persistence.Migrations
                     b.ToTable("Events", null, t =>
                         {
                             t.HasTrigger("TR_Events_AppendOnly");
+
+                            t.HasTrigger("TR_Events_AppendUnderLock");
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);

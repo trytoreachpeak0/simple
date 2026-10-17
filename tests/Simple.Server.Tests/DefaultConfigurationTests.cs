@@ -16,8 +16,8 @@ public sealed partial class DefaultConfigurationTests
     public void NoAppsettingsFileInTheRepositoryPointsAtARealHost()
     {
         var root = RepositoryRoot();
-        var files = Directory.EnumerateFiles(Path.Combine(root, "src"), "appsettings*.json", SearchOption.AllDirectories)
-            .Where(f => !f.Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj"))
+        var files = Directory.EnumerateFiles(root, "appsettings*.json", SearchOption.AllDirectories)
+            .Where(f => !Path.GetRelativePath(root, f).Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj" or ".git"))
             .ToList();
 
         // Finding no file at all would prove nothing.

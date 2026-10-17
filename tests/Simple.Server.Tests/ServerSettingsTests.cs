@@ -96,30 +96,52 @@ public sealed class ServerSettingsTests
         Assert.Contains("Initial Catalog=Simple_wt25", settings.DatabaseConnectionString, StringComparison.Ordinal);
     }
 
-    /// <summary>Runs the real server executable, as a person would, and reads what it says.</summary>
+    /// <summary>
+    /// Runs the real server executable, as a person would, and reads what it
+    /// says. It gets an instance of its own and a connection string that
+    /// reaches nothing (a closed loopback port), so a server that wrongly
+    /// went on starting could not touch a real database.
+    /// </summary>
     [Theory]
     [InlineData("--Simple:Instance=not valid!", "Simple:Instance 'not valid!' is not a valid instance name")]
     [InlineData("--urls=http://0.0.0.0:5180", "urls 'http://0.0.0.0:5180' is not a loopback address")]
     [InlineData("--Simple:SettingsFile=no-such-settings.json", "Simple:SettingsFile")]
     public async Task TheServerRefusesToStartAndNamesTheSetting(string argument, string message)
     {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
         var start = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Simple.Server.exe" : "Simple.Server"))
         {
             WorkingDirectory = AppContext.BaseDirectory,
             RedirectStandardError = true,
             RedirectStandardOutput = true,
-            ArgumentList = { argument },
+            // Later arguments win, so the case's own argument comes last.
+            ArgumentList =
+            {
+                $"--{ServerSettings.InstanceKey}={instance}",
+                $"--{ServerSettings.ConnectionStringKey}=Server=tcp:127.0.0.1,1;Integrated Security=true;Connect Timeout=1",
+                argument,
+            },
         };
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
-        var error = await process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-        await output;
+        using var process = Process.Start(start)!;
+        try
+        {
+            var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var error = await process.StandardError.ReadToEndAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token);
+            await output;
 
-        Assert.Equal(2, process.ExitCode);
-        Assert.Contains("The server refuses to start", error, StringComparison.Ordinal);
-        Assert.Contains(message, error, StringComparison.Ordinal);
+            Assert.Equal(2, process.ExitCode);
+            Assert.Contains("The server refuses to start", error, StringComparison.Ordinal);
+            Assert.Contains(message, error, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
     }
 }

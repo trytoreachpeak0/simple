@@ -50,8 +50,10 @@ jobs:
         run: dotnet test --solution simple.slnx --no-build
 
       # A database left behind means a test failed to clean up after itself.
-      # Queried with the SQL client that ships with PowerShell 7, so the runner
-      # needs no extra tool; failing to query fails the step.
+      # The step drops what it finds and still fails, so one leftover reports
+      # once instead of failing every later run. Queried with the SQL client
+      # that ships with PowerShell 7, so the runner needs no extra tool;
+      # failing to query fails the step.
       - name: No test databases left behind
         if: always()
         shell: pwsh
@@ -63,13 +65,20 @@ jobs:
             $command = $connection.CreateCommand()
             $command.CommandText = "SELECT name FROM sys.databases WHERE name LIKE 'Simple[_]test[_]%'"
             $reader = $command.ExecuteReader()
-            $left = while ($reader.Read()) { $reader.GetString(0) }
+            $left = @(while ($reader.Read()) { $reader.GetString(0) })
+            $reader.Dispose()
+            foreach ($name in $left) {
+              $drop = $connection.CreateCommand()
+              $drop.CommandText = "DECLARE @sql nvarchar(max) = N'ALTER DATABASE ' + QUOTENAME(@name) + N' SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ' + QUOTENAME(@name); EXEC (@sql);"
+              [void]$drop.Parameters.AddWithValue('@name', $name)
+              [void]$drop.ExecuteNonQuery()
+            }
           }
           finally {
             $connection.Dispose()
           }
           if ($left) {
-            Write-Output "::error::Test databases left behind: $($left -join ', ')"
+            Write-Output "::error::Test databases left behind (now dropped): $($left -join ', ')"
             exit 1
           }
           Write-Output 'No Simple_test_* databases left behind.'

@@ -51,7 +51,7 @@ dotnet run --project src/Simple.Server
 | `GET /health/live` | 进程活着 |
 | `GET /health/ready` | 能连上自己的数据库 |
 | `GET /api/v1/status` | 版本、启动时间、实例名、库名，以及车载终端、RIoT、MES 网关三栏（目前为空） |
-| `GET /api/v1/events` | 事件记录，按写入顺序；参数 `after`（游标，即上一页的 `nextCursor`）、`since`、`until`、`limit`（1～1000，默认 100） |
+| `GET /api/v1/events` | 事件记录，按提交顺序（顺着游标一直往后读不会漏事件）；参数 `after`（游标，即上一页的 `nextCursor`）、`since`、`until`、`limit`（1～1000，默认 100） |
 | `GET /openapi/v1.json` | 接口描述 |
 
 在同一台机器上再起一套，换实例名和端口：
@@ -62,7 +62,7 @@ dotnet run --project src/Simple.Server -- --Simple:Instance=wt25 --urls=http://1
 
 仓库里的配置只指向回环地址和 LocalDB。真实的连接串和地址放在仓库外：用 `--Simple:SettingsFile=<路径>` 指定一个 JSON 配置文件，或用环境变量（例如 `ConnectionStrings__Simple`、`Simple__Instance`）。连接串里不写库名，库名由实例名决定。配置不合法时服务端拒绝启动，退出码为 2，并逐项说明是哪一项不对；接口还没有鉴权，所以监听地址不是回环地址时也拒绝启动。
 
-事件记录只能追加：数据库里的触发器拒绝一切修改和删除。删掉 `Simple_<实例名>` 这个库，事件记录就清空，下次启动重新建库。
+事件记录只能追加：数据库里的触发器拒绝一切修改和删除，也拒绝没有经过 `EventStore.AppendAsync` 的插入。后者在事务里先拿一把排他的应用锁再插入，提交时才放开，所以事件编号的顺序就是提交顺序。删掉 `Simple_<实例名>` 这个库，事件记录就清空，下次启动重新建库。
 
 改了数据模型后，用本仓库钉住版本的 `dotnet-ef` 生成迁移：
 

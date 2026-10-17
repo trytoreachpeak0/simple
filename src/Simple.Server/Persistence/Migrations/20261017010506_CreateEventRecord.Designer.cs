@@ -12,7 +12,7 @@ using Simple.Server.Persistence;
 namespace Simple.Server.Persistence.Migrations
 {
     [DbContext(typeof(SimpleDbContext))]
-    [Migration("20261016173214_CreateEventRecord")]
+    [Migration("20261017010506_CreateEventRecord")]
     partial class CreateEventRecord
     {
         /// <inheritdoc />
@@ -56,6 +56,8 @@ namespace Simple.Server.Persistence.Migrations
                     b.ToTable("Events", null, t =>
                         {
                             t.HasTrigger("TR_Events_AppendOnly");
+
+                            t.HasTrigger("TR_Events_AppendUnderLock");
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);

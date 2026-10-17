@@ -11,6 +11,15 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
     /// </summary>
     public const string EventsAppendOnlyTrigger = "TR_Events_AppendOnly";
 
+    /// <summary>
+    /// Database trigger that rejects an INSERT on the event record made
+    /// without holding <see cref="EventsAppendLock"/> (see EventStore.AppendAsync).
+    /// </summary>
+    public const string EventsAppendUnderLockTrigger = "TR_Events_AppendUnderLock";
+
+    /// <summary>Application lock that serializes appends to the event record.</summary>
+    public const string EventsAppendLock = "Simple.Events.Append";
+
     public DbSet<EventRecord> Events => Set<EventRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -20,7 +29,11 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
         {
             // Declaring the trigger makes EF Core avoid OUTPUT without INTO,
             // which SQL Server refuses on a table with triggers.
-            e.ToTable("Events", t => t.HasTrigger(EventsAppendOnlyTrigger));
+            e.ToTable("Events", t =>
+            {
+                t.HasTrigger(EventsAppendOnlyTrigger);
+                t.HasTrigger(EventsAppendUnderLockTrigger);
+            });
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).UseIdentityColumn();
             e.Property(x => x.Type).HasMaxLength(100);

@@ -40,6 +40,17 @@ namespace Simple.Server.Persistence.Migrations
                 AS
                     THROW 50001, 'The event record is append-only: entries cannot be changed or removed.', 1;
                 """);
+
+            // Appends hold an exclusive application lock until commit, so ids
+            // follow commit order and a reader's cursor never skips an event
+            // that commits late. An insert without the lock is refused.
+            migrationBuilder.Sql($"""
+                CREATE TRIGGER [{SimpleDbContext.EventsAppendUnderLockTrigger}] ON [Events]
+                AFTER INSERT
+                AS
+                    IF APPLOCK_MODE('public', N'{SimpleDbContext.EventsAppendLock}', 'Transaction') <> 'Exclusive'
+                        THROW 50002, 'Events are appended under the application lock {SimpleDbContext.EventsAppendLock} so that ids follow commit order: use EventStore.AppendAsync.', 1;
+                """);
         }
 
         /// <inheritdoc />

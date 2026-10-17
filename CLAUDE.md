@@ -228,8 +228,8 @@ single-context layout). Do not start a parallel set of these by hand.
   or loopback addresses of fakes appear in these defaults.
 - Until the server API has authentication, the server listens on
   loopback only and refuses to start on any other address.
-  `Simple.Server.Tests` checks every `appsettings*.json` under `src/` for
-  hosts that are neither loopback nor LocalDB.
+  `Simple.Server.Tests` checks every `appsettings*.json` in the repository
+  for hosts that are neither loopback nor LocalDB.
 - `sites/<site>/` holds a site's starting business configuration: areas,
   maps, task types, the vehicle list and similar settings, with real
   values. It holds no endpoints the product connects to and no
