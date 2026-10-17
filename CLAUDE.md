@@ -256,17 +256,34 @@ single-context layout). Do not start a parallel set of these by hand.
   install packages) may point at a real fleet manager, a real vehicle or a
   production MES, or enable real work by default. Only placeholder values
   or loopback addresses of fakes appear in these defaults.
-- Until the server API has authentication, the API listens on loopback
-  only, over plain HTTP, and the server refuses to start on any other API
-  address. The onboard terminal endpoint (`Simple:OnboardTerminals:Url`)
-  is the one exception (ADR 0025): it may listen on the address of one
-  named network interface, never a wildcard, serves only the terminal
-  protocol over TLS 1.2 with the certificate the terminals pin, and
-  answers nothing else. Until the per-terminal keys (the other half of
-  ADR 0025) are in place, this endpoint accepts any client, so the server
-  must not base any decision on onboard reports. `Simple.Server.Tests`
-  checks every `appsettings*.json` in the repository for hosts that are
-  neither loopback nor LocalDB.
+- Every server endpoint needs a login (ADR 0045) except the login
+  endpoint, the vehicle overview and its data, the console's static files,
+  the process-alive health check, and the onboard terminal protocol, which
+  only its own endpoint serves (ADR 0025). Every endpoint names who may use
+  it; one that names nobody is closed to everyone, and `Simple.Server.Tests`
+  fails on it.
+- Endpoints that need a login are served only on loopback and on the
+  console's HTTPS address (`Simple:Console:Url`, ADR 0046), over TLS 1.2
+  with the certificate the server makes and the console PCs install. The
+  API itself (`urls`) listens on loopback only, over plain HTTP, and the
+  server refuses to start on any other API address. The console sends no
+  HSTS.
+- On the plant network, the only plain HTTP address is the vehicle
+  overview's (`Simple:Overview:Url`): it takes no login and serves the
+  overview and nothing else.
+- Every address other machines reach (the console's, the overview's and
+  the onboard terminal endpoint, `Simple:OnboardTerminals:Url`) listens on
+  the address of one named network interface, never a wildcard, and
+  answers only its own part. The terminal endpoint serves only the
+  terminal protocol over TLS 1.2 with the certificate the terminals pin
+  (ADR 0025). Until the per-terminal keys (the other half of ADR 0025) are
+  in place, it accepts any client, so the server must not base any
+  decision on onboard reports.
+- None of these addresses points off loopback by default: the console's
+  and the overview's are not configured at all, and the onboard terminal
+  endpoint's default is on loopback, so development and CI listen on
+  loopback only. `Simple.Server.Tests` checks every `appsettings*.json` in
+  the repository for hosts that are neither loopback nor LocalDB.
 - `sites/<site>/` holds a site's starting business configuration: areas,
   maps, task types, the vehicle list and similar settings, with real
   values. It holds no endpoints the product connects to and no
