@@ -228,13 +228,17 @@ function Test-Bundle([string] $bundle) {
     (Start-Git @('-C', $repo, 'bundle', 'verify', '--quiet', $bundle) -Interruptible).ExitCode -eq 0
 }
 
-function Receive-Snapshot {
-    # A fetch into one of the instance's refs ended by a cut leaves its lock;
-    # only this instance's runs write those refs, under the lock held here.
+# A fetch into one of the instance's refs ended by a cut leaves its lock;
+# only this instance's runs write those refs, under the instance's lock,
+# which the caller holds.
+function Clear-RefLocks {
     foreach ($ref in $spec.ref, $spec.originRef) {
         Remove-Item -LiteralPath (Join-Path $repo "$ref.lock") -Force -ErrorAction Ignore
     }
+}
 
+function Receive-Snapshot {
+    Clear-RefLocks
     $fetched = $false
     if ($spec.bundle) {
         $bundle = Join-Path $root $spec.bundle
@@ -333,6 +337,9 @@ function Remove-Instance {
     }
 
     Remove-Item -LiteralPath (Join-Path $root "runs/$instance") -Recurse -Force -ErrorAction Ignore
+    # forget checks nothing out, so Receive-Snapshot did not clear them: a
+    # lock left there would make update-ref -d fail and keep the ref.
+    Clear-RefLocks
     foreach ($ref in $spec.ref, $spec.originRef) {
         [void](Start-Git @('-C', $repo, 'update-ref', '-d', $ref))
     }

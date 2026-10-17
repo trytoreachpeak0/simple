@@ -408,6 +408,33 @@ public sealed class RemoteRunTests
         await RunOkAsync(sandbox, machine);
     }
 
+    [Fact]
+    public async Task ForgetRemovesTheInstancesRefsAFetchCutShortLeftLocked()
+    {
+        // forget checks nothing out, so the locks a cut fetch left were not
+        // cleared before it: update-ref -d failed on them and the refs stayed
+        // in the cache (review of #74).
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+        sandbox.Write("new.txt", "new\n");
+        await RunOkAsync(sandbox, machine);
+        string[] refs = [Snapshot.Ref(sandbox.Instance), Snapshot.OriginRef(sandbox.Instance)];
+        foreach (var reference in refs)
+        {
+            Assert.NotNull(await RemoteRefAsync(sandbox, reference));
+            File.WriteAllText(Path.Combine(sandbox.RemoteRoot, "repo.git", reference + ".lock"), string.Empty);
+        }
+
+        var (exitCode, _, stderr) = await RunAsync(sandbox, machine, "forget");
+
+        Assert.True(exitCode == 0, $"exit code {exitCode}: {stderr}");
+        foreach (var reference in refs)
+        {
+            Assert.Null(await RemoteRefAsync(sandbox, reference));
+            Assert.False(File.Exists(Path.Combine(sandbox.RemoteRoot, "repo.git", reference + ".lock")), reference);
+        }
+    }
+
     private static void LeaveLocked(GitSandbox sandbox, bool directoryKept)
     {
         var admin = Path.Combine(sandbox.RemoteRoot, "repo.git", "worktrees", sandbox.Instance);
