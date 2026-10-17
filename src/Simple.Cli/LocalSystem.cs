@@ -227,17 +227,28 @@ public sealed partial class LocalSystem(
             {
                 var stopped = await StopAllAsync(state, cancellationToken);
                 var stillHeld = await ForgetAsync(state, cancellationToken);
-                var tail = Tail(failure.Value.Process.Log, 20);
-                return Outcome.Fail(
-                    ExitCodes.NotReady,
-                    $"{failure.Value.Process.Name} {failure.Value.Reason}. Its log: {failure.Value.Process.Log}{Kept(stillHeld, instance)}",
-                    new { failure.Value.Process.Name, failure.Value.Reason, failure.Value.Process.Log, LogTail = tail, Stopped = stopped },
-                    ["Last lines of the log:", .. tail]);
+                return NotReady(instance, failure.Value.Process, failure.Value.Reason, stopped, Kept(stillHeld, instance));
             }
         }
 
         var ready = await ReportAsync(state, cancellationToken);
         return Outcome.Ok(ready, [$"Instance {instance} is up.", .. ready.Lines()]);
+    }
+
+    /// <summary>
+    /// A process that did not get ready: its console output, whose last lines
+    /// are shown (it may have stopped before its program log started), and
+    /// its program log directory (ADR 0034), each named as what it is (#80).
+    /// </summary>
+    internal Outcome NotReady(string instance, ProcessRecord process, string reason, IReadOnlyList<StopReport> stopped, string kept)
+    {
+        var programLog = store.ProgramLogDirectory(instance, process.Name);
+        var tail = Tail(process.Log, 20);
+        return Outcome.Fail(
+            ExitCodes.NotReady,
+            $"{process.Name} {reason}. Its console output: {process.Log} (simple logs {process.Name} --output); its program log: {programLog} (simple logs {process.Name}).{kept}",
+            new { process.Name, Reason = reason, ProgramLog = programLog, Output = process.Log, OutputTail = tail, Stopped = stopped },
+            ["Last lines of its console output:", .. tail]);
     }
 
     public async Task<Outcome> DownAsync(string instance, string sqlServer, bool reset, CancellationToken cancellationToken)
