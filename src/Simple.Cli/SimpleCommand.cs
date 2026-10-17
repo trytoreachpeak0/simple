@@ -29,6 +29,8 @@ public static partial class SimpleCommand
         ["logs"] = [0, 1, 2, 5],
         // Besides the exit code of the command it ran on the remote machine.
         ["remote"] = [1, 2, 5, 20, 21, 22],
+        // run: the verdict; validate: 2 for a file that is not valid.
+        ["scenario"] = [0, 1, 2, 10, 11, 12],
     };
 
     /// <summary>Builds the command tree. The actions run against <paramref name="environment"/>.</summary>
@@ -208,6 +210,7 @@ public static partial class SimpleCommand
             events,
             logs,
             Remote.RemoteCommand.Create(environment),
+            Scenarios.ScenarioCommand.Create(environment),
             signal,
         };
     }

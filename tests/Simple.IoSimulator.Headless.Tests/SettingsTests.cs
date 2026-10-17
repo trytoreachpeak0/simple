@@ -35,6 +35,27 @@ public sealed class SettingsTests
         Assert.Contains(failures, f => f.Contains("LockFeedbackDelay", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("0")]
+    [InlineData("9")]
+    public void CargoIsOnlyInTheCabinetsSlots(string slot)
+    {
+        var failures = Validate(new Dictionary<string, string?> { ["IoSimulator:Cargo:0"] = "2", ["IoSimulator:Cargo:1"] = slot });
+
+        Assert.Contains(failures, f => f.Contains($"slot {slot}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CargoInTheSlotsIsAccepted()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["IoSimulator:Cargo:0"] = "1", ["IoSimulator:Cargo:1"] = "8" }).Build();
+        var settings = new IoSimulatorSettings();
+        settings.ReadFrom(configuration);
+
+        Assert.Equal([1, 8], settings.Cargo);
+        Assert.False(new IoSimulatorSettingsValidator().Validate(null, settings).Failed);
+    }
+
     private static List<string> Validate(Dictionary<string, string?> overrides)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(overrides).Build();

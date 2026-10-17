@@ -1,0 +1,245 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/trytoreachpeak0/simple/scenarios/scenario.schema.json",
+  "title": "SIMPLE scenario",
+  "description": "One scenario: the initial state of a local system, the events that drive it, and what is expected of the server's API and event record. Run with: simple scenario run <name>. Rules this schema cannot express (exactly one action per event, exactly one comparison per status condition, references between events and expectations, values from the site) are checked by simple scenario validate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "site", "expectations"],
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "description": "What the scenario shows, in one line." },
+    "description": { "type": "string" },
+    "site": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "The site under sites/ whose starting configuration the scenario uses: sample, the fictional small site, unless it is a site smoke scenario."
+    },
+    "expected-verdict": {
+      "type": "string",
+      "enum": ["holds", "does-not-hold", "cannot-tell", "not-applicable"],
+      "description": "The verdict CI expects. holds unless the scenario proves that the runner reports another verdict."
+    },
+    "initial": { "$ref": "#/definitions/initial" },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/event" },
+      "description": "Done in order. Each waits for its time (at) or its condition (when), then does exactly one action."
+    },
+    "expectations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/expectation" }
+    }
+  },
+  "definitions": {
+    "duration": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(ms|s|m)$",
+      "description": "A duration: 500ms, 5s, 1.5s, 2m."
+    },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "terminal": { "type": "integer", "minimum": 1, "description": "An onboard terminal by number, from 1; its IO simulator has the same number." },
+    "mesRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task-type", "sublot"],
+      "properties": {
+        "task-type": { "type": "string" },
+        "sublot": { "type": "string" },
+        "area": { "type": "string" },
+        "eqp": { "type": "string" },
+        "step": { "type": "string" },
+        "dates": { "type": "string" },
+        "package": { "type": "string" }
+      }
+    },
+    "initial": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "terminals": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many vehicles have an onboard terminal (each with its own IO simulator): at most as many as the site has vehicles. Default 0."
+        },
+        "fake-riot": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "speedup": { "type": "number", "exclusiveMinimum": 0, "description": "How many times faster than real RIoT the fake's world runs (FakeRiot:Timing:Speedup). Default 1." },
+            "vehicles": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/riotVehicle" },
+              "description": "Changes to the fake's vehicles before the scenario starts."
+            }
+          }
+        },
+        "fake-mes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/mesRow" },
+              "description": "The rows the fake MES starts with, in place of the gateway's seed rows. Absent: the seed rows."
+            }
+          }
+        },
+        "slots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["terminal", "cargo"],
+            "properties": {
+              "terminal": { "$ref": "#/definitions/terminal" },
+              "cargo": {
+                "type": "array",
+                "items": { "type": "integer", "minimum": 1, "maximum": 8 },
+                "description": "The slots of this terminal's cabinet that hold cargo when the IO simulator starts."
+              }
+            }
+          }
+        }
+      }
+    },
+    "riotVehicle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device-key"],
+      "properties": {
+        "device-key": { "type": "string", "description": "The vehicle's RIoT device key, as the site lists it." },
+        "battery": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "brake-released": { "type": "boolean" },
+        "mode": { "type": "string", "enum": ["MODE_AUTO", "MODE_MANUAL"] },
+        "manual-charger": { "type": "boolean" },
+        "emergency-button-pressed": { "type": "boolean" }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Either a value of the server's status (status, with exactly one comparison) or an entry of its event record (event).",
+      "properties": {
+        "status": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A path into GET /api/v1/status: riot.state, mesGateway.available, onboardTerminals[vehicleId=vehicle-1].connected, onboardTerminals[0].stale, onboardTerminals.count."
+        },
+        "equals": { "description": "The value equals this one." },
+        "not-equals": { "description": "The value is present and differs from this one." },
+        "at-least": { "type": "number" },
+        "at-most": { "type": "number" },
+        "event": { "type": "string", "minLength": 1, "description": "An event type, for example onboard.disconnected: an entry of this type was recorded within the window." },
+        "source": { "type": "string", "description": "The entry's source, for example server or onboard-terminal." },
+        "data": {
+          "type": "object",
+          "description": "Fields the entry's data must have, with these values; other fields may be there too."
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Exactly one of at or when, and exactly one action.",
+      "properties": {
+        "id": { "$ref": "#/definitions/id", "description": "A name expectations use in after." },
+        "at": { "$ref": "#/definitions/duration", "description": "When, counted from the start of the scenario; never before the previous event." },
+        "when": { "$ref": "#/definitions/condition", "description": "Waits until this condition holds; an event condition counts entries from when the previous event started (the start of the scenario for the first)." },
+        "within": { "$ref": "#/definitions/duration", "description": "How long when waits, counted like when, before the scenario gives up: cannot tell. Default 30s." },
+        "add-mes-row": { "$ref": "#/definitions/mesRow", "description": "A row appears in the fake MES." },
+        "remove-mes-row": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["task-type", "sublot"],
+          "properties": { "task-type": { "type": "string" }, "sublot": { "type": "string" } },
+          "description": "Every row with this task type and sublot disappears from the fake MES."
+        },
+        "fail-mes-reads": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["count"],
+          "properties": { "count": { "type": "integer", "minimum": 0 }, "message": { "type": "string" } },
+          "description": "The fake MES's next count reads fail; 0 cancels."
+        },
+        "malform-mes-reads": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["count"],
+          "properties": { "count": { "type": "integer", "minimum": 0 } },
+          "description": "The fake MES's next count reads also return a row missing a value; 0 cancels."
+        },
+        "set-riot-vehicle": { "$ref": "#/definitions/riotVehicle", "description": "What a person does to a vehicle on the fake RIoT: battery, brake, handset mode, charger, emergency button." },
+        "fail-riot-creates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["times"],
+          "properties": { "times": { "type": "integer", "minimum": 0 }, "order-made": { "type": "boolean" } },
+          "description": "The fake RIoT's next creates answer 00002; with order-made the order is made all the same."
+        },
+        "scan": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["terminal", "text"],
+          "properties": { "terminal": { "$ref": "#/definitions/terminal" }, "text": { "type": "string", "minLength": 1 } },
+          "description": "A person scans a code at the terminal (typed as a scanner types, ending with Enter)."
+        },
+        "press": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["terminal", "button"],
+          "properties": { "terminal": { "$ref": "#/definitions/terminal" }, "button": { "type": "string", "minLength": 1 } },
+          "description": "A person presses a button at the terminal."
+        },
+        "fault-io-module": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["terminal", "mode"],
+          "properties": {
+            "terminal": { "$ref": "#/definitions/terminal" },
+            "mode": { "type": "string", "enum": ["none", "no-response", "disconnect", "delay"] },
+            "delay-ms": { "type": "integer", "minimum": 0 }
+          },
+          "description": "The terminal's IO module stops answering, drops connections or answers late; none ends the fault."
+        },
+        "auto-respond": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["terminal", "action", "doors"],
+          "properties": {
+            "terminal": { "$ref": "#/definitions/terminal" },
+            "action": { "type": "string", "enum": ["load", "unload"] },
+            "doors": { "type": "integer", "minimum": 1 },
+            "act-seconds": { "type": "number", "minimum": 0 },
+            "close-seconds": { "type": "number", "minimum": 0 },
+            "within-seconds": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "description": "The person at the cabinet: for the next doors that open, puts cargo in or takes it out, then closes the door."
+        },
+        "stop-process": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["process"],
+          "properties": { "process": { "type": "string", "minLength": 1 } },
+          "description": "Stops one process of the system as simple status names it (terminal-1, mes-gateway): for example a terminal dropping off."
+        }
+      }
+    },
+    "expectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Exactly one of eventually (with within), always (with for) and never (with for).",
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "title": { "type": "string" },
+        "eventually": { "$ref": "#/definitions/condition", "description": "Holds once the condition holds within the window." },
+        "always": { "$ref": "#/definitions/condition", "description": "Holds if the condition holds at every look throughout the window." },
+        "never": { "$ref": "#/definitions/condition", "description": "Holds if the condition holds at no look throughout the window." },
+        "within": { "$ref": "#/definitions/duration" },
+        "for": { "$ref": "#/definitions/duration" },
+        "after": { "$ref": "#/definitions/id", "description": "The window opens when the event with this id starts its action, instead of when the scenario starts." },
+        "only-if": { "$ref": "#/definitions/condition", "description": "Judged when the window opens: if it does not hold, the expectation is not applicable." }
+      }
+    }
+  }
+}

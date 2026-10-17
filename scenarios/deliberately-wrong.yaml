@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=scenario.schema.json
+title: 故意写反的期望：运行器会判"不成立"
+description: >
+  证明运行器真的会判"不成立"：系统正常起来、假 RIoT 已连上，期望却写成
+  "5 秒内 RIoT 连不上"。这个场景的判定必须是 does-not-hold；CI 按预期的
+  does-not-hold 处理，判成别的（包括 holds）都算失败。
+site: sample
+expected-verdict: does-not-hold
+
+expectations:
+  - id: riot-unreachable-on-purpose
+    title: 故意写反：RIoT 实际是连上的
+    eventually: { status: riot.state, equals: unreachable }
+    within: 5s

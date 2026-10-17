@@ -31,6 +31,11 @@ public static class Components
                 $"--urls={context.Url()}",
                 $"--FakeRiot:CallApiKey={FakeRiotCallApiKey}",
                 context.LogDirectoryArgument,
+                // A scenario's own speed-up (F9): the fake's world runs this
+                // many times faster; the server's timings stay as configured.
+                .. context.Options.FakeRiotSpeedup is { } speedup
+                    ? [$"--FakeRiot:Timing:Speedup={speedup.ToString(CultureInfo.InvariantCulture)}"]
+                    : Array.Empty<string>(),
             ],
             IsReady: (context, http, cancellationToken) =>
                 Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),
@@ -50,6 +55,10 @@ public static class Components
                 $"--urls={context.Url()}",
                 "--Simple:Mes:Source=Fake",
                 context.LogDirectoryArgument,
+                // A scenario's starting rows, in place of the gateway's seed rows.
+                .. context.Options.FakeMesSeedFile is { } seed
+                    ? [$"--Simple:Mes:Fake:SeedFile={seed}"]
+                    : Array.Empty<string>(),
             ],
             IsReady: (context, http, cancellationToken) =>
                 Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),
@@ -91,6 +100,9 @@ public static class Components
                 $"--urls={context.Url()}",
                 $"--IoSimulator:Modbus=127.0.0.1:{context.Ports[IoSimulatorModbusPort].ToString(CultureInfo.InvariantCulture)}",
                 context.LogDirectoryArgument,
+                // The slots holding cargo when the cabinet starts, from a scenario.
+                .. (context.Options.Cargo?.GetValueOrDefault(context.Index) ?? [])
+                    .Select((slot, i) => $"--IoSimulator:Cargo:{i.ToString(CultureInfo.InvariantCulture)}={slot.ToString(CultureInfo.InvariantCulture)}"),
             ],
             IsReady: (context, http, cancellationToken) =>
                 Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),
@@ -165,7 +177,16 @@ public sealed record Component(
 /// <summary>What <c>up</c> was asked for.</summary>
 /// <param name="BreakAway">Start the components outside the caller's job (<see cref="Processes.ChildProcess.Start"/>); only simple remote up asks for it.</param>
 /// <param name="KeyStore">Where the server keeps its key; only simple remote up asks for the machine's store.</param>
-public sealed record UpOptions(int Terminals, bool BreakAway = false, ServerKeyStore KeyStore = ServerKeyStore.User);
+/// <param name="FakeRiotSpeedup">The fake fleet manager's FakeRiot:Timing:Speedup; null for its own default. Only scenarios ask for it.</param>
+/// <param name="FakeMesSeedFile">The rows the fake MES starts with; null for the gateway's seed rows. Only scenarios ask for it.</param>
+/// <param name="Cargo">The slots holding cargo when each terminal's IO simulator starts, by terminal number. Only scenarios ask for it.</param>
+public sealed record UpOptions(
+    int Terminals,
+    bool BreakAway = false,
+    ServerKeyStore KeyStore = ServerKeyStore.User,
+    double? FakeRiotSpeedup = null,
+    string? FakeMesSeedFile = null,
+    IReadOnlyDictionary<int, IReadOnlyList<int>>? Cargo = null);
 
 /// <summary>What one process of a component is started with.</summary>
 /// <param name="Index">1-based among the processes of its component.</param>
@@ -184,6 +205,9 @@ public sealed record ComponentContext(
     string LogDirectory,
     ServerKeyStore KeyStore = ServerKeyStore.User)
 {
+    /// <summary>What <c>up</c> was asked for.</summary>
+    public UpOptions Options { get; init; } = new(0);
+
     /// <summary>Where the process writes its program log (ADR 0034); every component is given it.</summary>
     public string LogDirectoryArgument => $"--Simple:Logs:Directory={LogDirectory}";
 

@@ -68,7 +68,7 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
             start.ArgumentList.Add(arg);
         }
 
-        if (args is ["up", ..])
+        if (args is ["up", ..] or ["scenario", "run", ..])
         {
             start.ArgumentList.Add(SimpleCommand.ServerKeyStoreOption);
             start.ArgumentList.Add(TestKeyStore.Store.ToString());

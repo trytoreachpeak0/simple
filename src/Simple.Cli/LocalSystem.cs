@@ -176,7 +176,7 @@ public sealed partial class LocalSystem(
                     index++;
                     portsOf[name] = ports.Skip(next).Take(component.PortsPerProcess).ToList();
                     next += component.PortsPerProcess;
-                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name), store.ProgramLogDirectory(instance, name), options.KeyStore)));
+                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name), store.ProgramLogDirectory(instance, name), options.KeyStore) { Options = options }));
                 }
             }
         }
@@ -440,6 +440,27 @@ public sealed partial class LocalSystem(
 
         static string Names(List<string?> names) => names.Count > 0 ? string.Join(", ", names) : "none";
     }
+
+    /// <summary>
+    /// Stops one process of a running instance the way down stops it
+    /// (Ctrl+Break, then killed after the timeout), and leaves the rest
+    /// running: a scenario's terminal dropping off. Null when the instance
+    /// has no such process.
+    /// </summary>
+    public async Task<StopOutcome?> StopProcessAsync(string instance, string name, CancellationToken cancellationToken)
+    {
+        if (store.Read(instance)?.Processes.FirstOrDefault(p => p.Name == name) is not { } process)
+        {
+            return null;
+        }
+
+        progress.WriteLine($"Stopping {process.Name} (pid {process.Pid})...");
+        return await StopAsync(process, cancellationToken);
+    }
+
+    /// <summary>Where each process of a running instance answers HTTP, by name; empty when it is not running.</summary>
+    public IReadOnlyDictionary<string, Uri> Urls(string instance) =>
+        store.Read(instance)?.Processes.ToDictionary(p => p.Name, ApiUri) ?? new Dictionary<string, Uri>();
 
     /// <summary>Asks the SQL Server which instance it is (<see cref="SqlServerTarget.VerifyAsync"/>); null when it may be used.</summary>
     private async Task<Outcome?> VerifySqlServerAsync(string sqlServer, CancellationToken cancellationToken)

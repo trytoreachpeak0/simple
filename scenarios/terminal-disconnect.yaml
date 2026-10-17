@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=scenario.schema.json
+title: 车载终端断线被服务端看出来
+description: >
+  一台车载终端连上后，把它的进程停掉（相当于终端掉线）。服务端应当记下
+  onboard.disconnected，状态里这台终端变成未连接，十秒没有新报告后再记下 onboard.stale。
+site: sample
+
+initial:
+  terminals: 1
+
+events:
+  - id: drop-terminal
+    when: { status: "onboardTerminals[vehicleId=vehicle-1].connected", equals: true }
+    within: 20s
+    stop-process: { process: terminal }
+
+expectations:
+  - id: disconnect-recorded
+    after: drop-terminal
+    eventually: { event: onboard.disconnected, data: { vehicleId: vehicle-1 } }
+    within: 15s
+  - id: status-shows-disconnected
+    after: drop-terminal
+    eventually: { status: "onboardTerminals[vehicleId=vehicle-1].connected", equals: false }
+    within: 15s
+  - id: reports-go-stale
+    after: drop-terminal
+    eventually: { event: onboard.stale, data: { vehicleId: vehicle-1 } }
+    within: 20s

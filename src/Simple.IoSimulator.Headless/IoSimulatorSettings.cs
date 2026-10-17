@@ -15,6 +15,9 @@ public sealed class IoSimulatorSettings
 
     public IoSimulatorTiming Timing { get; set; } = new();
 
+    /// <summary>The slots (1-8) holding cargo when the simulator starts: --IoSimulator:Cargo:0=1 --IoSimulator:Cargo:1=3. None by default.</summary>
+    public IList<int> Cargo { get; } = [];
+
     /// <summary>Every address the control API is configured to listen on, keyed by where it came from.</summary>
     public IList<KeyValuePair<string, string>> ListenAddresses { get; } = [];
 
@@ -88,6 +91,11 @@ public sealed class IoSimulatorSettingsValidator : IValidateOptions<IoSimulatorS
             {
                 failures.Add($"{section}:Timing:{key} must not be negative.");
             }
+        }
+
+        foreach (var slot in options.Cargo.Where(n => n is < 1 or > Cabinet.SlotCount).Distinct())
+        {
+            failures.Add($"{section}:Cargo lists slot {slot}; the cabinet's slots are 1 to {Cabinet.SlotCount}.");
         }
 
         foreach (var (key, address) in options.ListenAddresses)

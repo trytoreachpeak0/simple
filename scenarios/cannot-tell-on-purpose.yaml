@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=scenario.schema.json
+title: 故意观察不到的期望：运行器会判"判不了"
+description: >
+  证明观察不到的期望判"判不了"，而不是算通过、也不是算"不成立"：只起一台终端
+  （vehicle-1），期望却看 vehicle-9 的连接状态，状态接口里根本没有这台。这个场景的
+  判定必须是 cannot-tell，退出码 11，和"不成立"的 10 不同。
+site: sample
+expected-verdict: cannot-tell
+
+initial:
+  terminals: 1
+
+expectations:
+  - id: unknown-vehicle
+    title: 状态里没有 vehicle-9，看不到它的连接状态
+    eventually: { status: "onboardTerminals[vehicleId=vehicle-9].connected", equals: true }
+    within: 5s
