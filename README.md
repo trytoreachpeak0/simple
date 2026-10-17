@@ -218,7 +218,7 @@ dotnet run --project src/Simple.Server -- --Simple:Instance=wt25 --urls=http://1
 做法见 ADR 0046。两个地址默认都不配，开发、测试和 CI 只用回环上的接口。
 
 - **控制台的 HTTPS 地址**：`Simple:Console:Url`，例如 `https://172.19.205.222:5443`。只能是 `https://`，要写明一块网卡的 IP 地址（证书里要写这个 IP，所以不收 `localhost` 和机器名），不收 `0.0.0.0`、`[::]`、`*`。这里提供全部接口和登录（以后还有控制台页面），不提供车载终端协议；TLS 1.2；不发 HSTS。
-- **控制台的证书**：服务端第一次带着 `Simple:Console:Url` 启动时自己生成一张，记事件 `console.certificate-created`，程序日志里写一条警告提醒去装。证书写明自己不是证书机构、只能证明这台服务器：`basicConstraints` 关键且 `CA:false`，`keyUsage` 只有 `digitalSignature`，扩展用途只有 serverAuth，`subjectAltName` 写配置的 IP 和本机机器名；有效期 20 年。证书本身存在库里（`ConsoleCertificates` 表），生成后固定不变；钥匙和车载终端的钥匙一样是 Windows 密钥存储里一把有名字的 ECDSA P-256 钥匙，默认名字 `Simple-Console-<实例名>`（`Simple:Console:KeyName`），放在 `Simple:OnboardTerminals:ServerKeyStore` 指的存储里。证书和钥匙都要备份（归部署那张票）。
+- **控制台的证书**：服务端第一次带着 `Simple:Console:Url` 启动时自己生成一张，记事件 `console.certificate-created`，程序日志里写一条警告提醒去装。证书写明自己不是证书机构、只能证明这台服务器：`basicConstraints` 关键且 `CA:false`，`keyUsage` 只有 `digitalSignature`，扩展用途只有 serverAuth，`subjectAltName` 写配置的 IP 和本机的 DNS 主机名（`Dns.GetHostName()`，不是最多 15 个字符的大写 NetBIOS 名）；有效期 20 年。证书本身存在库里（`ConsoleCertificates` 表），生成后固定不变；钥匙和车载终端的钥匙一样是 Windows 密钥存储里一把有名字的 ECDSA P-256 钥匙，默认名字 `Simple-Console-<实例名>`（`Simple:Console:KeyName`），放在 `Simple:OnboardTerminals:ServerKeyStore` 指的存储里。证书和钥匙都要备份（归部署那张票）。
 - **装到用控制台的电脑上**：在服务端机器上导出证书文件，拷到那台电脑上双击 → "安装证书" → "当前用户" → "将所有的证书都放入下列存储" → "受信任的根证书颁发机构" → 完成 → 安全警告点"是"：
 
   ```
@@ -226,8 +226,9 @@ dotnet run --project src/Simple.Server -- --Simple:Instance=wt25 --urls=http://1
   ```
 
   命令输出证书的 SHA-256，可以和状态接口里的对一下。
-- **换 IP、换机器名、钥匙丢了**：服务端发现库里的证书不写着现在的 IP 或机器名，或者钥匙不在、对不上，就拒绝启动（退出码 2），在程序日志里说明。确实要换的，运行 `discard-console-certificate` 作废旧证书（记事件 `console.certificate-discarded`），下次启动生成新的，那几台电脑各重装一次。服务端不会自己悄悄换证书，因为换了就要每台电脑重装。
-- **到期提醒**：状态接口的 `consoleEndpoint.certificate` 写证书的 SHA-256、写给了哪些 IP 和名字、到期时刻、还剩几天；还剩 90 天以内时 `expiresSoon` 为 `true`。控制台和值守 AI 都从这里读。
+- **换 IP、换机器名、钥匙丢了**：服务端发现库里的证书不写着现在的 IP 或机器名，或者钥匙不在、不是这张证书的，**只关控制台，服务端照常运行**（产品负责人 2026-10-18 定）：车载终端、派车照常；控制台的地址照样占着端口（Kestrel 在读库之前就定好了监听地址），但每条连接一到就断开；状态接口的 `consoleEndpoint` 里 `serving` 为 `false`，`problem` 写原因和怎么办，程序日志记一条错误。确实要换的，运行 `discard-console-certificate` 作废旧证书（记事件 `console.certificate-discarded`），重启后生成新的，那几台电脑各重装一次。服务端不会自己悄悄换证书，因为换了就要每台电脑重装。
+- **作废证书不换钥匙**：`discard-console-certificate` 只删库里的证书，钥匙留着、下次生成证书时接着用。钥匙可能泄露时，在重启之前用服务端运行的那个 Windows 账号删掉它（`Simple:Console:KeyName`，默认 `Simple-Console-<实例名>`），服务端会建一把新的。两条证书命令都不碰钥匙，谁运行都一样。
+- **到期提醒**：状态接口的 `consoleEndpoint.certificate` 写证书的 SHA-256、写给了哪些 IP 和名字、到期时刻、还剩几天；还剩 90 天以内时 `expiresSoon` 为 `true`。控制台页面和值守 AI 还没做，做的时候从这里读。
 - **车辆一览页的明文地址**：`Simple:Overview:Url`，例如 `http://172.19.205.222:5080`。只能是 `http://`，要写明一块网卡的 IP 地址（或 `localhost`），不收所有网卡一起听的写法。这里只提供车辆一览页和它的数据，不收登录，别的请求一律 404；登录 Cookie 是 `Secure` 的，浏览器不会在这个地址上发它。车辆一览页本身还没做，所以现在这个地址上什么都没有。
 - **各回各的**：哪个地址提供什么按请求进来的那条连接分，不按主机名或端口：回环上的接口和控制台的 HTTPS 地址提供除车载终端协议以外的一切；车载终端端点只提供车载终端协议；一览页的明文地址只提供标了"一览页"的接口。
 

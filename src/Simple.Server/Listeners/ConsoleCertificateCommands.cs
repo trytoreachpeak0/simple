@@ -20,7 +20,9 @@ public static class ConsoleCertificateCommands
     /// <c>Simple.Server discard-console-certificate</c>: forgets the stored
     /// certificate, so that the server's next start makes a new one for the
     /// address and machine name it has then. Every console PC then installs the
-    /// new one.
+    /// new one. The key stays and is used again; if it may have leaked, the
+    /// account the server runs as deletes it (Simple-Console-&lt;instance&gt;)
+    /// before the restart, and the server makes a new one.
     /// </summary>
     public const string DiscardName = "discard-console-certificate";
 
@@ -66,7 +68,8 @@ public static class ConsoleCertificateCommands
 
         await transaction.CommitAsync(cancellationToken);
         await output.WriteLineAsync(discarded > 0
-            ? "The console certificate is discarded. The server makes a new one at its next start; install that one on every console PC."
+            ? "The console certificate is discarded. The server makes a new one at its next start; install that one on every console PC. "
+                + "The key stays and is used again: if it may have leaked, delete it (Simple:Console:KeyName, default Simple-Console-<instance>) as the account the server runs as before the restart."
             : "There was no console certificate to discard.");
         return 0;
     }

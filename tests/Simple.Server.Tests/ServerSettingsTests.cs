@@ -59,6 +59,7 @@ public sealed class ServerSettingsTests
     [Theory]
     [InlineData("https://172.19.205.222:5080", "is not an http:// address")]
     [InlineData("http://0.0.0.0:5080", "listens on every network interface")]
+    [InlineData("http://[::]:5080", "listens on every network interface")]
     [InlineData("http://*:5080", "does not name an IP address")]
     [InlineData("http://factory01:5080", "does not name an IP address")]
     public void AnOverviewAddressOnEveryInterfaceOrOverTlsIsRefusedByName(string url, string reason)

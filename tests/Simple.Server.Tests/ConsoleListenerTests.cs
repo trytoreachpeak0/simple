@@ -6,6 +6,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Time.Testing;
 using Simple.Logging;
 using Simple.Server.Accounts;
@@ -84,9 +85,11 @@ public sealed class ConsoleListenerTests
         Assert.Equal(["1.3.6.1.5.5.7.3.1"], extended.EnhancedKeyUsages.Cast<Oid>().Select(o => o.Value));
         var names = Assert.Single(certificate.Extensions.OfType<X509SubjectAlternativeNameExtension>());
         Assert.Contains(IPAddress.Parse(ConsoleHost), names.EnumerateIPAddresses());
-        Assert.Contains(Environment.MachineName, names.EnumerateDnsNames(), StringComparer.OrdinalIgnoreCase);
+        Assert.Contains(Dns.GetHostName(), names.EnumerateDnsNames(), StringComparer.OrdinalIgnoreCase);
         Assert.Equal(time.GetUtcNow().AddYears(20).Date, certificate.NotAfter.ToUniversalTime().Date);
-        Assert.Equal([ConsoleHost, Environment.MachineName], console.Names, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal([ConsoleHost, Dns.GetHostName()], console.Names, StringComparer.OrdinalIgnoreCase);
+        Assert.True(console.Serving);
+        Assert.Null(console.Problem);
     }
 
     [Fact]
@@ -107,30 +110,78 @@ public sealed class ConsoleListenerTests
     }
 
     [Fact]
-    public async Task AServerOnAnAddressItsCertificateDoesNotNameRefusesToStartUntilTheCertificateIsDiscarded()
+    public async Task ACertificateForAnotherAddressClosesOnlyTheConsoleUntilItIsDiscarded()
     {
         await using var first = new ServerInstance(kestrel: true, extraSettings: Listening());
         var original = await ConsoleOfAsync(first.Start());
         await first.StopAsync();
         await using var moved = new ServerInstance(instance: first.Instance, kestrel: true, extraSettings: Listening("127.0.0.4"));
 
-        Assert.ThrowsAny<Exception>(() => moved.Start());
-        // Why is in the program log, where the server writes a refusal (ADR 0034).
-        var refusal = ProgramLog.ReadText(moved.LogDirectory);
-        // The command runs with the server's settings and database; here, a server of the same instance without a console address.
-        await using (var plain = new ServerInstance(instance: first.Instance, kestrel: true))
-        {
-            plain.Start();
-            await ConsoleCertificateCommands.DiscardAsync(plain.Services, new StringWriter(), Cancel);
-            await plain.StopAsync();
-        }
-
+        // The server runs on (the product owner, 2026-10-18): status, login, terminals.
+        var admin = moved.Start();
+        var closed = await ConsoleOfAsync(admin);
+        var handshake = await Record.ExceptionAsync(() => NegotiatedProtocolAsync(closed.Url));
+        await ConsoleCertificateCommands.DiscardAsync(moved.Services, new StringWriter(), Cancel);
+        await moved.StopAsync();
         var renewed = await ConsoleOfAsync(moved.Start());
 
-        Assert.Contains($"The server refuses to start: the console certificate is for {ConsoleHost}, ", refusal, StringComparison.Ordinal);
-        Assert.Contains(ConsoleCertificateCommands.DiscardName, refusal, StringComparison.Ordinal);
+        Assert.False(closed.Serving);
+        Assert.Contains($"The console certificate is for {ConsoleHost}, ", closed.Problem, StringComparison.Ordinal);
+        Assert.Contains(ConsoleCertificateCommands.DiscardName, closed.Problem, StringComparison.Ordinal);
+        Assert.NotNull(handshake);
+        Assert.Contains("The console is closed; the server runs on.", ProgramLog.ReadText(moved.LogDirectory), StringComparison.Ordinal);
+        Assert.True(renewed.Serving);
         Assert.NotEqual(original.Sha256, renewed.Sha256);
         Assert.Contains("127.0.0.4", renewed.Names);
+    }
+
+    [Theory]
+    [InlineData("gone")]
+    [InlineData("another key")]
+    public async Task AConsoleKeyThatIsGoneOrNotTheCertificatesClosesOnlyTheConsole(string what)
+    {
+        await using var server = new ServerInstance(kestrel: true, extraSettings: Listening());
+        await ConsoleOfAsync(server.Start());
+        await server.StopAsync();
+        if (OperatingSystem.IsWindows())
+        {
+            Simple.Server.OnboardTerminals.ServerCertificate.Delete(server.Database.ConsoleKeyName, TestKeyStore.IsMachine);
+            if (what == "another key")
+            {
+                Simple.Server.OnboardTerminals.ServerCertificate.OpenOrCreateKey(server.Database.ConsoleKeyName, TestKeyStore.IsMachine).Dispose();
+            }
+        }
+
+        var admin = server.Start();
+        var closed = await ConsoleOfAsync(admin);
+
+        Assert.False(closed.Serving);
+        Assert.Contains($"The console certificate's key {server.Database.ConsoleKeyName} is not in the", closed.Problem, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync(new Uri("/api/v1/status", UriKind.Relative), Cancel)).StatusCode);
+    }
+
+    [Fact]
+    public async Task ACertificateForAnotherMachineNameClosesOnlyTheConsole()
+    {
+        await using var server = new ServerInstance(kestrel: true, extraSettings: Listening());
+        await ConsoleOfAsync(server.Start());
+        await server.StopAsync();
+        if (OperatingSystem.IsWindows())
+        {
+            using var key = Simple.Server.OnboardTerminals.ServerCertificate.OpenOrCreateKey(server.Database.ConsoleKeyName, TestKeyStore.IsMachine);
+            using var other = ConsoleCertificate.Create(key, IPAddress.Parse(ConsoleHost), "another-pc", DateTimeOffset.UtcNow);
+            await using var db = server.CreateDbContext();
+            var stored = await db.ConsoleCertificates.SingleAsync(Cancel);
+            db.ConsoleCertificates.Remove(stored);
+            await db.SaveChangesAsync(Cancel);
+            db.ConsoleCertificates.Add(new ConsoleCertificateRecord { Certificate = other.RawData, CreatedAt = DateTimeOffset.UtcNow });
+            await db.SaveChangesAsync(Cancel);
+        }
+
+        var closed = await ConsoleOfAsync(server.Start());
+
+        Assert.False(closed.Serving);
+        Assert.Contains($"The console certificate is for {ConsoleHost}, another-pc, but the server is {Dns.GetHostName()}", closed.Problem, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -144,6 +195,9 @@ public sealed class ConsoleListenerTests
         time.SetUtcNow(fresh.NotAfter.AddDays(-91));
         admin = (await server.LogInAsync("admin", ServerInstance.AdminPassword)).Client!;
         var early = await ConsoleOfAsync(admin);
+        time.SetUtcNow(fresh.NotAfter.AddDays(-90));
+        admin = (await server.LogInAsync("admin", ServerInstance.AdminPassword)).Client!;
+        var ninety = await ConsoleOfAsync(admin);
         time.SetUtcNow(fresh.NotAfter.AddDays(-89));
         admin = (await server.LogInAsync("admin", ServerInstance.AdminPassword)).Client!;
         var soon = await ConsoleOfAsync(admin);
@@ -151,6 +205,8 @@ public sealed class ConsoleListenerTests
         Assert.False(fresh.ExpiresSoon);
         Assert.False(early.ExpiresSoon);
         Assert.Equal(91, early.DaysLeft);
+        Assert.True(ninety.ExpiresSoon);
+        Assert.Equal(90, ninety.DaysLeft);
         Assert.True(soon.ExpiresSoon);
         Assert.Equal(89, soon.DaysLeft);
     }
@@ -212,14 +268,23 @@ public sealed class ConsoleListenerTests
     {
         var status = await admin.GetFromJsonAsync<JsonElement>(new Uri("/api/v1/status", UriKind.Relative), Cancel);
         var console = status.GetProperty("consoleEndpoint");
-        var certificate = console.GetProperty("certificate");
+        var url = new Uri(console.GetProperty("url").GetString()!);
+        var serving = console.GetProperty("serving").GetBoolean();
+        var problem = console.GetProperty("problem").GetString();
+        if (console.GetProperty("certificate") is not { ValueKind: JsonValueKind.Object } certificate)
+        {
+            return new ConsoleView(url, string.Empty, [], default, 0, false, serving, problem);
+        }
+
         return new ConsoleView(
-            new Uri(console.GetProperty("url").GetString()!),
+            url,
             certificate.GetProperty("sha256").GetString()!,
             certificate.GetProperty("names").EnumerateArray().Select(n => n.GetString()!).ToList(),
             certificate.GetProperty("notAfter").GetDateTimeOffset(),
             certificate.GetProperty("daysLeft").GetInt32(),
-            certificate.GetProperty("expiresSoon").GetBoolean());
+            certificate.GetProperty("expiresSoon").GetBoolean(),
+            serving,
+            problem);
     }
 
     private static async Task<X509Certificate2> PresentedCertificateAsync(Uri url)
@@ -240,5 +305,6 @@ public sealed class ConsoleListenerTests
         return tls.SslProtocol;
     }
 
-    private sealed record ConsoleView(Uri Url, string Sha256, IReadOnlyList<string> Names, DateTimeOffset NotAfter, int DaysLeft, bool ExpiresSoon);
+    private sealed record ConsoleView(
+        Uri Url, string Sha256, IReadOnlyList<string> Names, DateTimeOffset NotAfter, int DaysLeft, bool ExpiresSoon, bool Serving, string? Problem);
 }

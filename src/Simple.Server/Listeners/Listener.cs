@@ -85,12 +85,26 @@ public static class Listener
         return url;
     }
 
-    /// <summary>Marks an endpoint as part of the vehicle overview, served on its plain address too (ADR 0016, 0046).</summary>
+    /// <summary>
+    /// Marks an endpoint as part of the vehicle overview, served on its plain
+    /// address too (ADR 0016, 0046). Only an endpoint without login may be:
+    /// the plain address must never see a login cookie in use; anything else
+    /// fails when the server builds its endpoints.
+    /// </summary>
     public static TBuilder ServedOnOverview<TBuilder>(this TBuilder builder)
         where TBuilder : IEndpointConventionBuilder
     {
         ArgumentNullException.ThrowIfNull(builder);
-        return builder.WithMetadata(OverviewMetadata.Instance);
+        builder.WithMetadata(OverviewMetadata.Instance);
+        builder.Finally(endpoint =>
+        {
+            if (endpoint.Metadata.OfType<Accounts.AccessMetadata>().LastOrDefault()?.Access != Accounts.Access.Anonymous)
+            {
+                throw new InvalidOperationException(
+                    $"{endpoint.DisplayName} is served on the overview's plain address and so must be Access.Anonymous.");
+            }
+        });
+        return builder;
     }
 }
 

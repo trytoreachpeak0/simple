@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http;
+using Simple.Server.Accounts;
 using Simple.Server.Listeners;
 
 namespace Simple.Server.Tests;
@@ -36,6 +37,24 @@ public sealed class ListenerTests
 
         Assert.Equal(served, reached);
         Assert.Equal(served ? StatusCodes.Status200OK : StatusCodes.Status404NotFound, context.Response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(Simple.Server.Accounts.Access.Anonymous, true)]
+    [InlineData(Simple.Server.Accounts.Access.View, false)]
+    public void OnlyAnEndpointWithoutLoginCanBeServedOnTheOverviewAddress(Simple.Server.Accounts.Access access, bool allowed)
+    {
+        var app = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder().Build();
+        Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapGet(app, "/overview-test", () => "x")
+            .ServedOnOverview()
+            .RequireAccess(access);
+
+        var built = Record.Exception(() =>
+        {
+            _ = ((Microsoft.AspNetCore.Routing.IEndpointRouteBuilder)app).DataSources.SelectMany(d => d.Endpoints).ToList();
+        });
+
+        Assert.Equal(allowed, built is null);
     }
 
     private sealed class ConnectionItems(ListenerKind kind) : IConnectionItemsFeature

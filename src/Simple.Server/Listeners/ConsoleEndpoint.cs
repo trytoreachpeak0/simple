@@ -27,6 +27,7 @@ public sealed partial class ConsoleEndpoint(
 
     private readonly Lock gate = new();
     private X509Certificate2? certificate;
+    private string? problem;
     private ListenOptions? consoleListener;
     private ListenOptions? overviewListener;
 
@@ -57,6 +58,19 @@ public sealed partial class ConsoleEndpoint(
                 consoleListener = listen;
                 listen.Protocols = HttpProtocols.Http1AndHttp2;
                 Listener.Mark(listen, ListenerKind.Console);
+                // Kestrel takes its addresses before the database is read, so
+                // the address is bound either way; without a usable certificate
+                // (LoadAsync) every connection is closed at once.
+                listen.Use(next => connection =>
+                {
+                    if (Certificate is null)
+                    {
+                        connection.Abort();
+                        return Task.CompletedTask;
+                    }
+
+                    return next(connection);
+                });
                 listen.UseHttps(new HttpsConnectionAdapterOptions
                 {
                     // Loaded from the database when the server starts, before
@@ -82,12 +96,14 @@ public sealed partial class ConsoleEndpoint(
 
     /// <summary>
     /// Reads the console's certificate, or makes it on the first start with a
-    /// console address. A certificate that does not name the configured
-    /// address and this machine, or whose key is gone, refuses the start: a
-    /// new one has to be installed on every console PC, so it is never made
-    /// without a person asking for it (<see cref="ConsoleCertificateCommands.DiscardName"/>).
+    /// console address. When the stored certificate does not name the
+    /// configured address and this machine, or its key is gone or not its
+    /// own, only the console closes (the product owner, 2026-10-18): the
+    /// server runs on, the console's address closes every connection, and the
+    /// status and the program log say why and what to do. A new certificate
+    /// has to be installed on every console PC, so it is never made without a
+    /// person asking for it (<see cref="ConsoleCertificateCommands.DiscardName"/>).
     /// </summary>
-    /// <exception cref="ServerRefusesToStartException">The stored certificate cannot be used here.</exception>
     public async Task LoadAsync(CancellationToken cancellationToken)
     {
         if (ConsoleUrl is not { } url)
@@ -101,7 +117,8 @@ public sealed partial class ConsoleEndpoint(
         }
 
         var address = IPAddress.Parse(BindingAddress.Parse(url).Host.Trim('[', ']'));
-        var machine = Environment.MachineName;
+        // The DNS host name, as people type it; not the 15-character NetBIOS name.
+        var machine = Dns.GetHostName();
         var keyName = settings.Value.ConsoleKeyName;
         var machineKey = settings.Value.ServerKeyIsMachineKey;
         var store = machineKey ? "machine" : $@"user {Environment.UserDomainName}\{Environment.UserName}";
@@ -111,9 +128,15 @@ public sealed partial class ConsoleEndpoint(
         X509Certificate2 loaded;
         if (stored is null)
         {
-            using (var key = OnboardTerminals.ServerCertificate.OpenOrCreateKey(keyName, machineKey))
+            try
             {
+                using var key = OnboardTerminals.ServerCertificate.OpenOrCreateKey(keyName, machineKey);
                 loaded = ConsoleCertificate.Create(key, address, machine, time.GetUtcNow());
+            }
+            catch (System.Security.Cryptography.CryptographicException e)
+            {
+                Close($"The server cannot open or create the console certificate's key {keyName} in the {store} key store: {e.Message}");
+                return;
             }
 
             db.ConsoleCertificates.Add(new ConsoleCertificateRecord { Certificate = loaded.RawData, CreatedAt = time.GetUtcNow() });
@@ -130,20 +153,37 @@ public sealed partial class ConsoleEndpoint(
         }
         else
         {
-            loaded = ConsoleCertificate.Join(stored.Certificate, keyName, machineKey)
-                ?? throw new ServerRefusesToStartException(
-                    $"The server refuses to start: the console certificate's key {keyName} is not in the {store} key store, or is not the certificate's. "
-                    + $"Restore the key from its backup, or run Simple.Server {ConsoleCertificateCommands.DiscardName} so that the next start makes a new certificate, "
-                    + "and install that one on every console PC (ADR 0046).");
+            X509Certificate2? joined;
+            try
+            {
+                joined = ConsoleCertificate.Join(stored.Certificate, keyName, machineKey);
+            }
+            catch (System.Security.Cryptography.CryptographicException e)
+            {
+                Close($"The server cannot open the console certificate's key {keyName} in the {store} key store: {e.Message}");
+                return;
+            }
+
+            if (joined is null)
+            {
+                Close(
+                    $"The console certificate's key {keyName} is not in the {store} key store, or is not the certificate's. "
+                    + $"Restore the key from its backup, or run Simple.Server {ConsoleCertificateCommands.DiscardName} and restart, "
+                    + "so that the server makes a new certificate, and install that one on every console PC (ADR 0046).");
+                return;
+            }
+
+            loaded = joined;
             var names = ConsoleCertificate.NamesOf(loaded);
             if (!names.Contains(address.ToString()) || !names.Contains(machine, StringComparer.OrdinalIgnoreCase))
             {
                 var listed = string.Join(", ", names);
                 loaded.Dispose();
-                throw new ServerRefusesToStartException(
-                    $"The server refuses to start: the console certificate is for {listed}, but the server is {machine} listening at {url}. "
-                    + $"If the address or the machine name has changed, run Simple.Server {ConsoleCertificateCommands.DiscardName} so that the next start makes a new certificate, "
-                    + "and install that one on every console PC (ADR 0046).");
+                Close(
+                    $"The console certificate is for {listed}, but the server is {machine} listening at {url}. "
+                    + $"If the address or the machine name has changed, run Simple.Server {ConsoleCertificateCommands.DiscardName} and restart, "
+                    + "so that the server makes a new certificate, and install that one on every console PC (ADR 0046).");
+                return;
             }
 
             var loadedSha256 = ConsoleCertificate.Sha256Of(loaded);
@@ -157,12 +197,29 @@ public sealed partial class ConsoleEndpoint(
         }
     }
 
+    /// <summary>Only the console closes; the server runs on (the product owner, 2026-10-18).</summary>
+    private void Close(string why)
+    {
+        lock (gate)
+        {
+            problem = why;
+        }
+
+        LogClosed(logger, why);
+    }
+
     /// <summary>For the status API: where the console is and how long its certificate lasts; null without a console address.</summary>
     public ConsoleEndpointStatus? Describe()
     {
         if (ConsoleUrl is not { } url)
         {
             return null;
+        }
+
+        string? closed;
+        lock (gate)
+        {
+            closed = problem;
         }
 
         ConsoleCertificateStatus? shown = null;
@@ -178,7 +235,7 @@ public sealed partial class ConsoleEndpoint(
                 left <= TimeSpan.FromDays(WarnDaysBefore));
         }
 
-        return new ConsoleEndpointStatus(Listener.Describe(url, consoleListener), shown);
+        return new ConsoleEndpointStatus(Listener.Describe(url, consoleListener), shown is not null, closed, shown);
     }
 
     /// <summary>For the status API: the overview's plain address; null without one.</summary>
@@ -193,6 +250,9 @@ public sealed partial class ConsoleEndpoint(
             certificate?.Dispose();
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "The console is closed; the server runs on. {Why}")]
+    private static partial void LogClosed(ILogger logger, string why);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Made the console certificate {Sha256} for {Names}, key {KeyName} in the {Store} key store. Export it (Simple.Server export-console-certificate) and install it on every console PC.")]
     private static partial void LogCreated(ILogger logger, string sha256, string names, string keyName, string store);
@@ -230,27 +290,11 @@ public sealed class ConsoleCertificateRecord
     public DateTimeOffset CreatedAt { get; init; }
 }
 
-/// <summary>A setting or a stored fact the server cannot start with; the message says what to do.</summary>
-public sealed class ServerRefusesToStartException : Exception
-{
-    public ServerRefusesToStartException()
-    {
-    }
-
-    public ServerRefusesToStartException(string message)
-        : base(message)
-    {
-    }
-
-    public ServerRefusesToStartException(string message, Exception innerException)
-        : base(message, innerException)
-    {
-    }
-}
-
 /// <param name="Url">The console's HTTPS address.</param>
-/// <param name="Certificate">What the console PCs install; null until the server has started.</param>
-public sealed record ConsoleEndpointStatus(string Url, ConsoleCertificateStatus? Certificate);
+/// <param name="Serving">Whether the console answers there: false before the server has started, and while it is closed.</param>
+/// <param name="Problem">Why the console is closed and what to do; null while it serves.</param>
+/// <param name="Certificate">What the console PCs install; null while the console does not serve.</param>
+public sealed record ConsoleEndpointStatus(string Url, bool Serving, string? Problem, ConsoleCertificateStatus? Certificate);
 
 /// <param name="Sha256">The SHA-256 of the whole certificate, to check an installed copy against.</param>
 /// <param name="Names">The IP addresses and machine name it is for.</param>

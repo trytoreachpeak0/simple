@@ -156,10 +156,6 @@ catch (System.Security.Cryptography.CryptographicException e)
         $"The server refuses to start: it cannot open or create its terminal certificate key {settings[ServerSettings.ServerKeyNameKey] ?? $"Simple-Server-{settings[ServerSettings.InstanceKey]}"} "
         + $"in the {settings[ServerSettings.ServerKeyStoreKey] ?? "User"} key store: {e.Message}");
 }
-catch (ServerRefusesToStartException e)
-{
-    return await ProgramLog.RefuseToStartAsync("Server", builder.Configuration, app?.Services, e.Message);
-}
 catch (OptionsValidationException e)
 {
     return await ProgramLog.RefuseToStartAsync(
