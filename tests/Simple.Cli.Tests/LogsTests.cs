@@ -43,6 +43,19 @@ public sealed class LogsTests : IDisposable
     }
 
     [Fact]
+    public void ALogFileAnotherProcessStillHoldsIsRead()
+    {
+        // As the server writing it, or a virus scan, holds it: open for
+        // writing, sharing reads and writes (#68). Read through ProgramLog.OpenRead.
+        var file = Path.Combine(store.ProgramLogDirectory(Instance, "server"), "Server_001.log");
+        using var held = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+        Assert.Throws<IOException>(() => File.ReadAllLines(file));
+
+        Assert.Equal(["first 1", "first 2", "second 1", "second 2"], System.Logs(Instance, "server", tail: null, output: false).Lines);
+        Assert.Equal(["second 2"], System.Logs(Instance, "server", tail: 1, output: false).Lines);
+    }
+
+    [Fact]
     public void OutputIsWhatTheProcessWroteToItsConsole()
     {
         Assert.Equal(["console 1"], System.Logs(Instance, "server", tail: null, output: true).Lines);

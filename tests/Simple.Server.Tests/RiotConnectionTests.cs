@@ -43,6 +43,11 @@ public sealed class RiotConnectionTests : IAsyncLifetime
     public async Task ARiotThatDoesNotAnswerIsUnreachableAndTheServerKeepsTrying(string failure)
     {
         var connected = await StatusUntilAsync(r => r.State == RiotConnectionMonitor.Connected);
+        // RIoT answers once more before the failure takes effect, as it may at
+        // any time: ConnectedAt is when it last answered, so it moves on. The
+        // test once compared it with this first reading and failed on
+        // simple01 whenever a poll fell in between (#66, review of #74).
+        await StatusUntilAsync(r => r.ConnectedAt > connected.ConnectedAt);
         Action fail = failure switch
         {
             "refused" => () => server.Riot.BeUnreachable(),
@@ -54,13 +59,18 @@ public sealed class RiotConnectionTests : IAsyncLifetime
         var unreachable = await StatusUntilAsync(r => r.State == RiotConnectionMonitor.Unreachable);
         var calls = server.Riot.Calls;
         await StatusUntilAsync(_ => server.Riot.Calls > calls + 1);
+        // A later check, failed too: the failure is still set.
+        var stillUnreachable = await StatusUntilAsync(r => r.CheckedAt > unreachable.CheckedAt);
         server.Riot.Answer();
         var back = await StatusUntilAsync(r => r.State == RiotConnectionMonitor.Connected);
 
         Assert.False(string.IsNullOrEmpty(unreachable.Error));
-        Assert.Equal(connected.ConnectedAt, unreachable.ConnectedAt);
+        Assert.True(unreachable.ConnectedAt > connected.ConnectedAt);
+        // While RIoT does not answer, when it last answered stays put.
+        Assert.Equal(RiotConnectionMonitor.Unreachable, stillUnreachable.State);
+        Assert.Equal(unreachable.ConnectedAt, stillUnreachable.ConnectedAt);
         Assert.Null(back.Error);
-        Assert.True(back.ConnectedAt > connected.ConnectedAt);
+        Assert.True(back.ConnectedAt > stillUnreachable.ConnectedAt);
     }
 
     private async Task<RiotStatus> StatusUntilAsync(Func<RiotStatus, bool> condition)

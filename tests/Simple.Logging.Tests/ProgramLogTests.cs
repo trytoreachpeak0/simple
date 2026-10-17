@@ -56,6 +56,8 @@ public sealed partial class ProgramLogTests
         {
             Assert.Throws<IOException>(() => File.ReadAllText(file));
             Assert.Contains("line 0001", ProgramLog.ReadText(log.Directory), StringComparison.Ordinal);
+            using var reader = ProgramLog.OpenRead(file);
+            Assert.Contains("line 0001", reader.ReadToEnd(), StringComparison.Ordinal);
         }
     }
 
