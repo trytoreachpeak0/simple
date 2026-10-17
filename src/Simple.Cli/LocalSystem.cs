@@ -930,6 +930,20 @@ public sealed record InstanceReport(
             yield return $"  {t.GetProperty("vehicleId").GetString(),-12} {(t.GetProperty("connected").GetBoolean() ? "connected" : "disconnected"),-12} "
                 + $"{(t.GetProperty("stale").GetBoolean() ? "STALE" : "fresh"),-6} {age}, version {t.GetProperty("terminalVersion").GetString()}, "
                 + $"screen \"{t.GetProperty("screenText").GetString()}\"";
+            if (Field(t, "io") is { ValueKind: JsonValueKind.Object } io)
+            {
+                yield return $"  {string.Empty,-12} IO module {(t.GetProperty("ioModuleReadable").GetBoolean() ? "readable" : "NOT READABLE")}, "
+                    + $"inputs {Bits(io, "inputs")}, outputs {Bits(io, "outputs")}";
+            }
         }
+    }
+
+    /// <summary>Raw values from channel 1 on, in groups of four: "1111 1111 0111 1111"; "-" for none.</summary>
+    private static string Bits(JsonElement io, string name)
+    {
+        var values = Field(io, name) is { ValueKind: JsonValueKind.Array } points
+            ? points.EnumerateArray().Select(p => p.GetProperty("value").GetInt32().ToString(CultureInfo.InvariantCulture)).ToList()
+            : [];
+        return values.Count == 0 ? "-" : string.Join(' ', values.Chunk(4).Select(chunk => string.Concat(chunk)));
     }
 }

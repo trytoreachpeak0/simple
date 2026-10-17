@@ -17,7 +17,8 @@ namespace Simple.OnboardTerminal.Core.Tests;
 /// <summary>
 /// A stand-in for the server's terminal endpoint: TLS 1.2, HTTP/2, a
 /// certificate from a named persisted key (as the real server's), a desired
-/// state every 200 ms, and every report kept for the test to look at. It can
+/// state every <see cref="StateInterval"/>, and every report kept for the
+/// test to look at. It can
 /// be stopped and started again on the same port, or refuse the stream as a
 /// server of other protocol majors would.
 /// </summary>
@@ -53,6 +54,9 @@ public sealed class FakeServer : IAsyncDisposable
     public string? RefuseServingMajors { get; set; }
 
     public ConcurrentQueue<OnboardReport> Reports { get; } = new();
+
+    /// <summary>How often a desired state goes out after the first; null for none after the first, so that no state wakes a report.</summary>
+    public TimeSpan? StateInterval { get; set; } = TimeSpan.FromMilliseconds(200);
 
     public ConcurrentQueue<string?> MajorsAsked { get; } = new();
 
@@ -117,7 +121,7 @@ public sealed class FakeServer : IAsyncDisposable
                     await responseStream.WriteAsync(
                         new DesiredState { Seq = ++seq, LastReceivedSeq = Interlocked.Read(ref lastReport), Screen = new Screen { Text = "测试画面" } },
                         stop.Token);
-                    await Task.Delay(200, stop.Token);
+                    await Task.Delay(server.StateInterval ?? Timeout.InfiniteTimeSpan, stop.Token);
                 }
             });
             try

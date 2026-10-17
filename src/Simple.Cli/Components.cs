@@ -82,6 +82,25 @@ public static class Components
             // The server command that sets the administrator's password, the
             // only way there is (ADR 0045); up runs it before every start.
             SetAdminPassword: context => ["set-admin-password", .. ServerDatabaseArguments(context)]),
+        // One simulated IO module per onboard terminal, started before the
+        // terminals: terminal-n reads io-simulator-n over Modbus TCP, and
+        // tests and AI sessions play the person at its slots, and its faults,
+        // through its control API.
+        new(
+            Name: "io-simulator",
+            Project: "src/Simple.IoSimulator.Headless/Simple.IoSimulator.Headless.csproj",
+            Count: options => options.Terminals,
+            // The control API, and the Modbus TCP face the terminal reads.
+            PortsPerProcess: 2,
+            Arguments: context =>
+            [
+                $"--urls={context.Url()}",
+                $"--IoSimulator:Modbus=127.0.0.1:{context.Ports[IoSimulatorModbusPort].ToString(CultureInfo.InvariantCulture)}",
+                context.LogDirectoryArgument,
+            ],
+            IsReady: (context, http, cancellationToken) =>
+                Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),
+            ApiPort: 0),
         new(
             Name: "terminal",
             Project: "src/Simple.OnboardTerminal.Headless/Simple.OnboardTerminal.Headless.csproj",
@@ -103,8 +122,14 @@ public static class Components
     /// <summary>Password attempts per minute the local system's server allows one computer: the command line's own logins, all from loopback.</summary>
     public const int LocalLoginAttemptsPerWindow = 10_000;
 
+    /// <summary>Which of an io-simulator's ports is its Modbus TCP face.</summary>
+    public const int IoSimulatorModbusPort = 1;
+
     /// <summary>The component that answers the server API (status, events).</summary>
     public static Component Server { get; } = All.Single(c => c.Name == "server");
+
+    /// <summary>The simulated IO modules, one for each terminal.</summary>
+    public static Component IoSimulator { get; } = All.Single(c => c.Name == "io-simulator");
 
     /// <summary>
     /// The persisted key behind the certificate the instance's terminals pin,
