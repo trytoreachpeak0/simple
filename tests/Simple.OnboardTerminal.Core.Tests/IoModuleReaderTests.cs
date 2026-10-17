@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Net;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Simple.IoSimulator.Core;
 using Simple.Protocol.V1;
@@ -98,13 +100,17 @@ public sealed class IoModuleReaderTests : IAsyncDisposable
         probe.Start();
         var nothing = (IPEndPoint)probe.LocalEndpoint;
         probe.Stop();
-        using var absent = new IoModuleReader(nothing, TimeProvider.System, NullLoggerFactory.Instance);
+        var log = new ConcurrentQueue<string>();
+        using var loggers = LoggerFactory.Create(logging => logging.AddProvider(new ListLogger(log)));
+        using var absent = new IoModuleReader(nothing, TimeProvider.System, loggers);
         using var stopAbsent = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
 
         var reading = absent.RunAsync(stopAbsent.Token);
 
         await absent.FirstAttempt.WaitAsync(IoModuleReader.ReadTimeout * 3, Cancel);
         Assert.False(absent.Read().Readable);
+        // A wrong ioModule shows in the log from the first attempt on, once.
+        Assert.Single(log, l => l.StartsWith($"The IO module at {nothing} cannot be read", StringComparison.Ordinal));
         await stopAbsent.CancelAsync();
         await reading;
         await reader.FirstAttempt.WaitAsync(IoModuleReader.ReadTimeout * 3, Cancel);

@@ -11,6 +11,11 @@ internal sealed class TerminalService(TerminalConnection connection, IoModuleRea
         var reading = io.RunAsync(stoppingToken);
         // The first report then carries the first reading (IoModuleReader.FirstAttempt).
         await io.FirstAttempt.WaitAsync(stoppingToken).ContinueWith(_ => { }, TaskScheduler.Default);
-        await Task.WhenAll(reading, connection.RunAsync(stoppingToken));
+        var connecting = connection.RunAsync(stoppingToken);
+        // An unexpected failure of either ends the service now, and with it
+        // the host, instead of waiting for the stop while the process runs on
+        // without a connection or without reading its IO module.
+        await await Task.WhenAny(reading, connecting);
+        await Task.WhenAll(reading, connecting);
     }
 }

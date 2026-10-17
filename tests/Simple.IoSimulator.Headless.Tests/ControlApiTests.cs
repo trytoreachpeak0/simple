@@ -120,6 +120,10 @@ public sealed class ControlApiTests : IAsyncLifetime
 
         using var off = await http.PutAsJsonAsync(new Uri("/api/v1/modbus-fault", UriKind.Relative), new { mode = "none" }, Cancel);
         Assert.Equal("none", (await StateAsync()).GetProperty("modbusFault").GetProperty("mode").GetString());
+        await factory.DisposeAsync();
+        var log = Simple.Logging.ProgramLog.ReadText(logDirectory);
+        Assert.Contains("Modbus communication fault now \"Delay\" (delay 300 ms)", log, StringComparison.Ordinal);
+        Assert.Contains("Modbus communication fault now \"None\" (delay 0 ms)", log, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -154,6 +158,8 @@ public sealed class ControlApiTests : IAsyncLifetime
         var body = await failed.Content.ReadFromJsonAsync<JsonElement>(Cancel);
         Assert.Equal("failed", body.GetProperty("state").GetString());
         Assert.Equal("slot 1: could not unload: SlotEmpty", body.GetProperty("failure").GetString());
+        await factory.DisposeAsync();
+        Assert.Contains("Auto-responder failed: slot 1: could not unload: SlotEmpty", Simple.Logging.ProgramLog.ReadText(logDirectory), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -168,6 +174,28 @@ public sealed class ControlApiTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Conflict, waited.StatusCode);
         Assert.Equal("running", (await waited.Content.ReadFromJsonAsync<JsonElement>(Cancel)).GetProperty("state").GetString());
+    }
+
+    [Theory]
+    [InlineData("/api/v1/auto-responder/wait?timeoutSeconds=NaN")]
+    [InlineData("/api/v1/auto-responder/wait?timeoutSeconds=1e300")]
+    [InlineData("/api/v1/auto-responder/wait?timeoutSeconds=0")]
+    public async Task AWaitThatIsNotANumberOfSecondsIsRefused(string path)
+    {
+        using var response = await http.PostAsync(new Uri(path, UriKind.Relative), null, Cancel);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(1e300, 4.0)]
+    [InlineData(4.0, -1.0)]
+    public async Task AnAutoResponseWithSecondsOutOfRangeIsRefused(double actSeconds, double closeSeconds)
+    {
+        using var response = await http.PostAsJsonAsync(
+            new Uri("/api/v1/auto-responder", UriKind.Relative), new { action = "load", doors = 1, actSeconds, closeSeconds }, Cancel);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]

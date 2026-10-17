@@ -53,9 +53,9 @@ public static class ControlEndpoints
         api.MapPost("/auto-responder", (SimulatedIoModule module, AutoResponderRequest request) =>
             {
                 if (request.Action is not { } action || request.Doors is not (> 0 and <= Cabinet.SlotCount * 100)
-                    || request.ActSeconds is < 0 || request.CloseSeconds is < 0 || request.WithinSeconds is <= 0)
+                    || !Seconds(request.ActSeconds, zero: true) || !Seconds(request.CloseSeconds, zero: true) || !Seconds(request.WithinSeconds, zero: false))
                 {
-                    return Results.BadRequest(new { Error = "action is load or unload, doors is above 0, the seconds are not negative and withinSeconds is above 0" });
+                    return Results.BadRequest(new { Error = $"action is load or unload, doors is above 0, the seconds are at most {LongestWait.TotalSeconds}, not negative, and withinSeconds is above 0" });
                 }
 
                 return Results.Ok(AutoResponderView.Of(module.AutoResponder.Start(new AutoResponse(
@@ -72,11 +72,12 @@ public static class ControlEndpoints
             .WithSummary("Stops the auto-responder.");
         api.MapPost("/auto-responder/wait", async (SimulatedIoModule module, double? timeoutSeconds, CancellationToken cancellationToken) =>
             {
-                var timeout = timeoutSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : DefaultWait;
-                if (timeout <= TimeSpan.Zero || timeout > LongestWait)
+                if (!Seconds(timeoutSeconds, zero: false))
                 {
                     return Results.BadRequest(new { Error = $"timeoutSeconds is above 0 and at most {LongestWait.TotalSeconds}" });
                 }
+
+                var timeout = timeoutSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : DefaultWait;
 
                 using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 waiting.CancelAfter(timeout);
@@ -124,6 +125,10 @@ public static class ControlEndpoints
     }
 
     private static int Raw(bool value) => value ? 1 : 0;
+
+    /// <summary>Absent, or a number of seconds from 0 (or above 0) to <see cref="LongestWait"/>; NaN, infinities and the like are not.</summary>
+    private static bool Seconds(double? seconds, bool zero) =>
+        seconds is not { } s || (double.IsFinite(s) && (zero ? s >= 0 : s > 0) && s <= LongestWait.TotalSeconds);
 
     private static IResult AtTheSlot(SimulatedIoModule module, int number, Func<int, SlotResult> act)
     {

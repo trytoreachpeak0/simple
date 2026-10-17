@@ -1,4 +1,6 @@
 using System.Globalization;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Simple.IoSimulator.Core;
 
@@ -48,22 +50,24 @@ public sealed record AutoResponderStatus(AutoResponderState State, AutoResponse?
 /// unload, or too few doors by <see cref="AutoResponse.Within"/> make it fail
 /// and stop; <see cref="WaitAsync"/> then returns the failure.
 /// </summary>
-public sealed class AutoResponder : IDisposable
+public sealed partial class AutoResponder : IDisposable
 {
     private readonly Cabinet cabinet;
     private readonly TimeProvider time;
+    private readonly ILogger logger;
     private readonly Lock gate = new();
     private readonly List<ITimer> timers = [];
     private AutoResponderStatus status = new(AutoResponderState.Idle, null, 0, [], null);
     private TaskCompletionSource<AutoResponderStatus> finished = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int run;
 
-    public AutoResponder(Cabinet cabinet, TimeProvider time)
+    public AutoResponder(Cabinet cabinet, TimeProvider time, ILoggerFactory? loggers = null)
     {
         ArgumentNullException.ThrowIfNull(cabinet);
         ArgumentNullException.ThrowIfNull(time);
         this.cabinet = cabinet;
         this.time = time;
+        logger = (loggers ?? NullLoggerFactory.Instance).CreateLogger<AutoResponder>();
         cabinet.DoorOpened += OnDoorOpened;
     }
 
@@ -85,6 +89,7 @@ public sealed class AutoResponder : IDisposable
             Reset();
             var current = run;
             status = new AutoResponderStatus(AutoResponderState.Running, response, 0, [], null);
+            LogStarted(logger, response.Action, response.Doors, response.ActAfter.TotalSeconds, response.CloseAfter.TotalSeconds, response.Within?.TotalSeconds);
             if (response.Within is { } within)
             {
                 After(within, () =>
@@ -163,6 +168,7 @@ public sealed class AutoResponder : IDisposable
                     if (status.DoorsHandled == response.Doors)
                     {
                         status = status with { State = AutoResponderState.Done };
+                        LogDone(logger, response.Doors, status.Slots);
                         finished.TrySetResult(status);
                     }
                 });
@@ -221,8 +227,18 @@ public sealed class AutoResponder : IDisposable
     private void Fail(string failure)
     {
         status = status with { State = AutoResponderState.Failed, Failure = failure };
+        LogFailed(logger, failure);
         finished.TrySetResult(status);
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Auto-responder started: {Action} at the next {Doors} door(s), acting after {ActSeconds} s, closing after {CloseSeconds} s, within {WithinSeconds} s")]
+    private static partial void LogStarted(ILogger logger, SlotAction action, int doors, double actSeconds, double closeSeconds, double? withinSeconds);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Auto-responder done: {Doors} door(s), slots {Slots}")]
+    private static partial void LogDone(ILogger logger, int doors, IReadOnlyList<int> slots);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Auto-responder failed: {Failure}")]
+    private static partial void LogFailed(ILogger logger, string failure);
 
     /// <summary>Ends the current run: its timers stop, and a waiter gets the state it ends in. Called under the lock.</summary>
     private void Reset()

@@ -12,7 +12,7 @@ public sealed class SimulatedIoModule : IDisposable
         ArgumentNullException.ThrowIfNull(settings);
         Cabinet = new Cabinet(time, settings.Value.CabinetTiming);
         Server = IoModuleServer.Start(Cabinet, IPEndPoint.Parse(settings.Value.Modbus), loggers);
-        AutoResponder = new AutoResponder(Cabinet, time);
+        AutoResponder = new AutoResponder(Cabinet, time, loggers);
     }
 
     public Cabinet Cabinet { get; }

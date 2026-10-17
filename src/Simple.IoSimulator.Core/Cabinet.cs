@@ -39,7 +39,7 @@ public sealed class Cabinet : IDisposable
     private readonly CabinetTiming timing;
     private readonly Lock gate = new();
     private readonly bool[] outputs = new bool[ChannelCount];
-    private readonly ITimer?[] pulses = new ITimer?[ChannelCount];
+    private readonly Scheduled[] pulses = Enumerable.Range(0, ChannelCount).Select(_ => new Scheduled()).ToArray();
     private readonly Slot[] slots = Enumerable.Range(1, SlotCount).Select(n => new Slot(n)).ToArray();
     private bool disposed;
 
@@ -105,8 +105,8 @@ public sealed class Cabinet : IDisposable
                 var slot = slots[number - 1];
                 opened = !slot.DoorOpen;
                 slot.DoorOpen = true;
-                Schedule(ref slot.LockFeedbackTimer, timing.UnlockFeedbackDelay, () => slot.LockSensed = false);
-                Schedule(ref pulses[number - 1], timing.PulseWidth, () => outputs[number - 1] = false);
+                Schedule(slot.LockFeedback, timing.UnlockFeedbackDelay, () => slot.LockSensed = false);
+                Schedule(pulses[number - 1], timing.PulseWidth, () => outputs[number - 1] = false);
             }
         }
 
@@ -138,7 +138,7 @@ public sealed class Cabinet : IDisposable
         }
 
         slot.DoorOpen = false;
-        Schedule(ref slot.LockFeedbackTimer, timing.LockFeedbackDelay, () => slot.LockSensed = true);
+        Schedule(slot.LockFeedback, timing.LockFeedbackDelay, () => slot.LockSensed = true);
         return SlotResult.Done;
     });
 
@@ -161,9 +161,9 @@ public sealed class Cabinet : IDisposable
         lock (gate)
         {
             disposed = true;
-            foreach (var timer in pulses.Concat(slots.SelectMany(s => new[] { s.LockFeedbackTimer, s.LightCurtainTimer })))
+            foreach (var scheduled in pulses.Concat(slots.SelectMany(s => new[] { s.LockFeedback, s.LightCurtain })))
             {
-                timer?.Dispose();
+                scheduled.Timer?.Dispose();
             }
         }
     }
@@ -191,7 +191,7 @@ public sealed class Cabinet : IDisposable
     private SlotResult SetCargo(Slot slot, bool cargo)
     {
         slot.Cargo = cargo;
-        Schedule(ref slot.LightCurtainTimer, timing.LightCurtainDelay, () => slot.CargoSensed = cargo);
+        Schedule(slot.LightCurtain, timing.LightCurtainDelay, () => slot.CargoSensed = cargo);
         return SlotResult.Done;
     }
 
@@ -208,16 +208,24 @@ public sealed class Cabinet : IDisposable
         return inputs;
     }
 
-    /// <summary>Runs <paramref name="change"/> under the lock after <paramref name="delay"/>, replacing whatever was scheduled in <paramref name="timer"/>. Called under the lock.</summary>
-    private void Schedule(ref ITimer? timer, TimeSpan delay, Action change)
+    /// <summary>
+    /// Runs <paramref name="change"/> under the lock after <paramref name="delay"/>,
+    /// in place of whatever <paramref name="scheduled"/> held. A replaced
+    /// change whose timer had already fired and is waiting for the lock finds
+    /// its generation gone and does nothing: the lock feedback of a door
+    /// closed just before an unlock never reads locked after the unlock.
+    /// Called under the lock.
+    /// </summary>
+    private void Schedule(Scheduled scheduled, TimeSpan delay, Action change)
     {
-        timer?.Dispose();
-        timer = time.CreateTimer(
+        scheduled.Timer?.Dispose();
+        var generation = ++scheduled.Generation;
+        scheduled.Timer = time.CreateTimer(
             _ =>
             {
                 lock (gate)
                 {
-                    if (disposed)
+                    if (disposed || scheduled.Generation != generation)
                     {
                         return;
                     }
@@ -232,10 +240,19 @@ public sealed class Cabinet : IDisposable
             Timeout.InfiniteTimeSpan);
     }
 
+    /// <summary>One pending change: its timer, and which scheduling it is.</summary>
+    private sealed class Scheduled
+    {
+        public ITimer? Timer { get; set; }
+
+        public int Generation { get; set; }
+    }
+
     private sealed class Slot(int number)
     {
-        public ITimer? LockFeedbackTimer;
-        public ITimer? LightCurtainTimer;
+        public Scheduled LockFeedback { get; } = new();
+
+        public Scheduled LightCurtain { get; } = new();
 
         public int Number { get; } = number;
 

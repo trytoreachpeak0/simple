@@ -50,6 +50,7 @@ public sealed partial class IoModuleReader : IDisposable
 
     private ModbusTcpClient? client;
     private bool readable;
+    private bool attempted;
     private long? lastRead;
 
     /// <param name="module">The module's address; null when the terminal has none configured, and then nothing is read.</param>
@@ -189,6 +190,7 @@ public sealed partial class IoModuleReader : IDisposable
             lastRead = now;
             wasReadable = readable;
             readable = true;
+            attempted = true;
         }
 
         if (!wasReadable)
@@ -205,15 +207,24 @@ public sealed partial class IoModuleReader : IDisposable
     private void Unreadable(Exception e)
     {
         bool wasReadable;
+        bool first;
         lock (gate)
         {
             wasReadable = readable;
+            first = !attempted;
             readable = false;
+            attempted = true;
+        }
+
+        // Logged when it stops reading, and when the very first attempt
+        // fails, so that a wrong ioModule shows in the log at once.
+        if (wasReadable || first)
+        {
+            LogUnreadable(logger, module!, e.GetType().Name, e.Message);
         }
 
         if (wasReadable)
         {
-            LogUnreadable(logger, module!, e.GetType().Name, e.Message);
             Changed?.Invoke();
         }
     }

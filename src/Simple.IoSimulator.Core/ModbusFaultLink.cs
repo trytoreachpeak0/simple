@@ -11,7 +11,12 @@ public enum ModbusFault
     /// <summary>Requests are answered.</summary>
     None,
 
-    /// <summary>Connections stay open, but requests are never answered.</summary>
+    /// <summary>
+    /// Requests are never answered; connections are not closed for it. A
+    /// connection that sends nothing the library sees for its
+    /// ConnectionTimeout (FluentModbus's default, one minute) is reset by
+    /// the library all the same, and the client's end with it.
+    /// </summary>
     NoResponse,
 
     /// <summary>Open connections are closed, and new ones are closed as soon as they are accepted.</summary>
@@ -34,6 +39,9 @@ public enum ModbusFault
 /// </summary>
 internal sealed class ModbusFaultLink : ITcpClientProvider
 {
+    /// <summary>How long joining a client to the library may take before the client is dropped.</summary>
+    private static readonly TimeSpan PairingTimeout = TimeSpan.FromSeconds(5);
+
     private readonly TcpListener outer;
     private readonly TcpListener inner;
     private readonly Channel<TcpClient> forServer = Channel.CreateUnbounded<TcpClient>();
@@ -54,6 +62,9 @@ internal sealed class ModbusFaultLink : ITcpClientProvider
     }
 
     public IPEndPoint Endpoint => (IPEndPoint)outer.LocalEndpoint;
+
+    /// <summary>Where the inner ends of the socket pairs connect; for tests.</summary>
+    internal IPEndPoint InnerEndpoint => (IPEndPoint)inner.LocalEndpoint;
 
     public (ModbusFault Fault, TimeSpan Delay) Fault
     {
@@ -133,16 +144,34 @@ internal sealed class ModbusFaultLink : ITcpClientProvider
             }
 
             var toServer = new TcpClient(AddressFamily.InterNetwork) { NoDelay = true };
+            TcpClient? serverSide = null;
             client.NoDelay = true;
             try
             {
-                var connecting = toServer.ConnectAsync((IPEndPoint)inner.LocalEndpoint, stopping.Token).AsTask();
-                var serverSide = await inner.AcceptTcpClientAsync(stopping.Token);
-                await connecting;
+                using var pairing = CancellationTokenSource.CreateLinkedTokenSource(stopping.Token);
+                pairing.CancelAfter(PairingTimeout);
+                await toServer.ConnectAsync((IPEndPoint)inner.LocalEndpoint, pairing.Token);
+                serverSide = await AcceptOwnAsync(toServer.Client.LocalEndPoint, pairing.Token);
                 var relay = new Relay(this, client, toServer);
+                bool refused;
                 lock (gate)
                 {
-                    relays.Add(relay);
+                    // Disconnect may have come while this client was being
+                    // joined, after the check above and before SetFault
+                    // could see it among the relays.
+                    refused = fault == ModbusFault.Disconnect;
+                    if (!refused)
+                    {
+                        relays.Add(relay);
+                    }
+                }
+
+                if (refused)
+                {
+                    client.Dispose();
+                    toServer.Dispose();
+                    serverSide.Dispose();
+                    continue;
                 }
 
                 await forServer.Writer.WriteAsync(serverSide, stopping.Token);
@@ -152,7 +181,28 @@ internal sealed class ModbusFaultLink : ITcpClientProvider
             {
                 client.Dispose();
                 toServer.Dispose();
+                serverSide?.Dispose();
             }
+        }
+    }
+
+    /// <summary>
+    /// Accepts the inner end of the connection from <paramref name="own"/>.
+    /// The inner listener is on loopback, so another program on this machine
+    /// can connect to it too; such a connection is closed, never handed to
+    /// the library in a client's place.
+    /// </summary>
+    private async Task<TcpClient> AcceptOwnAsync(EndPoint? own, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var accepted = await inner.AcceptTcpClientAsync(cancellationToken);
+            if (Equals(accepted.Client.RemoteEndPoint, own))
+            {
+                return accepted;
+            }
+
+            accepted.Dispose();
         }
     }
 

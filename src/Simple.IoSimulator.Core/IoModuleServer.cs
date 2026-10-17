@@ -11,7 +11,7 @@ namespace Simple.IoSimulator.Core;
 /// address <see cref="FirstInputAddress"/>. Reads come from the cabinet,
 /// writes to the outputs go to it. It listens on loopback only.
 /// </summary>
-public sealed class IoModuleServer : IDisposable
+public sealed partial class IoModuleServer : IDisposable
 {
     public const byte UnitId = 255;
 
@@ -22,12 +22,14 @@ public sealed class IoModuleServer : IDisposable
     private readonly Cabinet cabinet;
     private readonly ModbusTcpServer server;
     private readonly ModbusFaultLink link;
+    private readonly ILogger logger;
 
-    private IoModuleServer(Cabinet cabinet, ModbusTcpServer server, ModbusFaultLink link)
+    private IoModuleServer(Cabinet cabinet, ModbusTcpServer server, ModbusFaultLink link, ILogger logger)
     {
         this.cabinet = cabinet;
         this.server = server;
         this.link = link;
+        this.logger = logger;
     }
 
     /// <summary>Where clients connect.</summary>
@@ -47,7 +49,8 @@ public sealed class IoModuleServer : IDisposable
             throw new ArgumentException($"{endpoint} is not a loopback address. The IO simulator listens on loopback only.", nameof(endpoint));
         }
 
-        var server = new ModbusTcpServer(loggers.CreateLogger<IoModuleServer>(), isAsynchronous: true)
+        var logger = loggers.CreateLogger<IoModuleServer>();
+        var server = new ModbusTcpServer(logger, isAsynchronous: true)
         {
             EnableRaisingEvents = true,
             // A write of 1 to an output that is already 1 restarts its pulse.
@@ -58,15 +61,21 @@ public sealed class IoModuleServer : IDisposable
         // otherwise answers every unit id.
         server.AddUnit(UnitId);
         var link = new ModbusFaultLink(endpoint);
-        var module = new IoModuleServer(cabinet, server, link);
+        var module = new IoModuleServer(cabinet, server, link, logger);
         cabinet.Changed += module.Mirror;
         server.CoilsChanged += module.OnCoilsChanged;
         module.Mirror();
         server.Start(link);
+        LogListening(logger, module.Endpoint);
         return module;
     }
 
-    public void SetFault(ModbusFault fault, TimeSpan delay) => link.SetFault(fault, delay);
+    public void SetFault(ModbusFault fault, TimeSpan delay)
+    {
+        link.SetFault(fault, delay);
+        var (set, delayBy) = link.Fault;
+        LogFault(logger, set, (int)delayBy.TotalMilliseconds);
+    }
 
     public void Dispose()
     {
@@ -123,6 +132,12 @@ public sealed class IoModuleServer : IDisposable
             cabinet.WriteOutput(number, value);
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "The simulated IO module listens for Modbus TCP on {Endpoint}, unit 255")]
+    private static partial void LogListening(ILogger logger, IPEndPoint endpoint);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Modbus communication fault now {Fault} (delay {DelayMs} ms)")]
+    private static partial void LogFault(ILogger logger, ModbusFault fault, int delayMs);
 
     private static bool GetBit(Span<byte> bits, int address) => (bits[address / 8] & (1 << (address % 8))) != 0;
 

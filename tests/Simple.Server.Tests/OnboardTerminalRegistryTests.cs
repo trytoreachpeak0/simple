@@ -127,14 +127,18 @@ public sealed class OnboardTerminalRegistryTests
         report.IoPoints.Add(new IoPoint { Kind = IoPointKind.Unspecified, Number = 1 });
         report.IoPoints.Add(new IoPoint { Kind = IoPointKind.Input, Number = 0 });
         report.IoPoints.Add(new IoPoint { Kind = IoPointKind.Input, Number = OnboardTerminalRegistry.MaxIoPointNumber + 1 });
-        report.IoPoints.Add(Enumerable.Range(1, OnboardTerminalRegistry.MaxIoPointsPerReport + 1)
-            .Select(i => new IoPoint { Kind = IoPointKind.Output, Number = (uint)((i % OnboardTerminalRegistry.MaxIoPointNumber) + 1) }));
+        // The three above and DO1 reported over and over fill the report's
+        // limit; DO2, reported beyond it, is skipped. For DO1 the last within
+        // the limit counts.
+        var withinLimit = OnboardTerminalRegistry.MaxIoPointsPerReport - 3;
+        report.IoPoints.Add(Enumerable.Range(1, withinLimit).Select(i => new IoPoint { Kind = IoPointKind.Output, Number = 1, Changes = (ulong)i }));
+        report.IoPoints.Add(Enumerable.Range(1, 5).Select(_ => new IoPoint { Kind = IoPointKind.Output, Number = 2, Value = true }));
 
         Assert.Null(registry.Receive(link, report));
 
         var io = Assert.Single(registry.Snapshot()).Io;
         Assert.Empty(io.Inputs);
-        Assert.InRange(io.Outputs.Count, 1, OnboardTerminalRegistry.MaxIoPointsPerReport);
+        Assert.Equal([new OnboardIoPointStatus(1, 0, (ulong)withinLimit, 0)], io.Outputs);
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Simple.IoSimulator.Core;
 using Simple.Protocol.V1;
 
@@ -147,12 +148,31 @@ public sealed class TerminalConnectionTests
         Assert.True(report.HasIoReadAgeMs);
         Assert.InRange(report.IoReadAgeMs, 0UL, 1000UL);
 
-        // Slot 2's light curtain (DI10) reads cargo: a report says so within
-        // 2 s. That the change itself wakes a report is IoModuleReaderTests'
-        // to show: this fake server's states wake one every 200 ms anyway.
+        // Slot 2's light curtain (DI10) reads cargo: a report says so within 2 s.
         var before = server.Reports.Count;
         cabinet.PinLightCurtain(2, false);
         await Until(() => server.Reports.Skip(before).Any(r => r.IoPoints.Any(p => p is { Kind: IoPointKind.Input, Number: 10, Value: false, Changes: 1 })), seconds: 2);
+    }
+
+    [Fact]
+    public async Task AnIoChangeWakesAReportOfItsOwn()
+    {
+        // Nothing else wakes a report here: the server sends only its first
+        // state, and the terminal's clock never moves, so the once-a-second
+        // report never comes (ADR 0024: on every change at once).
+        using var cabinet = new Cabinet(TimeProvider.System, CabinetTiming.Default);
+        using var module = IoModuleServer.Start(cabinet, new IPEndPoint(IPAddress.Loopback, 0), NullLoggerFactory.Instance);
+        await using var server = new FakeServer { StateInterval = null };
+        await server.StartAsync();
+        await using var terminal = new Terminal(server.Url, server.Pin, new FakeTimeProvider(), ioModule: module.Endpoint);
+        await Until(() => server.Reports.Any(r => r.IoModuleReadable));
+        await Task.Delay(TimeSpan.FromMilliseconds(500), Cancel);
+        var before = server.Reports.Count;
+
+        cabinet.PinLightCurtain(5, false);
+
+        await Until(() => server.Reports.Skip(before).Any(r => r.IoPoints.Any(p => p is { Kind: IoPointKind.Input, Number: 13, Value: false })), seconds: 2);
+        Assert.Equal(before + 1, server.Reports.Count);
     }
 
     [Fact]
@@ -239,23 +259,6 @@ public sealed class TerminalConnectionTests
         {
             Interlocked.Exchange(ref onNextReading, null)?.Invoke();
             return reading;
-        }
-    }
-
-    private sealed class ListLogger(ConcurrentQueue<string> lines) : ILoggerProvider, ILogger
-    {
-        public ILogger CreateLogger(string categoryName) => this;
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            lines.Enqueue(formatter(state, exception));
-
-        public void Dispose()
-        {
         }
     }
 }
