@@ -28,9 +28,36 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 
 以后计划再加一个入口 `Simple.Mcp`：给 AI 用的一层薄包装，只调用命令行和服务端 API，不放业务逻辑。
 
+## 第一次还原之前
+
+RIoT 客户端库 `RIoT.Sdk.*` 来自 `trytoreachpeak0/riot-sdk`，发布在 GitHub Packages（`https://nuget.pkg.github.com/trytoreachpeak0/index.json`），其余包来自 nuget.org，见仓库根的 `nuget.config`。这几个包是公开的，但 GitHub 的 NuGet 源连读取公开包也要令牌，所以每台开发机第一次还原（`dotnet restore`、`dotnet build`、`./simple up` 都会还原）之前，要在本机用户级的 NuGet 配置里存一次令牌：
+
+1. 在 GitHub 的 Settings → Developer settings → Personal access tokens → Tokens (classic) 新建一个令牌，只勾 `read:packages`。GitHub Packages 只认 classic 令牌。每台机器单独建一个，作废时互不影响。
+2. 以之后运行还原的那个用户运行脚本，按这台机器的情况选下面一种。脚本会提示粘贴令牌，粘贴的内容显示为星号。
+
+   **开发机，交互登录**（例如笔记本）：在本仓库的克隆里打开 PowerShell 7 运行。令牌按当前用户加密（DPAPI）保存，文件里不是明文。
+
+   ```
+   pwsh -File scripts/Set-GitHubPackagesToken.ps1
+   ```
+
+   **经 SSH 运行还原的远端机器**（例如 `simple remote` 用的 `simple01`）：要加 `-ClearText` 明文保存。经 SSH 密钥登录的会话拿不到 DPAPI 的主密钥（实测 `ProtectedData.Protect(CurrentUser)` 报 `Access is denied.`），NuGet 解不开加密存的令牌，还原会 401。代价是这台机器上任何管理员身份的进程都读得到这个令牌；它只有 `read:packages` 权限，泄露了也只能读包。明文保存用不到 DPAPI，所以直接在笔记本上经 SSH 运行即可；以 SSH 登录的那个用户（`simple01` 上是 `simpleops`）运行，令牌就存进那个用户自己的配置。必须带 `-t`：脚本用 `Read-Host -MaskInput` 读令牌，要一个终端；不带 `-t` 时脚本会一直等着，读不到输入。把 `<克隆>` 换成那台机器上本仓库克隆的路径：
+
+   ```
+   ssh -t simple01 "pwsh -NoProfile -File <克隆>/scripts/Set-GitHubPackagesToken.ps1 -ClearText"
+   ```
+
+   换令牌（过期或作废）时再运行一次同一条命令，新令牌会替换旧的。
+
+脚本只往用户级的 `%APPDATA%\NuGet\NuGet.Config` 里写名为 `github` 的凭据（`packageSourceCredentials`），不在那里登记源。源只由本仓库的 `nuget.config` 定义，NuGet 按源的名字把用户级的凭据配上去。这样同一台机器上别的仓库不会因此去查 GitHub Packages。如果改成用 `dotnet nuget add source` 存令牌，源会登记到用户级，所有没写 `<clear />` 的仓库还原时都会去查它；令牌一过期或 GitHub 连不上，它们的还原就会因 `NU1301` 失败。笔记本上 v2 线的 `8005-agv-onboard-hmi`、`slots-simulator`、`8005-mes-ingest` 和 riot-sdk 都没有自己的 `nuget.config`，会受影响。用户级配置里已经登记了名为 `github` 的源（例如以前照旧写法存过）时，脚本会删掉那一行并说明。
+
+令牌从头到尾不出现在任何命令行上：不进 PowerShell 的历史记录，也不会作为 `dotnet.exe` 的参数被开了命令行审计的机器记下来。仓库里不放任何令牌。
+
+没做这一步时，还原 `RIoT.Sdk.*` 会因为 401 失败。CI 不用这一步：它用每次运行自带的 `GITHUB_TOKEN`。
+
 ## 构建与测试
 
-需要 .NET 10 SDK（版本见 `global.json`）和 SQL Server 2022 LocalDB（实例 `MSSQLLocalDB`）。
+需要 .NET 10 SDK（版本见 `global.json`）和 SQL Server 2022 LocalDB（实例 `MSSQLLocalDB`）。还原之前先做完上一节那一步。
 
 ```
 dotnet build simple.slnx
