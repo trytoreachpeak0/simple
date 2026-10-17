@@ -642,15 +642,35 @@ public sealed record InstanceReport(
             yield break;
         }
 
-        var reachable = mes.GetProperty("reachable");
-        var gateway = reachable.ValueKind == JsonValueKind.Null ? "not asked yet"
-            : reachable.GetBoolean() ? "reachable"
-            : $"unreachable ({mes.GetProperty("gatewayError").GetString()})";
-        var round = mes.GetProperty("lastRound");
-        var last = round.ValueKind == JsonValueKind.Null ? "no round yet"
-            : round.GetProperty("succeeded").GetBoolean()
-                ? $"round {round.GetProperty("round").GetInt64()} at {round.GetProperty("readAt").GetDateTimeOffset().ToLocalTime():HH:mm:ss}, {mes.GetProperty("rowCount").GetInt32()} rows"
-                : $"round {round.GetProperty("round").GetInt64()} failed: {round.GetProperty("failure").GetProperty("message").GetString()}";
-        yield return $"  MES gateway {gateway}; {last}";
+        // Read defensively: a field the line expects may be missing or null,
+        // and status must still print.
+        var gateway = Field(mes, "reachable")?.ValueKind switch
+        {
+            JsonValueKind.True => "reachable",
+            JsonValueKind.False => $"unreachable ({Text(mes, "gatewayError") ?? "no reason given"})",
+            _ => "not asked yet",
+        };
+        var available = Field(mes, "available")?.ValueKind == JsonValueKind.False ? ", MES unavailable" : string.Empty;
+        string last;
+        if (Field(mes, "lastRound") is not { ValueKind: JsonValueKind.Object } round)
+        {
+            last = "no round yet";
+        }
+        else
+        {
+            var number = Field(round, "round")?.ValueKind == JsonValueKind.Number ? $"round {round.GetProperty("round").GetInt64()}" : "a round";
+            last = Field(round, "succeeded")?.ValueKind == JsonValueKind.True
+                ? $"{number} at {(Field(round, "readAt") is { ValueKind: JsonValueKind.String } at && at.TryGetDateTimeOffset(out var readAt) ? readAt.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture) : "an unknown time")}, "
+                    + (Field(mes, "rowCount") is { ValueKind: JsonValueKind.Number } count ? $"{count.GetInt32()} rows" : "rows unknown")
+                : $"{number} failed: {(Field(round, "failure") is { ValueKind: JsonValueKind.Object } failure ? Text(failure, "message") : null) ?? "no reason given"}";
+        }
+
+        yield return $"  MES gateway {gateway}{available}; {last}";
     }
+
+    private static JsonElement? Field(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) ? value : null;
+
+    private static string? Text(JsonElement element, string name) =>
+        Field(element, name) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
 }

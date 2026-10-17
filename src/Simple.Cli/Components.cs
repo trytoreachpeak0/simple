@@ -13,7 +13,11 @@ public static class Components
 {
     public static IReadOnlyList<Component> All { get; } =
     [
-        // Before the server, so the server's first fetch finds it ready.
+        // Started before the server, which is told its address. up starts every
+        // process and then waits for all of them, so this order does not
+        // guarantee the gateway is ready at the server's first fetch; it
+        // usually is, as the server first migrates its database. If it is
+        // not, the server records mes.unreachable and then mes.recovered.
         new(
             Name: "mes-gateway",
             Project: "src/Simple.MesGateway/Simple.MesGateway.csproj",

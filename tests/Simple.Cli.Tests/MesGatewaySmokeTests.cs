@@ -52,6 +52,10 @@ public sealed class MesGatewaySmokeTests
 
         // Failing reads: the gateway reports them, the server records the MES unreachable, then recovered.
         const string failure = "ORA-03113: end-of-file on communication channel (smoke test)";
+        // Only what follows the injection counts: whether the server's first
+        // fetch came before the gateway was ready (an early unreachable and
+        // recovered pair) depends on start-up timing, not on what is tested here.
+        var before = (await MesEventsAsync(serverUrl)).Select(e => e.GetProperty("id").GetInt64()).DefaultIfEmpty(0).Max();
         (await Http.PostAsJsonAsync(new Uri(gatewayUrl, "/fake-mes/failures"), new { count = 5, message = failure }, Cancel)).EnsureSuccessStatusCode();
         await UntilAsync(OnePollCycle, "a failed round in the gateway's snapshot", async () =>
         {
@@ -63,7 +67,7 @@ public sealed class MesGatewaySmokeTests
         // Five failed reads with waits growing from 1 s take well under a minute.
         await UntilAsync(TimeSpan.FromSeconds(90), "mes.unreachable and then mes.recovered in the event record", async () =>
         {
-            mesEvents = await MesEventsAsync(serverUrl);
+            mesEvents = [.. (await MesEventsAsync(serverUrl)).Where(e => e.GetProperty("id").GetInt64() > before)];
             return mesEvents.Length >= 2;
         });
         Assert.Equal(["mes.unreachable", "mes.recovered"], mesEvents.Select(e => e.GetProperty("type").GetString()));
