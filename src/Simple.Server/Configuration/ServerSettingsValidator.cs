@@ -31,8 +31,8 @@ public sealed partial class ServerSettingsValidator : IValidateOptions<ServerSet
 
         CheckConnectionString(settings.ConnectionString, failures);
 
-        // The API has no authentication yet, so it must not be reachable from
-        // another machine.
+        // The API on its own listens on loopback only: other machines reach the
+        // console through its HTTPS address, with its certificate (ADR 0046).
         foreach (var (key, address) in settings.ListenAddresses)
         {
             if (key is "http_ports" or "https_ports")
@@ -43,16 +43,65 @@ public sealed partial class ServerSettingsValidator : IValidateOptions<ServerSet
             else if (!IsLoopbackListenAddress(address))
             {
                 failures.Add(
-                    $"{key} '{address}' is not a loopback address. The server API has no authentication yet and listens on loopback only (127.0.0.1, [::1] or localhost).");
+                    $"{key} '{address}' is not a loopback address. The server API listens on loopback only (127.0.0.1, [::1] or localhost); other computers reach the console at {ServerSettings.ConsoleUrlKey}, over HTTPS.");
             }
             else if (key == "urls" && !address.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
             {
-                failures.Add($"{key} '{address}' is not http://. The server API is plain HTTP on loopback; only the onboard terminal endpoint uses TLS.");
+                failures.Add($"{key} '{address}' is not http://. The server API is plain HTTP on loopback; the console's address ({ServerSettings.ConsoleUrlKey}) and the onboard terminal endpoint use TLS.");
             }
         }
 
         CheckOnboardTerminals(settings, failures);
+        CheckOneInterface(ServerSettings.ConsoleUrlKey, settings.ConsoleUrl, "https", allowLocalhost: false, "https://172.19.205.222:5443", failures);
+        CheckOneInterface(ServerSettings.OverviewUrlKey, settings.OverviewUrl, "http", allowLocalhost: true, "http://172.19.205.222:5080", failures);
+        if (InstanceName().IsMatch(settings.Instance ?? string.Empty) && !KeyName().IsMatch(settings.ConsoleKeyName))
+        {
+            failures.Add(
+                $"{ServerSettings.ConsoleKeyNameKey} '{settings.ConsoleKeyName}' is not a valid key name: use 1-100 letters, digits, '.', '-' or '_'.");
+        }
+
         return failures;
+    }
+
+    /// <summary>
+    /// An address other computers reach (ADR 0046): the given scheme, on the
+    /// IP address of one network interface, never a wildcard, which would
+    /// also open it on every other network the server sits on. The console's
+    /// names an IP, which goes into its certificate.
+    /// </summary>
+    private static void CheckOneInterface(string key, string? url, string scheme, bool allowLocalhost, string example, List<string> failures)
+    {
+        if (url is null)
+        {
+            return;
+        }
+
+        BindingAddress? address = null;
+        try
+        {
+            address = BindingAddress.Parse(url);
+        }
+        catch (FormatException)
+        {
+            // Reported below.
+        }
+
+        var host = address?.Host.Trim('[', ']');
+        if (address is null || !string.Equals(address.Scheme, scheme, StringComparison.OrdinalIgnoreCase))
+        {
+            failures.Add($"{key} '{url}' is not an {scheme}:// address; give for example {example}.");
+        }
+        else if (!System.Net.IPAddress.TryParse(host, out var ip))
+        {
+            if (!(allowLocalhost && string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)))
+            {
+                failures.Add($"{key} '{url}' does not name an IP address. Give the address of the one network interface it listens on, for example {example}.");
+            }
+        }
+        else if (ip.Equals(System.Net.IPAddress.Any) || ip.Equals(System.Net.IPAddress.IPv6Any))
+        {
+            failures.Add($"{key} '{url}' listens on every network interface. Give the address of the one interface it listens on.");
+        }
     }
 
     /// <summary>

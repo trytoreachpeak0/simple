@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Simple.Server.Accounts;
 using Simple.Server.Events;
+using Simple.Server.Listeners;
 
 namespace Simple.Server.Persistence;
 
@@ -31,6 +32,9 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
     /// <summary>The keys that encrypt login cookies, each itself encrypted (see LoginSetup).</summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
 
+    /// <summary>The console's certificate, once made (ADR 0046); its key is in the Windows key store.</summary>
+    public DbSet<ConsoleCertificateRecord> ConsoleCertificates => Set<ConsoleCertificateRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
@@ -59,6 +63,12 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
             e.Property(x => x.Role).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Project).HasMaxLength(Account.NameMaxLength);
             e.Property(x => x.PasswordHash).HasMaxLength(200);
+        });
+        modelBuilder.Entity<ConsoleCertificateRecord>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.ToTable("ConsoleCertificates", t => t.HasCheckConstraint("CK_ConsoleCertificates_TheOne", $"[Id] = {ConsoleCertificateRecord.TheOne}"));
         });
         modelBuilder.Entity<LoginRecord>(e =>
         {
