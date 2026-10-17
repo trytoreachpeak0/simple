@@ -23,8 +23,8 @@ try
 }
 catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
 {
-    await Console.Error.WriteLineAsync($"The onboard terminal refuses to start: cannot read its settings {configPath}: {e.Message}");
-    return 2;
+    return await ProgramLog.RefuseToStartAsync(
+        "OnboardTerminal", arguments, null, $"The onboard terminal refuses to start: cannot read its settings {configPath}: {e.Message}");
 }
 
 var problems = settings.Problems().ToList();
@@ -45,13 +45,7 @@ if (arguments["test-input"] is { Length: > 0 } testInputText && !TestInput.TryPa
 
 if (problems.Count > 0)
 {
-    await Console.Error.WriteLineAsync($"The onboard terminal refuses to start ({configPath}):");
-    foreach (var problem in problems)
-    {
-        await Console.Error.WriteLineAsync($"  - {problem}");
-    }
-
-    return 2;
+    return await ProgramLog.RefuseToStartAsync("OnboardTerminal", arguments, null, $"The onboard terminal refuses to start ({configPath}):", problems);
 }
 
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings

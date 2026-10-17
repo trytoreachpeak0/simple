@@ -14,7 +14,7 @@ namespace Simple.Logging;
 /// program's log directory, credentials redacted (<see cref="Redaction"/>),
 /// unhandled exceptions recorded (<see cref="UnhandledExceptionLog"/>).
 /// </summary>
-public static class ProgramLog
+public static partial class ProgramLog
 {
     /// <summary>
     /// The settings: <c>Simple:Logs:Directory</c>,
@@ -65,6 +65,56 @@ public static class ProgramLog
         logging.ClearProviders();
         logging.Services.AddSingleton<ILoggerProvider>(_ => CreateProvider(program, ReadSettings(configuration, program), console));
         return logging;
+    }
+
+    /// <summary>
+    /// Says why a program refuses to start, then gives the exit code 2: on
+    /// standard error for whoever started it, and in the program log, which is
+    /// all there is to read when it runs as a service. The log is
+    /// <paramref name="services"/>' while they are still there; otherwise one
+    /// is opened from <paramref name="configuration"/> for this line, unless the
+    /// log settings themselves are what is wrong.
+    /// </summary>
+    /// <param name="headline">The first line, for example "The server refuses to start: the configuration is invalid."</param>
+    /// <param name="details">One line each, written as "  - detail" below the headline.</param>
+    public static async Task<int> RefuseToStartAsync(
+        string program, IConfiguration configuration, IServiceProvider? services, string headline, IReadOnlyList<string>? details = null)
+    {
+        ArgumentNullException.ThrowIfNull(headline);
+        details ??= [];
+        await Console.Error.WriteLineAsync(headline);
+        foreach (var detail in details)
+        {
+            await Console.Error.WriteLineAsync($"  - {detail}");
+        }
+
+        var reason = details.Count == 0 ? headline : $"{headline} {string.Join("; ", details)}";
+        try
+        {
+            if (services?.GetService<ILoggerFactory>() is { } loggers)
+            {
+                var logger = loggers.CreateLogger(typeof(ProgramLog).FullName!);
+                Refused(logger, reason);
+                return 2;
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // The host has already gone; open the log for this line below.
+        }
+
+        try
+        {
+            using var provider = CreateProvider(program, ReadSettings(configuration, program), console: false);
+            var logger = provider.CreateLogger(typeof(ProgramLog).FullName!);
+            Refused(logger, reason);
+        }
+        catch (InvalidDataException)
+        {
+            // The log settings are what is wrong: standard error is all there is.
+        }
+
+        return 2;
     }
 
     /// <summary>A logger provider writing <paramref name="program"/>'s log, and its console output when <paramref name="console"/>.</summary>
@@ -132,4 +182,7 @@ public static class ProgramLog
             ? value
             : throw new InvalidDataException($"{key} '{text}' is not a whole number above 0.");
     }
+
+    [LoggerMessage(Level = LogLevel.Critical, Message = "{Reason}")]
+    private static partial void Refused(Microsoft.Extensions.Logging.ILogger logger, string reason);
 }

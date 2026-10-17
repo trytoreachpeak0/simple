@@ -79,6 +79,14 @@ public sealed class GatewaySettingsTests
             Assert.Equal(2, process.ExitCode);
             Assert.Contains("The MES gateway refuses to start", error, StringComparison.Ordinal);
             Assert.Contains(message, error, StringComparison.Ordinal);
+            // Run as a service, nobody reads standard error: the reason is in the program log
+            // too, unless the log settings themselves are what is wrong.
+            if (!argument.StartsWith("--Simple:Logs:", StringComparison.Ordinal))
+            {
+                var log = string.Concat(Simple.Logging.ProgramLog.Files(logDirectory).Select(File.ReadAllText));
+                Assert.Contains("[FTL] Simple.Logging.ProgramLog: The MES gateway refuses to start", log, StringComparison.Ordinal);
+                Assert.Contains(message, log, StringComparison.Ordinal);
+            }
         }
         finally
         {

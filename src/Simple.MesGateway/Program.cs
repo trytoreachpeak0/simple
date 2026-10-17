@@ -18,8 +18,8 @@ if (!string.IsNullOrEmpty(settingsFile))
     var path = Path.GetFullPath(settingsFile);
     if (!File.Exists(path))
     {
-        await Console.Error.WriteLineAsync($"The MES gateway refuses to start: Simple:SettingsFile '{path}' does not exist.");
-        return 2;
+        return await ProgramLog.RefuseToStartAsync(
+            "MesGateway", builder.Configuration, null, $"The MES gateway refuses to start: Simple:SettingsFile '{path}' does not exist.");
     }
 
     builder.Configuration.AddJsonFile(path, optional: false, reloadOnChange: false);
@@ -84,11 +84,6 @@ try
 }
 catch (OptionsValidationException e)
 {
-    await Console.Error.WriteLineAsync("The MES gateway refuses to start: the configuration is invalid.");
-    foreach (var failure in e.Failures)
-    {
-        await Console.Error.WriteLineAsync($"  - {failure}");
-    }
-
-    return 2;
+    return await ProgramLog.RefuseToStartAsync(
+        "MesGateway", builder.Configuration, app.Services, "The MES gateway refuses to start: the configuration is invalid.", e.Failures.ToList());
 }
