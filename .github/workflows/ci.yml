@@ -184,12 +184,15 @@ jobs:
           Write-Output 'No Simple_test_* databases left behind.'
 
       # The same for the servers' certificate keys: a test that brings up a
-      # server makes a key named Simple-… in the user's key store of the
-      # runner account (Microsoft Software Key Storage Provider) and must
-      # delete it. Every Simple-* key there is a leftover: nothing but this
-      # workflow's tests runs SIMPLE under that account. The machine store is
-      # not looked at: tests use it only under simple remote. .NET opens a
-      # key by name but cannot list keys, so the names come from
+      # server makes a key in the user's key store of the runner account
+      # (Microsoft Software Key Storage Provider) and must delete it. That
+      # account is shared with the other runners on this machine (see Record
+      # machine load), so only keys in the tests' own naming are deleted, the
+      # formats of RemoteSweep.TestKeys in src/Simple.Cli/Remote/RemoteSweep.cs:
+      # Simple-Server-test_ and 12 hex digits, Simple-Test- and 32. Any other
+      # Simple-* key is reported and left for a person to look at. The machine
+      # store is not looked at: tests use it only under simple remote. .NET
+      # opens a key by name but cannot list keys, so the names come from
       # NCryptEnumKeys; failing to list fails the step.
       - name: No test keys left behind
         if: always()
@@ -245,13 +248,21 @@ jobs:
               }
           }
           '@
-          $left = @([UserKeyNames]::List() | Where-Object { $_ -like 'Simple-*' } | Sort-Object)
+          $tests = '\ASimple-(Server-test_[0-9a-f]{12}|Test-[0-9a-f]{32})\z'
+          $simple = @([UserKeyNames]::List() | Where-Object { $_ -like 'Simple-*' } | Sort-Object)
+          $left = @($simple | Where-Object { [regex]::IsMatch($_, $tests) })
+          $other = @($simple | Where-Object { -not [regex]::IsMatch($_, $tests) })
           foreach ($name in $left) {
             $key = [System.Security.Cryptography.CngKey]::Open($name, [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider)
             $key.Delete()
           }
           if ($left) {
             Write-Output "::error::Test keys left behind (now deleted): $($left -join ', ')"
+          }
+          if ($other) {
+            Write-Output "::error::Simple-* keys not named like a test's (not deleted; look at them and delete by hand): $($other -join ', ')"
+          }
+          if ($left -or $other) {
             exit 1
           }
           Write-Output 'No Simple-* keys left behind.'

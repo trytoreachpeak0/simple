@@ -69,7 +69,7 @@ public sealed class RemoteLeftoversTests
         var machine = new DirectoryMachine(sandbox.RemoteRoot) { Sweep = Sweep(tag, SqlServer) };
         try
         {
-            foreach (var name in leftovers.Append("keep"))
+            foreach (var name in leftovers.Append("c"))
             {
                 await CreateDatabaseAsync(Database(tag, name));
                 CreateKey(Key(tag, name));
@@ -86,12 +86,12 @@ public sealed class RemoteLeftoversTests
                 Assert.Contains($"deleted key {Key(tag, name)}", stderr, StringComparison.Ordinal);
             }
 
-            Assert.True(await DatabaseExistsAsync(Database(tag, "keep")));
-            Assert.True(ServerKey.Exists(Key(tag, "keep"), TestKeyStore.Store));
+            Assert.True(await DatabaseExistsAsync(Database(tag, "c")));
+            Assert.True(ServerKey.Exists(Key(tag, "c"), TestKeyStore.Store));
         }
         finally
         {
-            foreach (var name in leftovers.Append("keep"))
+            foreach (var name in leftovers.Append("c"))
             {
                 await SqlServerTarget.DropDatabaseAsync(SqlServer, Instance(tag, name), CancellationToken.None);
                 ServerKey.Delete(Key(tag, name), TestKeyStore.Store);
@@ -99,8 +99,12 @@ public sealed class RemoteLeftoversTests
         }
     }
 
-    [Fact]
-    public async Task NothingIsClearedWhileOtherHeavyWorkRuns()
+    [Theory]
+    [InlineData(0)]
+    // A slot beyond those this client counts: a client of another version
+    // may count more.
+    [InlineData(5)]
+    public async Task NothingIsClearedWhileOtherHeavyWorkRuns(int held)
     {
         // A test run holds a slot for as long as it runs, and its database
         // and keys are in use until it ends.
@@ -110,7 +114,7 @@ public sealed class RemoteLeftoversTests
         try
         {
             CreateKey(Key(tag, "a"));
-            using (HoldSlot(sandbox, 0))
+            using (HoldSlot(sandbox, held))
             {
                 var (busy, busyError) = await RunAsync(sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "exit 0");
                 Assert.True(busy == 0, $"exit code {busy}: {busyError}");
@@ -128,6 +132,47 @@ public sealed class RemoteLeftoversTests
         }
         finally
         {
+            ServerKey.Delete(Key(tag, "a"), TestKeyStore.Store);
+        }
+    }
+
+    [Fact]
+    public async Task AnInstanceSetUpThereKeepsItsDatabaseAndKeyThoughNamedLikeATest()
+    {
+        // The sandbox's instance is named test_ and 12 hex digits, as a test
+        // instance is; its system, started by simple remote up, holds no slot.
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        var ownDatabase = SqlServerTarget.DatabaseName(sandbox.Instance);
+        var ownKey = Components.ServerKeyName(sandbox.Instance);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot)
+        {
+            Sweep = new(
+                SqlServer,
+                TestKeyStore.Store,
+                $@"\ASimple_({sandbox.Instance}|test_{tag}_a)\z",
+                $@"\ASimple-(Server-{sandbox.Instance}|Test-{tag}a{{24}})\z"),
+        };
+        try
+        {
+            await CreateDatabaseAsync(ownDatabase);
+            await CreateDatabaseAsync(Database(tag, "a"));
+            CreateKey(ownKey);
+            CreateKey(Key(tag, "a"));
+
+            var (exitCode, stderr) = await RunAsync(sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "exit 0");
+
+            Assert.True(exitCode == 0, $"exit code {exitCode}: {stderr}");
+            Assert.False(await DatabaseExistsAsync(Database(tag, "a")), $"The sweep did not run: {stderr}");
+            Assert.False(ServerKey.Exists(Key(tag, "a"), TestKeyStore.Store), $"The sweep did not run: {stderr}");
+            Assert.True(await DatabaseExistsAsync(ownDatabase), $"The instance's database was dropped: {stderr}");
+            Assert.True(ServerKey.Exists(ownKey, TestKeyStore.Store), $"The instance's key was deleted: {stderr}");
+        }
+        finally
+        {
+            await SqlServerTarget.DropDatabaseAsync(SqlServer, sandbox.Instance, CancellationToken.None);
+            await SqlServerTarget.DropDatabaseAsync(SqlServer, Instance(tag, "a"), CancellationToken.None);
+            ServerKey.Delete(ownKey, TestKeyStore.Store);
             ServerKey.Delete(Key(tag, "a"), TestKeyStore.Store);
         }
     }
@@ -174,13 +219,14 @@ public sealed class RemoteLeftoversTests
     }
 
     private static RemoteSweep Sweep(string tag, string? sqlServer) =>
-        new(sqlServer, TestKeyStore.Store, $@"\ASimple_test_{tag}_[ab]\z", $@"\ASimple-Test-{tag}-[ab]\z");
+        new(sqlServer, TestKeyStore.Store, $@"\ASimple_test_{tag}_[ab]\z", $@"\ASimple-Test-{tag}(a{{24}}|b{{24}})\z");
 
     private static string Instance(string tag, string name) => $"test_{tag}_{name}";
 
     private static string Database(string tag, string name) => SqlServerTarget.DatabaseName(Instance(tag, name));
 
-    private static string Key(string tag, string name) => $"Simple-Test-{tag}-{name}";
+    /// <summary>In the tests' own format, Simple-Test- and 32 hex digits, so CI deletes one this test left behind.</summary>
+    private static string Key(string tag, string name) => $"Simple-Test-{tag}{new string(name[0], 24)}";
 
     private static void CreateKey(string name)
     {

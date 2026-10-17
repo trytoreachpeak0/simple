@@ -38,7 +38,16 @@ if ($actual -ne $named) {
     [Console]::Error.WriteLine('##simple-remote-agent-missing')
     exit 1
 }
-$spec = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Request)) | ConvertFrom-Json -AsHashtable
+
+# Marks this agent as used at once, before any wait: an agent no run has
+# started for a week is removed (Remove-OldFiles). Best effort.
+try {
+    [IO.File]::SetLastWriteTimeUtc($PSCommandPath, [DateTime]::UtcNow)
+}
+catch [IO.IOException], [UnauthorizedAccessException] {
+}
+
+$spec =[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Request)) | ConvertFrom-Json -AsHashtable
 $root = Split-Path -Parent $PSScriptRoot
 $repo = Join-Path $root 'repo.git'
 $instance = $spec.instance
@@ -94,12 +103,19 @@ function Stop-Abandoned([Diagnostics.Process] $process) {
     [Environment]::Exit(3)
 }
 
-# Runs git and returns its exit code and output, watching the connection
-# while it waits, as for the command: a fetch from the origin or of a large
-# bundle can take minutes. A process of its own with an empty input: git
-# started with & and no input blocks while the heartbeat reader waits on
-# this session's input (a silent connection hung git init, 2026-10-17).
-function Start-Git([string[]] $arguments) {
+# Runs git and returns its exit code and output. A process of its own with
+# an empty input: git started with & and no input blocks while the heartbeat
+# reader waits on this session's input (a silent connection hung git init,
+# 2026-10-17).
+#
+# -Interruptible: the connection is watched while git runs, as for the
+# command, and a cut ends git too. Only for fetches, from the origin or of a
+# bundle, which can take minutes and leave at worst unused objects and a
+# ref lock (cleared under the instance's lock, Receive-Snapshot). Every other
+# git runs to its end and the connection is checked after it: a killed
+# worktree add or checkout leaves the worktree locked with an index.lock,
+# and every later run of the instance failed (review of #64).
+function Start-Git([string[]] $arguments, [switch] $Interruptible) {
     $start = [Diagnostics.ProcessStartInfo]::new('git')
     foreach ($argument in $arguments) {
         $start.ArgumentList.Add($argument)
@@ -116,14 +132,23 @@ function Start-Git([string[]] $arguments) {
     $output = $process.StandardOutput.ReadToEndAsync()
     $errors = $process.StandardError.ReadToEndAsync()
     while (-not $process.WaitForExit(500)) {
-        if (Test-Abandoned) {
+        if ($Interruptible -and (Test-Abandoned)) {
             Stop-Abandoned $process
         }
     }
 
     $process.WaitForExit()
+    if (Test-Abandoned) {
+        Stop-Abandoned $null
+    }
+
     @{ ExitCode = $process.ExitCode; Output = "$($output.Result)$($errors.Result)".Trim() }
 }
+
+# git fetch ends with gc --auto or maintenance, in the foreground on Windows;
+# killed there, it may leave the shared cache's packed-refs.lock. So fetches
+# run neither, and Receive-Snapshot runs gc --auto on its own, to its end.
+$fetchOptions = @('-c', 'gc.auto=0', '-c', 'maintenance.auto=false')
 
 function Invoke-Git {
     $result = Start-Git $args
@@ -189,21 +214,27 @@ function Fetch-Origin {
     }
 
     Say "fetching $($spec.originBranch) from $($spec.originUrl)"
-    $result = Start-Git @('-C', $repo, 'fetch', '--quiet', $spec.originUrl, "+refs/heads/$($spec.originBranch):refs/remotes/origin/$($spec.originBranch)")
+    $result = Start-Git @($fetchOptions + @('-C', $repo, 'fetch', '--quiet', $spec.originUrl, "+refs/heads/$($spec.originBranch):refs/remotes/origin/$($spec.originBranch)")) -Interruptible
     $result.Output -split '\r?\n' | Where-Object { $_ } | ForEach-Object { Say $_ }
 }
 
+# Reads the bundle only, so a cut may end it.
 function Test-Bundle([string] $bundle) {
-    (Start-Git @('-C', $repo, 'bundle', 'verify', '--quiet', $bundle)).ExitCode -eq 0
+    (Start-Git @('-C', $repo, 'bundle', 'verify', '--quiet', $bundle) -Interruptible).ExitCode -eq 0
 }
 
 function Receive-Snapshot {
+    # A fetch into the instance's ref ended by a cut leaves its lock; only
+    # this instance's runs write that ref, under the lock held here.
+    Remove-Item -LiteralPath (Join-Path $repo "$($spec.ref).lock") -Force -ErrorAction Ignore
+    $fetched = $false
     if ($spec.bundle) {
         $bundle = Join-Path $root $spec.bundle
         try {
             if (-not (Test-Bundle $bundle)) {
                 # Most likely the cache lacks what the bundle builds on.
                 Fetch-Origin
+                $fetched = $true
                 if (-not (Test-Bundle $bundle)) {
                     # Finish exits outright and skips the finally below.
                     Remove-Item -LiteralPath $bundle -Force -ErrorAction Ignore
@@ -211,7 +242,12 @@ function Receive-Snapshot {
                 }
             }
 
-            Invoke-Git -C $repo fetch --quiet $bundle "+$($spec.ref):$($spec.ref)"
+            $result = Start-Git @($fetchOptions + @('-C', $repo, 'fetch', '--quiet', $bundle, "+$($spec.ref):$($spec.ref)")) -Interruptible
+            if ($result.ExitCode -ne 0) {
+                throw "git fetch of $($spec.bundle) exited with $($result.ExitCode): $($result.Output -replace '\s+', ' ')"
+            }
+
+            $fetched = $true
         }
         finally {
             Remove-Item -LiteralPath $bundle -Force -ErrorAction Ignore
@@ -220,6 +256,7 @@ function Receive-Snapshot {
     elseif (-not (Test-Commit $spec.commit)) {
         # Nothing was sent: the snapshot is already on the origin.
         Fetch-Origin
+        $fetched = $true
     }
 
     if (-not (Test-Commit $spec.commit)) {
@@ -228,9 +265,37 @@ function Receive-Snapshot {
 
     # Keeps the snapshot from being collected while the instance uses it.
     Invoke-Git -C $repo update-ref $spec.ref $spec.commit
+    if ($fetched) {
+        # What the fetches leave out ($fetchOptions), to its end; a failure
+        # here is git's own business and not the run's.
+        [void](Start-Git @('-C', $repo, 'gc', '--auto', '--quiet'))
+    }
+}
+
+# A git killed in the instance's worktree (by an agent before #64's review, or
+# on a machine that lost power) leaves its index.lock, and a worktree add
+# killed early leaves the worktree locked "initializing": every later
+# checkout, add or remove of the instance then fails. Only this instance's
+# runs touch its worktree, under the lock held here, so both are stale.
+function Repair-Worktree {
+    $gitFile = [IO.Path]::GetFullPath((Join-Path $worktree '.git'))
+    foreach ($admin in Get-ChildItem -LiteralPath (Join-Path $repo 'worktrees') -Directory -ErrorAction Ignore) {
+        $gitdir = Join-Path $admin.FullName 'gitdir'
+        if (-not (Test-Path -LiteralPath $gitdir) -or [IO.Path]::GetFullPath((Get-Content -LiteralPath $gitdir -Raw).Trim()) -ne $gitFile) {
+            continue
+        }
+
+        Remove-Item -LiteralPath (Join-Path $admin.FullName 'index.lock') -Force -ErrorAction Ignore
+        $locked = Join-Path $admin.FullName 'locked'
+        if ((Test-Path -LiteralPath $locked) -and (Get-Content -LiteralPath $locked -Raw) -match '\Ainitializing') {
+            # What git worktree unlock does.
+            Remove-Item -LiteralPath $locked -Force
+        }
+    }
 }
 
 function Checkout-Snapshot {
+    Repair-Worktree
     if (Test-Path -LiteralPath (Join-Path $worktree '.git')) {
         # --force and clean: exactly the snapshot, whatever a build changed or
         # left. Ignored files (bin, obj, artifacts) stay, so builds are incremental.
@@ -251,7 +316,9 @@ function Checkout-Snapshot {
 
 function Remove-Instance {
     if (Test-Path -LiteralPath $worktree) {
-        [void](Start-Git @('-C', $repo, 'worktree', 'remove', '--force', $worktree))
+        Repair-Worktree
+        # Twice --force: also a worktree that is locked.
+        [void](Start-Git @('-C', $repo, 'worktree', 'remove', '--force', '--force', $worktree))
         if (Test-Path -LiteralPath $worktree) {
             Remove-Item -LiteralPath $worktree -Recurse -Force
         }
@@ -267,16 +334,19 @@ function Remove-Instance {
 # still on that version copies it again. A bundle is read within the run that
 # sent it; one a day old is a run's that ended before it could remove it.
 function Remove-OldFiles {
-    # Marks this agent as used.
-    [IO.File]::SetLastWriteTimeUtc($PSCommandPath, [DateTime]::UtcNow)
-    $agents = [DateTime]::UtcNow.AddDays(-$spec.keepAgentDays)
-    Get-ChildItem -LiteralPath $PSScriptRoot -Filter 'agent-*.ps1' -File |
-        Where-Object { $_.Name -match '\Aagent-[0-9a-f]{12}\.ps1\z' -and $_.FullName -ne $PSCommandPath -and $_.LastWriteTimeUtc -lt $agents } |
-        Remove-Item -Force -ErrorAction Ignore
-    $bundles = [DateTime]::UtcNow.AddDays(-1)
-    Get-ChildItem -LiteralPath (Join-Path $root 'incoming') -Filter '*.bundle' -File |
-        Where-Object { $_.LastWriteTimeUtc -lt $bundles } |
-        Remove-Item -Force -ErrorAction Ignore
+    try {
+        $agents = [DateTime]::UtcNow.AddDays(-$spec.keepAgentDays)
+        Get-ChildItem -LiteralPath $PSScriptRoot -Filter 'agent-*.ps1' -File |
+            Where-Object { $_.Name -match '\Aagent-[0-9a-f]{12}\.ps1\z' -and $_.FullName -ne $PSCommandPath -and $_.LastWriteTimeUtc -lt $agents } |
+            Remove-Item -Force -ErrorAction Ignore
+        $bundles = [DateTime]::UtcNow.AddDays(-1)
+        Get-ChildItem -LiteralPath (Join-Path $root 'incoming') -Filter '*.bundle' -File |
+            Where-Object { $_.LastWriteTimeUtc -lt $bundles } |
+            Remove-Item -Force -ErrorAction Ignore
+    }
+    catch {
+        Say "could not remove old agents and bundles: $_"
+    }
 }
 
 # The names of the keys in one store of the Microsoft Software Key Storage
@@ -337,18 +407,30 @@ public static class SimpleRemoteKeyNames
     [SimpleRemoteKeyNames]::List($machine)
 }
 
+# Whether $name, read with $pattern, names an instance that has a worktree here.
+function Test-SetUp([string] $name, [string] $pattern) {
+    $match = [regex]::Match($name, $pattern)
+    $match.Success -and (Test-Path -LiteralPath (Join-Path $root "wt/$($match.Groups[1].Value)"))
+}
+
 # Test databases and keys that runs ended before their tests could clean up
 # left behind (a cut connection ends a run with its tests), cleared before
 # heavy work. Only while every slot is free: a test run holds one for as long
 # as it runs, so nothing cleared is in use; with any slot taken, a later run
 # clears them. Only names matching the request's patterns, the tests' own
-# naming, are touched. A failure is said and the run goes on.
+# naming, are touched, and not those of an instance set up here: a clone may
+# be named like a test instance, and the system simple remote up started for
+# it holds no slot. A failure is said and the run goes on.
 function Clear-Leftovers {
     $sweep = $spec.sweep
     $held = [Collections.Generic.List[IO.FileStream]]::new()
     try {
-        foreach ($slot in 0..($spec.slots - 1)) {
-            $stream = Open-Lock (Join-Path $root "slots/$slot.lock")
+        # Every slot this machine has had, not only as many as this client
+        # counts: a client of another version may count more.
+        $slots = @(0..($spec.slots - 1) | ForEach-Object { Join-Path $root "slots/$_.lock" }) +
+            @(Get-ChildItem -LiteralPath (Join-Path $root 'slots') -Filter '*.lock' -File | ForEach-Object FullName)
+        foreach ($slot in $slots | ForEach-Object { [IO.Path]::GetFullPath($_) } | Sort-Object -Unique) {
+            $stream = Open-Lock $slot
             if (-not $stream) {
                 return
             }
@@ -365,7 +447,7 @@ function Clear-Leftovers {
                 $reader = $command.ExecuteReader()
                 $names = @(while ($reader.Read()) { $reader.GetString(0) })
                 $reader.Dispose()
-                foreach ($name in $names | Where-Object { [regex]::IsMatch($_, $sweep.databases) }) {
+                foreach ($name in $names | Where-Object { [regex]::IsMatch($_, $sweep.databases) -and -not (Test-SetUp $_ '\ASimple_(.+)\z') }) {
                     $drop = $connection.CreateCommand()
                     $drop.CommandText = "DECLARE @sql nvarchar(max) = N'ALTER DATABASE ' + QUOTENAME(@name) + N' SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ' + QUOTENAME(@name); EXEC (@sql);"
                     [void]$drop.Parameters.AddWithValue('@name', $name)
@@ -380,7 +462,7 @@ function Clear-Leftovers {
 
         $machine = $sweep.keyStore -eq 'machine'
         $options = $machine ? [Security.Cryptography.CngKeyOpenOptions]::MachineKey : [Security.Cryptography.CngKeyOpenOptions]::None
-        foreach ($name in Get-KeyNames $machine | Where-Object { [regex]::IsMatch($_, $sweep.keys) }) {
+        foreach ($name in Get-KeyNames $machine | Where-Object { [regex]::IsMatch($_, $sweep.keys) -and -not (Test-SetUp $_ '\ASimple-Server-(.+)\z') }) {
             [Security.Cryptography.CngKey]::Open($name, [Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider, $options).Delete()
             Say "deleted key $name, left behind by an earlier test run"
         }

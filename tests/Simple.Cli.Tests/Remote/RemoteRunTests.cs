@@ -333,6 +333,54 @@ public sealed class RemoteRunTests
             sandbox.RemoteRoot, ["--git-dir", Path.Combine(sandbox.RemoteRoot, "repo.git"), "rev-parse", "--verify", "--quiet", Snapshot.Ref(sandbox.Instance)], Cancel)).ExitCode);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AWorktreeAKilledGitLeftLockedIsRepairedByTheNextRun(bool directoryKept)
+    {
+        // What a worktree add or checkout killed halfway leaves: the worktree
+        // locked "initializing" and its index.lock (git 2.55, review of #64).
+        // Every later checkout, add and remove of the instance failed on it.
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+        await RunOkAsync(sandbox, machine);
+        LeaveLocked(sandbox, directoryKept);
+        sandbox.Write("README.txt", "after the repair\n");
+
+        var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "Get-Content README.txt");
+
+        Assert.True(exitCode == 0, $"exit code {exitCode}: {stderr}");
+        Assert.Equal(["after the repair"], Lines(stdout));
+    }
+
+    [Fact]
+    public async Task ForgetRemovesAWorktreeAKilledGitLeftLocked()
+    {
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+        await RunOkAsync(sandbox, machine);
+        LeaveLocked(sandbox, directoryKept: true);
+
+        var (forgot, _, forgetError) = await RunAsync(sandbox, machine, "forget");
+
+        Assert.True(forgot == 0, $"exit code {forgot}: {forgetError}");
+        Assert.False(Directory.Exists(sandbox.RemoteWorktree()));
+        // The registration went with it: the instance can be set up again.
+        await RunOkAsync(sandbox, machine);
+    }
+
+    private static void LeaveLocked(GitSandbox sandbox, bool directoryKept)
+    {
+        var admin = Path.Combine(sandbox.RemoteRoot, "repo.git", "worktrees", sandbox.Instance);
+        Assert.True(Directory.Exists(admin), $"No worktree registration at {admin}.");
+        File.WriteAllText(Path.Combine(admin, "index.lock"), string.Empty);
+        File.WriteAllText(Path.Combine(admin, "locked"), "initializing\n");
+        if (!directoryKept)
+        {
+            Directory.Delete(sandbox.RemoteWorktree(), recursive: true);
+        }
+    }
+
     private static async Task RunOkAsync(GitSandbox sandbox, IRemoteMachine machine)
     {
         var (exitCode, _, stderr) = await RunAsync(sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "exit 0");
