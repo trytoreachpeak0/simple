@@ -33,25 +33,42 @@ public static class FileHolders
                 }
             }
 
-            const int Room = 16;
-            var found = stackalloc RM_PROCESS_INFO[Room];
-            uint needed;
-            uint count = Room;
-            uint reasons;
-            var result = PInvoke.RmGetList(session, &needed, &count, found, &reasons);
-            if (result is not (WIN32_ERROR.ERROR_SUCCESS or WIN32_ERROR.ERROR_MORE_DATA))
+            // Asked first with no room, then with as much as it says it needs.
+            // A list too small is not filled in at all (ERROR_MORE_DATA), and
+            // the list can grow between two calls, so this is tried a few times.
+            RM_PROCESS_INFO[] found = [];
+            for (var attempt = 0; attempt < 3; attempt++)
             {
-                return [];
+                uint needed;
+                var count = (uint)found.Length;
+                uint reasons;
+                WIN32_ERROR result;
+                fixed (RM_PROCESS_INFO* list = found)
+                {
+                    result = PInvoke.RmGetList(session, &needed, &count, list, &reasons);
+                }
+
+                if (result == WIN32_ERROR.ERROR_SUCCESS)
+                {
+                    var holders = new List<string>();
+                    for (var i = 0; i < count; i++)
+                    {
+                        var pid = (int)found[i].Process.dwProcessId;
+                        holders.Add($"{NameOf(pid) ?? found[i].strAppName.ToString()} (pid {pid})");
+                    }
+
+                    return holders;
+                }
+
+                if (result != WIN32_ERROR.ERROR_MORE_DATA)
+                {
+                    return [];
+                }
+
+                found = new RM_PROCESS_INFO[needed];
             }
 
-            var holders = new List<string>();
-            for (var i = 0; i < Math.Min(count, (uint)Room); i++)
-            {
-                var pid = (int)found[i].Process.dwProcessId;
-                holders.Add($"{NameOf(pid) ?? found[i].strAppName.ToString()} (pid {pid})");
-            }
-
-            return holders;
+            return [];
         }
         finally
         {

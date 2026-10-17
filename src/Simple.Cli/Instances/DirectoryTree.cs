@@ -70,14 +70,16 @@ public static class DirectoryTree
 public sealed record HeldFile(string Path, IReadOnlyList<string> HeldBy);
 
 public sealed class FilesHeldException(string directory, TimeSpan wait, IReadOnlyList<HeldFile> files, Exception innerException)
-    : IOException(Describe(directory, wait, files), innerException)
+    : IOException(Describe(directory, wait, files, innerException), innerException)
 {
     public IReadOnlyList<HeldFile> Files { get; } = files;
 
-    private static string Describe(string directory, TimeSpan wait, IReadOnlyList<HeldFile> files) =>
+    // The last error is part of the message: when nothing holds the file
+    // (a read-only file, an access rule), it is the actual reason.
+    private static string Describe(string directory, TimeSpan wait, IReadOnlyList<HeldFile> files, Exception innerException) =>
         $"{directory} could not be deleted within {wait.TotalSeconds:0.#} s. Still there: "
         + string.Join("; ", files.Select(f => f.HeldBy.Count > 0
             ? $"{f.Path}, held by {string.Join(", ", f.HeldBy)}"
             : $"{f.Path}, held by no process Windows names (a virus scanner, for example, is not named)"))
-        + ".";
+        + $". Last error: {innerException.Message}";
 }

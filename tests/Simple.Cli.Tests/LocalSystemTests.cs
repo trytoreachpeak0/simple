@@ -185,19 +185,22 @@ public sealed class LocalSystemTests : IDisposable
         using var held = HeldImage.In(InstanceStore.BinDirectory(repository, instance, "server"));
         var system = new LocalSystem(repository, heldStore, TextWriter.Null);
 
-        var outcome = await system.DownAsync(instance, CliRunner.SqlServer, reset: false, Cancel);
+        // Fails before the database is dropped, so the hint repeats --reset.
+        var outcome = await system.DownAsync(instance, CliRunner.SqlServer, reset: true, Cancel);
 
         Assert.Equal(ExitCodes.Unexpected, outcome.ExitCode);
         Assert.Contains(held.Path, outcome.Error, StringComparison.OrdinalIgnoreCase);
         Assert.Contains($"pid {Environment.ProcessId}", outcome.Error, StringComparison.Ordinal);
+        Assert.Contains("Last error: Access to the path", outcome.Error, StringComparison.Ordinal);
+        Assert.Contains("run simple down --reset again", outcome.Error, StringComparison.Ordinal);
         Assert.NotNull(heldStore.Read(instance));
 
-        // Once it is released, down again finishes the job.
+        // Once it is released, down again finishes the job, with the usual wait.
         held.Dispose();
-        var again = await system.DownAsync(instance, CliRunner.SqlServer, reset: false, Cancel);
+        var again = await new LocalSystem(repository, store, TextWriter.Null).DownAsync(instance, CliRunner.SqlServer, reset: false, Cancel);
         Assert.True(again.ExitCode == ExitCodes.Success, $"down exited with {again.ExitCode}: {again.Error}");
         Assert.False(Directory.Exists(InstanceStore.RunDirectory(repository, instance)));
-        Assert.Null(heldStore.Read(instance));
+        Assert.Null(store.Read(instance));
     }
 
     /// <summary>

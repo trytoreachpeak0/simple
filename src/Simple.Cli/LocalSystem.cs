@@ -265,7 +265,7 @@ public sealed partial class LocalSystem(
             {
                 return Outcome.Fail(
                     ExitCodes.Unexpected,
-                    $"{stillHeld.Message} The state file {store.StatePath(instance)} is kept: run simple down again once they are released.",
+                    $"{stillHeld.Message} The state file {store.StatePath(instance)} is kept: run simple down{(reset ? " --reset" : string.Empty)} again once they are released.",
                     new { Instance = instance, Stopped = stopped, Held = stillHeld.Files });
             }
         }
