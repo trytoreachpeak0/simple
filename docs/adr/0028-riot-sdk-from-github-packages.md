@@ -18,7 +18,10 @@
 
 - 本仓库照常用中央包管理：`Directory.Packages.props` 钉 `RIoT.Sdk.Facade` 的版本，它带进同版本的 `RIoT.Sdk.Core` 和 `RIoT.Sdk.Generated`；锁文件里有每个包的 `contentHash`，CI 的 `--locked-mode` 还原会核对。升级 SDK 就是改这一个版本号、重生成锁文件，在一个 PR 里完成。
 - 仓库根目录的 `nuget.config` 先 `<clear />`，再列 nuget.org 和 GitHub Packages 两个源，用包来源映射规定 `RIoT.Sdk.*` 只从 GitHub Packages 拿，其余只从 nuget.org 拿。机器上另外配置的包源（例如 vm01 上 v2 线的本地源）不会混进来，两个源也不能顶替对方的包。
-- 仓库里不放任何凭据。**开发机第一次还原之前**，要在用户级 NuGet 配置里以源名 `github` 存一个只有 `read:packages` 权限的 classic 令牌（`dotnet nuget add source … --configfile "$env:APPDATA/NuGet/NuGet.Config"`，Windows 上加密保存），步骤见 README 的“第一次还原之前”。没做这一步，还原会因 401 失败。NuGet 按源的名字匹配凭据，本仓库 `nuget.config` 里的 `<clear />` 只清源、不清用户级配置里的凭据（2026-10-17 用本机回环上的假源实测）。
+- 仓库里不放任何凭据。**开发机第一次还原之前**，要在用户级 NuGet 配置里以源名 `github` 存一个只有 `read:packages` 权限的 classic 令牌（`dotnet nuget add source … --configfile "$env:APPDATA/NuGet/NuGet.Config"`），步骤见 README 的“第一次还原之前”。没做这一步，还原会因 401 失败。存法分两种：
+  - 交互登录的开发机：按当前用户加密（DPAPI）保存，文件里不是明文。
+  - 经 SSH 运行还原的远端机器（例如 `simple remote` 用的 `simple01`）：必须加 `--store-password-in-clear-text` 明文保存。经 SSH 密钥登录的会话拿不到 DPAPI 主密钥（#40 实测 `ProtectedData.Protect(CurrentUser)` 报 `Access is denied.`），NuGet 解不开加密的令牌。代价是那台机器上的管理员进程都读得到这个令牌；它只有 `read:packages` 权限，泄露了也只能读包。
+  - 两种存法都靠同一个机制：NuGet 按源的名字匹配凭据，本仓库 `nuget.config` 里的 `<clear />` 只清源、不清用户级配置里的凭据（2026-10-17 用本机回环上的假源实测）。
 - CI 用每次运行自带的 `GITHUB_TOKEN`（`packages: read`），在两个还原步骤上经环境变量 `NuGetPackageSourceCredentials_github` 交给 NuGet，令牌随运行结束失效。包是公开的，所以不用在包设置的 “Manage Actions access” 里给本仓库开 Read：GitHub 文档写明 “If the package is public, any workflow running in any repository can download the package.”（《Publishing and installing a package with GitHub Actions》，2026-10-17 读到）。以后要是换成私有包，就得补这一步。
 - 发布在 `riot-sdk` 仓库完成：`.github/workflows/publish.yml` 只能手动触发，只从 `main` 发布，默认只打包和核对、不推送，勾选推送才发布；凭据只有那次运行的 `GITHUB_TOKEN`，没有长期密钥：检查作业只能读，空跑时不签发写令牌；推送作业才有 `packages: write`，推的是检查作业检查过的那一份包。三个包逐个推送，不是原子的：中途失败时不删已推上去的半套，把补丁号加一、经批准重新发布。推送前 `scripts/check-packages.ps1` 核对包里只有预期的文件、没有像凭据的内容和本机路径、许可证（MIT）与仓库地址齐全、GitHub Packages 上还没有这个版本。包的 `RepositoryUrl` 指向 riot-sdk，发布后自动关联到那个仓库。
 - 包是公开的（产品负责人 2026-10-17）：任何有 GitHub 令牌的人都能还原，但不进 nuget.org。新发布的包默认私有，第一次发布后由产品负责人在每个包的设置页把可见性改为 Public。公开不可撤回：GitHub 上的包一旦公开，就不能再改回私有。公开包不收费，也不占私有包的存储额度：GitHub 文档写明 “GitHub Packages usage is free for public packages”，存储与流量额度只针对私有仓库的包（《GitHub Packages billing》，2026-10-17 读到）。
