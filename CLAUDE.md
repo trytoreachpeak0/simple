@@ -69,13 +69,13 @@ reviewed in pull requests like the code is.
 | `src/Simple.MesGateway` | MES gateway, a small separate process |
 | `src/Simple.IoSimulator` | Simulator for the vehicle's IO module |
 | `src/Simple.Protocol` | Server ↔ onboard protocol contracts |
+| `src/Simple.Cli` | The `simple` command line: brings the local system up and down, shows status, events and logs |
 | `tests/` | One `<Project>.Tests` per project, plus `Simple.Contracts.Tests` |
 | `scenarios/` | Scenarios in the shared format |
 | `samples/replay/` | Replay samples recorded from the real systems |
 | `sites/<site>/` | Per-site starting business configuration |
 
-Planned, not created yet: `Simple.Cli` (bring the system up and down, run
-scenarios) and `Simple.Mcp` (the thin AI layer above).
+Planned, not created yet: `Simple.Mcp`, the thin AI layer above the command line and the server API.
 
 - **`riot-sdk` is not in this repository.** It stays a separate package
   that other applications can use. `Simple.Server.Riot` consumes it.
@@ -186,6 +186,13 @@ single-context layout). Do not start a parallel set of these by hand.
   pins that package where it arrives transitively. Raise a vulnerable
   transitive package this way (`NU1902`/`NU1903` fail the build), with a
   comment naming the advisory.
+
+## Local system
+
+- `./simple up` (in PowerShell 7; elsewhere `pwsh -File <clone>/simple.ps1 up`) builds once and starts every component of the local system; `./simple down` stops it, `--reset` also drops its database. Every command takes `--json`; the exit codes are fixed and listed in `simple --help`.
+- Each component is one entry in `src/Simple.Cli/Components.cs`: project, process count, ports, arguments, readiness. A ticket that adds a component adds its entry there, and `simple up` and `simple status` show it.
+- The instance defaults to the clone's folder name, so two worktrees never share one; its database is `Simple_<instance>`. The command line stops only the processes it recorded, by process id and start time, never by process name, and stops them gracefully so the server records `server.stopped`.
+- The command line starts a local system only. It has no switch that points at anything real, removes `Simple__*`, `ConnectionStrings__*` and `ASPNETCORE_*` from the components' environment, and accepts only LocalDB or a named SQL Server instance on this machine (`SIMPLE_SQLSERVER`).
 
 ## Tests
 
