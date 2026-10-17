@@ -18,12 +18,13 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 | `src/Simple.MesGateway` | MES 网关，独立的小进程 |
 | `src/Simple.IoSimulator` | 车上 IO 模块的模拟器 |
 | `src/Simple.Protocol` | 服务端与车载终端之间的协议契约 |
+| `src/Simple.Cli` | `simple` 命令行：在本机一条命令起停整套系统、查看状态、事件和日志 |
 | `tests/` | 每个项目一个 `*.Tests` 测试项目，另有调度平台的行为契约测试 |
 | `scenarios/` | 统一格式的测试场景 |
 | `samples/replay/` | 从真实系统录下的回放样本 |
 | `sites/<厂区>/` | 各厂区的起始业务配置 |
 
-以后计划加两个入口：`Simple.Cli`，用一条命令起停整套系统、跑场景；`Simple.Mcp`，给 AI 用的一层薄包装，只调用命令行和服务端 API，不放业务逻辑。
+以后计划再加一个入口 `Simple.Mcp`：给 AI 用的一层薄包装，只调用命令行和服务端 API，不放业务逻辑。
 
 ## 构建与测试
 
@@ -38,7 +39,33 @@ dotnet test --solution simple.slnx
 
 需要数据库的测试每次建一个随机名字的库（`Simple_test_<随机串>`），测完删掉，几个 worktree 同时跑也互不干扰。默认建在本机 LocalDB 上；要用别的 SQL Server 实例，把不带库名的连接串放进环境变量 `SIMPLE_TEST_SQLSERVER`，例如 `Server=.\SQLEXPRESS;Integrated Security=true;TrustServerCertificate=true`。
 
-## 运行服务端
+## 在本机起停整套系统
+
+仓库根的 `simple.ps1` 先编译命令行本身（安静地编译，失败才显示输出），再把参数原样交给它。在 PowerShell 7 里：
+
+```
+./simple up          # 编译一次，起齐所有部件，全部就绪才返回
+./simple status      # 每个进程在不在、就绪没有，以及服务端自己的状态
+./simple events --since 5m
+./simple logs server --tail 50
+./simple down        # 正常停止本实例起的进程
+./simple down --reset   # 再删掉本实例的库
+```
+
+从别的 shell 调用写成 `pwsh -File <clone>/simple.ps1 up`。每个命令都接受 `--json`：标准输出上只有一个 JSON 对象 `{exitCode, error, result}`，进度提示写在标准错误上。退出码是固定的，`./simple --help` 列出全表：0 成功；2 参数或设置不对；3 编译失败；4 有部件没就绪（已起的会被停掉）；5 实例没在运行；6 实例不健康或只起了一半；7 另一条 simple 命令正在操作这个实例；8 有进程超时没停下、被强杀；9 删库失败。
+
+目前系统里只有服务端。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪；以后加车载终端、IO 模拟器、假 RIoT、MES 网关，都是往这里加一项。
+
+- **实例**：不写 `--instance` 时，实例名取 clone 所在文件夹的名字（例如 `29-simple-cli`），所以两个 worktree 各起一套互不干扰。库名是 `Simple_<实例名>`；端口按实例名在 20000～29999 之间选一段，被占用就往后挪，同一个实例每次拿到的端口一般不变。
+- **起**：`up` 先 `dotnet build` 各部件的项目，再把编译输出复制到 `artifacts/simple/<实例名>/` 下运行，所以系统起着的时候照样可以重新编译、跑测试，不会碰到文件被占用。部件是独立的进程，命令行返回后它们继续运行；每个进程的输出写进自己的日志文件。重复执行 `up` 不会起第二套。
+- **停**：`down` 只停本实例的状态文件里记下的进程（按进程号和进程启动时间核对，绝不按进程名），用 Ctrl+Break 让它们正常退出，服务端因此会在事件记录里留下 `server.stopped`；30 秒还没退出才强杀，并以退出码 8 报告。
+- **库**：默认用本机 LocalDB `(localdb)\MSSQLLocalDB`。要用本机别的命名实例（CI 用 `.\SQLEXPRESS`），把不带库名的连接串放进 `SIMPLE_SQLSERVER`。命令行拒绝别的机器上的 SQL Server，也拒绝本机的默认实例（`.`、`localhost`）。`down --reset` 只删 `Simple_<实例名>` 这一个库。
+- **只起本机的假系统**：命令行没有任何指向真实系统的开关。起部件时会去掉环境里以 `Simple__`、`ConnectionStrings__`、`ASPNETCORE_` 开头的变量，免得外面设好的真实地址或连接串被带进本机系统。
+- **文件放在哪**：状态文件和日志在 `%LOCALAPPDATA%\simple\instances\<实例名>\`（可用环境变量 `SIMPLE_HOME` 换位置）；日志在 `down` 之后保留，下次 `up` 时覆盖。
+
+`Simple.Cli.Tests` 里的冒烟测试经编译好的命令行真起真停两套随机名字的实例，`dotnet test` 时随其他测试一起跑，CI 上也跑。
+
+## 只运行服务端
 
 ```
 dotnet run --project src/Simple.Server

@@ -1,0 +1,11 @@
+AttachConsole
+CTRL_BREAK_EVENT
+CreateProcess
+DeleteProcThreadAttributeList
+FreeConsole
+GenerateConsoleCtrlEvent
+GetProcessTimes
+InitializeProcThreadAttributeList
+STARTUPINFOEXW
+SetHandleInformation
+UpdateProcThreadAttribute
