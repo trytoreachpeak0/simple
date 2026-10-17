@@ -29,6 +29,7 @@ builder.Services.AddSingleton(services =>
     return Seed.Read(Path.IsPathRooted(file) ? file : Path.Combine(AppContext.BaseDirectory, file));
 });
 builder.Services.AddSingleton<FakeRiotWorld>();
+builder.Services.AddSingleton<FakeRiotLoad>();
 builder.Services.AddHostedService<FakeRiotClock>();
 builder.Services.AddHealthChecks();
 
@@ -39,6 +40,7 @@ try
 
     app.MapHealthChecks("/health/live");
     app.MapHealthChecks("/health/ready", new HealthCheckOptions());
+    app.UseFakeRiotLoad();
     app.UseRiotAuthentication();
     app.MapRiotEndpoints();
     app.MapFakeRiotControlEndpoints();

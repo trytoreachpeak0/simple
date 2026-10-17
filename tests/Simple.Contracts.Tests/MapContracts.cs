@@ -34,7 +34,7 @@ public sealed class MapContracts : ContractTest
 
     /// <summary>Station ids repeat across maps, so a station is always named with its map.</summary>
     [Fact]
-    [Contract("BC-MAP-002")]
+    [Contract("BC-MAP-002", "#11", "ADR 0015")]
     public async Task TwoMapsHaveAStationWithTheSameId()
     {
         if (Facts.MapsSharingAStationId is not var (first, second) || Facts.SharedStationId is not { } shared)
