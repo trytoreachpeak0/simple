@@ -204,8 +204,10 @@ single-context layout). Do not start a parallel set of these by hand.
 
 - A project whose name ends in `.Tests` is a test project automatically:
   `Directory.Build.props` makes it an executable and adds `using Xunit;`
-  (xunit.v3 4.x does not add it on its own). Its `.csproj` only references
-  `xunit.v3` and the project under test.
+  (xunit.v3 4.x does not add it on its own). Its `.csproj` references
+  `xunit.v3`, the project under test and, where the tests need them,
+  test-support packages such as `Microsoft.AspNetCore.Mvc.Testing`; never
+  another test framework or a VSTest package (see the list above).
 - **Tests that need a database** create their own, `Simple_test_<random>`,
   and drop it when done, so concurrent runs never share one. They use
   LocalDB unless `SIMPLE_TEST_SQLSERVER` holds another SQL Server
