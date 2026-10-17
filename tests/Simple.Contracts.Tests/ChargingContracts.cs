@@ -27,9 +27,13 @@ public sealed class ChargingContracts : OrderContractTest
         Assert.Equal(charger, card.CurrentPosition);
     }
 
-    /// <summary>The next order leaves the charger by itself: RIoT puts act(78,2,0) first in it.</summary>
+    /// <summary>
+    /// The next order leaves the charger by itself: RIoT puts act(78,2,0)
+    /// first in it (the 2026-10-17 agv03 field observation, BC-ORDER-023 on
+    /// the lab's branch docs/riot-charging-no-dispatch).
+    /// </summary>
     [Fact]
-    [Contract("Q-033", "BC-ORDER-022")]
+    [Contract("Q-033", "BC-ORDER-023")]
     public async Task TheNextOrderStartsWithEndChargingPutInByRiot()
     {
         Target.RequireWrites();

@@ -50,18 +50,29 @@ public sealed class MapContracts : ContractTest
         Assert.Contains(onSecond, s => s.StationId == shared);
     }
 
-    /// <summary>
-    /// The edge table is snake_case (<c>s_node</c>), which the generated client
-    /// cannot read, and directed: some edges have no reverse twin.
-    /// </summary>
+    /// <summary>The edge table is snake_case (<c>s_node</c>), which the generated client cannot read.</summary>
     [Fact]
     [Contract("BC-MAP-003")]
-    public async Task TheEdgeTableIsReadableAndDirected()
+    public async Task TheEdgeTableIsReadable()
     {
         var edges = await Riot.Maps.ListEdgesAsync(Facts.MapId, Cancel);
 
         Assert.NotEmpty(edges);
         Assert.All(edges, e => Assert.True(e.StartNode > 0 && e.EndNode > 0 && e.CostMm > 0, $"edge {e.Id}: {e}"));
+    }
+
+    /// <summary>
+    /// The graph is directed: on map25 only 148 of 403 edges have a reverse
+    /// twin. Whether a given real map has a one-way edge is the map's state,
+    /// not RIoT's behaviour, so only the fake's map is held to it.
+    /// </summary>
+    [Fact]
+    [Contract("BC-MAP-003")]
+    public async Task TheFakesMapHasOneWayEdges()
+    {
+        Assert.SkipUnless(Target.Control is not null, "现场地图有没有单向边是地图本身的情况，不是 RIoT 的行为；实验室只在 map25 上数过。");
+        var edges = await Riot.Maps.ListEdgesAsync(Facts.MapId, Cancel);
+
         Assert.Contains(edges, e => !edges.Any(r => r.StartNode == e.EndNode && r.EndNode == e.StartNode));
     }
 
@@ -73,6 +84,17 @@ public sealed class MapContracts : ContractTest
         var stations = await Riot.Maps.ListStationDetailsAsync(Facts.MapId, Cancel);
 
         Assert.All(stations, s => Assert.Contains(edges, e => e.Id == s.EdgeId));
-        Assert.Empty(await Riot.Maps.ListRemovedEdgesAsync(Facts.MapId, Cancel));
+    }
+
+    /// <summary>The removed edges and stations read, empty or not (map25 had none in round 43; that is its state, not a rule).</summary>
+    [Fact]
+    [Contract("BC-MAP-003")]
+    public async Task RemovedEdgesAndStationsAreReadable()
+    {
+        var removedEdges = await Riot.Maps.ListRemovedEdgesAsync(Facts.MapId, Cancel);
+        var removedStations = await Riot.Maps.ListRemovedStationsAsync(Facts.MapId, Cancel);
+
+        Assert.All(removedEdges, r => Assert.True(r.EdgeId > 0));
+        Assert.All(removedStations, r => Assert.True(r.StationId > 0));
     }
 }

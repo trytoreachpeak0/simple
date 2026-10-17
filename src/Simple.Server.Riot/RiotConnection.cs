@@ -89,10 +89,19 @@ public sealed class RiotConnectionProbe(
             })
             .Build();
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            await pipeline.ExecuteAsync(ProbeAsync, stoppingToken);
-            await Task.Delay(settings.Value.PollInterval, time, stoppingToken);
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                await pipeline.ExecuteAsync(ProbeAsync, stoppingToken);
+                await Task.Delay(settings.Value.PollInterval, time, stoppingToken);
+            }
+        }
+        catch (Exception) when (stoppingToken.IsCancellationRequested)
+        {
+            // Stopping. A stop that lands while a call is failing comes back
+            // from the retry as that failure, not as a cancellation (simple#55);
+            // either way the probe just ends.
         }
     }
 

@@ -19,8 +19,8 @@ public sealed class OrderLifecycleContracts : OrderContractTest
         var moving = await UntilAsync(_ => CardAsync(), c => c.ProcState == "PROCESSING_ORDER" && c.CurrentPosition == 0, "车离站、站号读成 0");
         var arrived = await UntilAsync(
             async _ => (Card: await CardAsync(), Order: await ReadAsync(upperId)),
-            r => r.Card.CurrentPosition == Facts.ReachableStation,
-            "车到站");
+            r => r.Card.CurrentPosition == Facts.ReachableStation && r.Card.ProcState != "IDLE",
+            "车到站、订单还没结束");
         var done = await UntilStateAsync(upperId, OrderStates.Success);
         var idle = await UntilAsync(_ => CardAsync(), c => c.ProcState == "IDLE", "车回到 IDLE");
 

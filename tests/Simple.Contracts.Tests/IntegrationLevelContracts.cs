@@ -18,9 +18,14 @@ public sealed class IntegrationLevelContracts : OrderContractTest
         Assert.Equal(true, on.Enable);
     }
 
-    /// <summary>Off line does not refuse an order: it is made and stays queued.</summary>
+    /// <summary>
+    /// Off line does not refuse an order: it is made and queued (round 13 S1,
+    /// which cancelled it straight away). That it then stays queued is the
+    /// product owner's statement (ADR 0011).
+    /// </summary>
     [Fact]
-    [Contract("BC-VEH-004")]
+    [Contract("BC-VEH-004", "ADR 0011")]
+    [NotVerifiedOnRealRiot("下线的车上，排队中的订单不开始执行（产品负责人，ADR 0011；实验室第 13 轮建单后立即取消，没有观测之后）")]
     public async Task AnOrderForAnOfflineVehicleIsMadeAndStaysQueued()
     {
         Target.RequireWrites();
@@ -32,9 +37,14 @@ public sealed class IntegrationLevelContracts : OrderContractTest
         await ThroughoutAsync(_ => ReadAsync(upperId), o => o.OrderState == OrderStates.Queueing, "排队");
     }
 
-    /// <summary>Taking a vehicle off line does not stop the order it is executing.</summary>
+    /// <summary>
+    /// Taking a vehicle off line does not stop the order it is executing:
+    /// round 13 S4 saw it stay EXECUTING (then cancelled it). That it runs on
+    /// to SUCCESS is the product owner's statement (ADR 0011).
+    /// </summary>
     [Fact]
-    [Contract("BC-VEH-004")]
+    [Contract("BC-VEH-004", "ADR 0011")]
+    [NotVerifiedOnRealRiot("执行中下线的单照常做完、到成功（产品负责人，ADR 0011；实验室第 13 轮只看到它保持执行中，之后取消了）")]
     public async Task DisablingAVehicleDoesNotStopItsExecutingOrder()
     {
         Target.RequireWrites();

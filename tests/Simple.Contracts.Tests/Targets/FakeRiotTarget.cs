@@ -12,7 +12,7 @@ namespace Simple.Contracts.Tests.Targets;
 /// </summary>
 public sealed class FakeRiotTarget : RiotTarget
 {
-    public const string CallApiKey = "fake-riot-call-api-key-not-a-secret";
+    public const string FakeCallApiKey = "fake-riot-call-api-key-not-a-secret";
     public const string FakeUsername = "fake-admin";
     public const string FakePassword = "fake-admin-password";
 
@@ -22,7 +22,7 @@ public sealed class FakeRiotTarget : RiotTarget
     private FakeRiotTarget(WebApplicationFactory<Program> factory)
     {
         this.factory = factory;
-        session = SessionWith(new RiotOptions { BaseUrl = BaseUrl, CallApiKey = CallApiKey });
+        session = SessionWith(new RiotOptions { BaseUrl = BaseUrl, CallApiKey = FakeCallApiKey });
         Control = new FakeRiotControl(factory.CreateClient());
     }
 
@@ -58,15 +58,15 @@ public sealed class FakeRiotTarget : RiotTarget
     {
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(host =>
         {
-            host.UseSetting("FakeRiot:CallApiKey", CallApiKey);
+            host.UseSetting("FakeRiot:CallApiKey", FakeCallApiKey);
             host.UseSetting("FakeRiot:Username", FakeUsername);
             host.UseSetting("FakeRiot:Password", FakePassword);
             host.UseSetting("FakeRiot:Timing:Tick", "00:00:00.010");
             host.UseSetting("FakeRiot:Timing:QueueToStart", "00:00:00.050");
             host.UseSetting("FakeRiot:Timing:MinimumTravel", "00:00:00.300");
             host.UseSetting("FakeRiot:Timing:SpeedMillimetresPerSecond", "1000000");
-            // Long enough that a reading between arrival and SUCCESS is not a race on a busy CI machine.
-            host.UseSetting("FakeRiot:Timing:ArrivalToSuccess", "00:00:00.500");
+            // As on real RIoT (BC-STATE-003): long enough that a reading between arrival and SUCCESS is not a race.
+            host.UseSetting("FakeRiot:Timing:ArrivalToSuccess", "00:00:01");
             host.UseSetting("FakeRiot:Timing:EmergencyLock", "00:00:00.050");
             host.UseSetting("FakeRiot:Timing:EmergencyRelease", "00:00:00.200");
         });
@@ -75,7 +75,9 @@ public sealed class FakeRiotTarget : RiotTarget
 
     public override RiotSession SessionWith(RiotOptions options) => new(options, factory.Server.CreateHandler());
 
-    public override HttpClient CreateRawClient() => factory.CreateClient();
+    protected override string CallApiKey => FakeCallApiKey;
+
+    protected override HttpClient CreatePlainClient() => factory.CreateClient();
 
     public override async ValueTask DisposeAsync()
     {

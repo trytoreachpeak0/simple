@@ -235,7 +235,7 @@ dotnet run --project src/Simple.MesGateway
 
 ## 假 RIoT 与 RIoT 契约测试
 
-RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。它的行为有不少反直觉的地方，例如按 upperId 查一张不存在的单，真 RIoT 回 HTTP 200、业务码 `0`、不带 `result`，而不是 404。上一代的假 RIoT 在这里回 404，"RIoT 说没这张单"的处理逻辑因此在测试里全绿、到现场从来不触发（`research/riot-review.md` §4.3）。所以这次反过来做：在真 RIoT 上观测到的行为先写成契约测试（`tests/Simple.Contracts.Tests`），假 RIoT（`src/Simple.FakeRiot`）必须通过同一批测试，别的测试才能拿它当 RIoT 用。
+RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。它的行为有不少反直觉的地方，例如按 upperId 查一张不存在的单，真 RIoT 回 HTTP 200、业务码 `0`、不带 `result`，而不是 404。上一代的假 RIoT 在这里回 404，"RIoT 说没这张单"的处理逻辑因此在测试里全绿、到现场从来不触发（上一代服务端的 `cs#404`、`cs#432`）。所以这次反过来做：在真 RIoT 上观测到的行为先写成契约测试（`tests/Simple.Contracts.Tests`），假 RIoT（`src/Simple.FakeRiot`）必须通过同一批测试，别的测试才能拿它当 RIoT 用。
 
 ### 假 RIoT
 
@@ -251,7 +251,16 @@ RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。�
   | `POST /fake-riot/orders/{orderId}/hang?resultCode=` | 把执行中或暂停的单打成挂起（9），就像有人在车载屏上取消或松了抱闸 |
   | `PUT /fake-riot/maps/{mapId}/chargers/{stationId}` | 正文 `{"connected": false}`：拔掉充电器，之后去这个桩的充电单挂起、结果码 `407802` |
 
-- **已知和真 RIoT 不一样的地方**：不自动给没指定车的单派车（SDK 也不许不指定车）；充电单不展开进出点；充电失败直接挂起，不先重试两三轮；从暂停继续后不模拟约 16 秒的起步延迟；不会出现状态 8；不模拟读延迟。后续票用到哪一条再补，补之前先加契约。
+- **已知和真 RIoT 不一样的地方**，后续票用到哪一条再补，补之前先加契约：
+  - 不自动给没指定车的单派车（BC-ORDER-008；SDK 也不许不指定车）；
+  - 充电单不展开进出点；充电失败直接挂起，不先重试两三轮（第 24 轮）；
+  - 从暂停继续后不模拟约 16 秒的起步延迟（BC-ORDER-020）；
+  - 急停解除后故障码当即清空，真 RIoT 会残留 3～4 秒（BC-ORDER-020 第 7 条）；
+  - 电量 ≤10% 的车照样接单（BC-VEH-007），充电中的车照样派单（BC-ORDER-023、Q-044 里还有矛盾没解释）；
+  - upperId 超过 52 个字符一律回 `00002`：真实上限在 52 到 68 之间，没测出来（BC-ORDER-022），假 RIoT 取最严的一头；
+  - `00002` 总是"没建单"，没有"已经建了单却回 `00002`"那种情况，而真 RIoT 的 `00002` 要按"结果未知"对待；
+  - 从不出现失败（4）和状态 8；订单列表翻页途中总数不变（上一代 `cs#573`）；不模拟读延迟；
+  - 造不出网页手派、upperId 为空串的单（Q-043、`cs#617`）。
 
 ### 契约测试
 
@@ -283,12 +292,17 @@ dotnet test --project tests/Simple.Contracts.Tests --filter-trait "Contract=BC-O
      "mapsSharingAStationId": [25, 26],
      "sharedStationId": 1,
      "username": null,
-     "password": null
+     "password": null,
+     "runUntil": "2026-10-18T18:00:00+08:00"
    }
    ```
 
+   `runUntil` 是这一次运行到几点为止：过了这个时刻，或者写得比现在晚 12 小时以上，都拒绝。这样环境变量留在终端里，之后的运行（包括同一个终端里的 AI 会话）也不会悄悄连到真 RIoT。
+
 2. 设环境变量 `SIMPLE_CONTRACTS_RIOT_SETTINGS` 指向它，再跑测试。测试在第一次调用前把要调的地址打到标准错误上。
 
-拒绝的情形：`CI=true`；文件在某个 git 克隆里面（不只是本仓库，任何上层目录有 `.git` 都算）；缺 `url`、`callApiKey`、`vehicleKey`、`mapId`、`vehicleStation`、`reachableStation`。会建单、发订单命令、急停或上下线的契约在真 RIoT 上一律跳过，理由写在跳过信息里：这些操作要产品负责人逐次授权、现场有人。需要控制面的契约在真 RIoT 上也跳过。跳过不算通过。
+拒绝的情形：`CI=true`；文件在某个 git 克隆里面（不只是本仓库，任何上层目录有 `.git` 都算，经符号链接或目录联接指进去的也算）；`runUntil` 过期或太远；缺 `url`、`callApiKey`、`vehicleKey`、`mapId`、`vehicleStation`、`reachableStation`、`runUntil`。会建单、发订单命令、急停或上下线的契约在真 RIoT 上一律跳过，理由写在跳过信息里：这些操作要产品负责人逐次授权、现场有人。需要控制面的契约在真 RIoT 上也跳过，故意用错口令登录的那一条也跳过（可能锁账号）。跳过不算通过。
 
-**加一条契约**：先在 `research/riot-review.md` §5.1 或行为实验室里找到出处；写成测试，写明出处；对假 RIoT 跑，红了就改假 RIoT，直到绿。只读的契约在真 RIoT 上也能跑，写操作的开头调 `Target.RequireWrites()`。
+跳过只是第一道。对真 RIoT 发出的每个请求还要经过一层白名单：只放行 GET，以及登录和三个路线查询这四个只读的 POST，别的请求在发出前就被拦下，测试报错。所以哪条契约忘了写跳过，也只会失败，不会让车动。
+
+**加一条契约**：先找到出处，即行为实验室（`8005-agv-program` 仓库的 `rcs/riot-behavior-lab/`，`knowledge/behavioral-contracts.md` 里的 `BC-…` 编号、`hypotheses/open-questions.md` 里的 `Q-…` 编号、`evidence/` 下的轮次）或上一代的现场记录（`cs#…`）；写成测试，写明出处，只是有人这样说、没测过的另标 `[NotVerifiedOnRealRiot]`；对假 RIoT 跑，红了就改假 RIoT，直到绿。只读的契约在真 RIoT 上也能跑，写操作的开头调 `Target.RequireWrites()`。

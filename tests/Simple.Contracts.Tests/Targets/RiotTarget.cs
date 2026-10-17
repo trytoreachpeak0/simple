@@ -35,8 +35,24 @@ public abstract class RiotTarget : IAsyncDisposable
     /// <summary>A session at the same endpoint with other credentials, for the authentication contracts.</summary>
     public abstract RiotSession SessionWith(RiotOptions options);
 
-    /// <summary>A plain HTTP client at the target's endpoint, without credentials, for what the facade will not send.</summary>
-    public abstract HttpClient CreateRawClient();
+    /// <summary>
+    /// A plain HTTP client at the target's endpoint, for what the facade will
+    /// not send or does not show: without credentials, or with the call key.
+    /// </summary>
+    public HttpClient CreateRawClient(bool withCallKey = false)
+    {
+        var client = CreatePlainClient();
+        if (withCallKey)
+        {
+            client.DefaultRequestHeaders.Authorization = new("Bearer", CallApiKey);
+        }
+
+        return client;
+    }
+
+    protected abstract string CallApiKey { get; }
+
+    protected abstract HttpClient CreatePlainClient();
 
     /// <summary>The target's endpoint, for <see cref="SessionWith"/>.</summary>
     public abstract string BaseUrl { get; }
@@ -49,7 +65,7 @@ public abstract class RiotTarget : IAsyncDisposable
             return await FakeRiotTarget.StartAsync();
         }
 
-        var settings = RealRiotSettings.Load(path, Environment.GetEnvironmentVariable);
+        var settings = RealRiotSettings.Load(path, Environment.GetEnvironmentVariable, DateTimeOffset.Now);
         return new RealRiotTarget(settings);
     }
 

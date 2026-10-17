@@ -5,8 +5,10 @@ namespace Simple.Contracts.Tests.Targets;
 
 /// <summary>
 /// A real RIoT, read only: every contract that writes skips here
-/// (<see cref="RiotTarget.RequireWrites"/>). Before the first call it says
-/// on standard error which endpoint it is about to call.
+/// (<see cref="RiotTarget.RequireWrites"/>), and every request goes through
+/// <see cref="ReadOnlyGuard"/>, which refuses any write before it is sent.
+/// Before the first call it says on standard error which endpoint it is
+/// about to call.
 /// </summary>
 public sealed class RealRiotTarget : RiotTarget
 {
@@ -37,10 +39,11 @@ public sealed class RealRiotTarget : RiotTarget
 
     public override TimeSpan QuietWindow => TimeSpan.FromSeconds(10);
 
-    public override RiotSession SessionWith(RiotOptions options) => new(options);
+    protected override string CallApiKey => settings.CallApiKey;
 
-    public override HttpClient CreateRawClient() =>
-        new(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = new Uri(BaseUrl + "/") };
+    public override RiotSession SessionWith(RiotOptions options) => new(options, ReadOnlyGuard.ForRealRiot());
+
+    protected override HttpClient CreatePlainClient() => new(ReadOnlyGuard.ForRealRiot()) { BaseAddress = new Uri(BaseUrl + "/") };
 
     public override async ValueTask DisposeAsync() => await session.DisposeAsync();
 }

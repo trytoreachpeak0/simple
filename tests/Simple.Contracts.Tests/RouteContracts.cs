@@ -48,17 +48,28 @@ public sealed class RouteContracts : ContractTest
         Assert.Equal(-1, cost.CostsMm);
     }
 
+    /// <summary>
+    /// RIoT plans shortest routes, so the nearest end is the cheaper one.
+    /// The route cost is from the vehicle and runs 3 to 4 % above the edge
+    /// sum (BC-MAP-003 item 8), so the comparison needs the vehicle on its
+    /// station and two candidates clearly apart.
+    /// </summary>
     [Fact]
     [Contract("BC-MAP-003")]
     public async Task TheNearestEndAmongReachableCandidatesIsTheCheapest()
     {
-        var near = await Riot.Tasks.GetRouteCostAsync(Facts.MapId, Facts.ReachableStation, Facts.VehicleKey, Cancel);
-        var far = await Riot.Tasks.GetRouteCostAsync(Facts.MapId, Facts.SecondReachableStation, Facts.VehicleKey, Cancel);
-        var expected = near.CostsMm <= far.CostsMm ? Facts.ReachableStation : Facts.SecondReachableStation;
+        Assert.SkipUnless(
+            (await Riot.Tasks.GetVehicleCardAsync(Facts.VehicleKey, Cancel)).CurrentPosition == Facts.VehicleStation,
+            "车不在设置文件给的 vehicleStation 上。");
+        var first = await Riot.Tasks.GetRouteCostAsync(Facts.MapId, Facts.ReachableStation, Facts.VehicleKey, Cancel);
+        var second = await Riot.Tasks.GetRouteCostAsync(Facts.MapId, Facts.SecondReachableStation, Facts.VehicleKey, Cancel);
+        Assert.SkipWhen(
+            Math.Abs(first.CostsMm - second.CostsMm) < 0.1 * Math.Max(first.CostsMm, second.CostsMm),
+            $"两个候选站的路线代价差不到 10%（{first.CostsMm}、{second.CostsMm}），分不出谁近。");
 
         var nearest = await Riot.Tasks.QueryNearestEndAsync(Facts.MapId, Facts.VehicleStation, [Facts.ReachableStation, Facts.SecondReachableStation], Cancel);
 
-        Assert.Equal(expected, nearest);
+        Assert.Equal(first.CostsMm < second.CostsMm ? Facts.ReachableStation : Facts.SecondReachableStation, nearest);
     }
 
     /// <summary>One unreachable candidate makes the whole query a NullPointerException, 00002: it is not skipped.</summary>

@@ -13,6 +13,8 @@ public sealed class AuthenticationContracts : ContractTest
     [Contract("BC-AUTH-001")]
     public async Task AWrongPasswordIsHttp200WithBusinessCode2009()
     {
+        // A failed login against the real admin account might lock it; nobody knows.
+        Assert.SkipUnless(Target.Control is not null, "在真实 RIoT 上故意用错的口令登录 admin，可能锁账号，默认不做。");
         if (Facts.Username is null)
         {
             Assert.Skip("设置文件没有给出登录用户名。");

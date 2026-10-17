@@ -75,16 +75,20 @@ public sealed class OrderCreationContracts : OrderContractTest
     }
 
     /// <summary>
-    /// 69 and 71 characters were refused with HTTP 200 and 00002, and the
-    /// order was never made; 52 is the longest known to be accepted. The
-    /// exact limit (52 to 68) is unknown, so nothing may rely on more than 52.
+    /// The field saw three upperIds of 69 and 71 characters refused with HTTP
+    /// 200 and 00002, and those orders were never made; 52 is the longest
+    /// known to be accepted. That length is the cause is an inference: every
+    /// refused string also held a whole <c>BROKERX-</c> key and no accepted one
+    /// did. So the contract uses the refused shape itself,
+    /// <c>W2G-IDLE-BROKERX-&lt;32 hex&gt;-&lt;timestamp&gt;</c>, and the fake refuses
+    /// anything over 52, the safe side of the unknown limit.
     /// </summary>
     [Fact]
     [Contract("BC-ORDER-022", "cs#616")]
-    public async Task AnUpperIdOf69CharactersIsRefusedWith00002AndNoOrderIsMade()
+    public async Task AnUpperIdOfTheRefusedFieldShapeIsRefusedWith00002AndNoOrderIsMade()
     {
         Target.RequireWrites();
-        var tooLong = NewUpperId("long", 69).PadRight(69, '0');
+        var tooLong = $"W2G-IDLE-BROKERX-{Guid.NewGuid():N}-{DateTimeOffset.UtcNow:yyyyMMdd'T'HHmmssfff'Z'}";
 
         var refused = await Assert.ThrowsAsync<RiotApiException>(() => CreateMoveAsync(tooLong, Facts.ReachableStation));
 
