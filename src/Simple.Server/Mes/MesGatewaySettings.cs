@@ -21,7 +21,7 @@ public sealed class MesGatewaySettings
     /// read), even while the gateway answers: a read that hangs leaves the
     /// round where it was. Above the gateway's 30 s retry cap and the
     /// previous line's 30 s query timeout, so a slow but working MES does not
-    /// trip it.
+    /// trip it (ADR 0027).
     /// </summary>
     public TimeSpan StaleAfter { get; set; } = TimeSpan.FromSeconds(90);
 
