@@ -332,7 +332,7 @@ h1{font-size:18px;margin:0 0 4px}
   <aside class="side">
     <div class="box">
       <h1>车载屏原型（第九场，#53）</h1>
-      <div class="note">这是产品负责人 2026-10-18 确认定稿的那一版（第 38 版）。车载屏的结构以 ADR 0038 为准，本页是它的参考：每个场景屏上有哪些块、放什么、按钮在哪，可以在这里点着看。配色、尺寸和文字细节不由本页定，长相细节以实现时为准（调度的说明）。<br>本页不加载任何外部文件，字体用本机的系统字体；左边的场景和虚线按钮是模拟现场用的，不是车载屏的一部分。</div>
+      <div class="note">这是产品负责人 2026-10-18 确认定稿的那一版（第 38 版）。车载屏的结构以 ADR 0038 为准，本页是它的参考：每个场景屏上有哪些块、放什么、按钮在哪，可以在这里点着看。配色、尺寸和文字细节不由本页定，长相细节以实现时为准（主持会话补充；产品负责人没有就长相是否定稿表态）。<br>本页不加载任何外部文件，字体用本机的系统字体；左边的场景和虚线按钮是模拟现场用的，不是车载屏的一部分。</div>
     </div>
     <div class="box">
       <h2>场景</h2>
@@ -385,7 +385,7 @@ let timer=null;
 function fresh(){
   return {
     mode:'pickup', scene:'pickup_arrive',
-    station:{name:'派工待送区（N 区，固定站点）', short:'派工待送区', no:'159', fixed:true, doneWait:600},
+    station:{name:'派工待送区', short:'派工待送区', no:'159', fixed:true, doneWait:600},
     battery:72, charge:35,
     tasks:[
       {id:'T1',sublot:'B89-1012-H-1',type:'STAGING_TO_WIRE',dest:'N1-3',grp:'A',expected:2,slots:[],st:'待扫码',stop:'here'},
@@ -519,7 +519,7 @@ function bodyItems(){
   it.push(['抱闸', B.brake?'松开':'合上', B.brake?'bad':'']);
   it.push(['模式', B.manual?'手动':'自动', B.manual?'bad':'']);
   it.push(['定位', B.lost?'未定位':'已定位', B.lost?'bad':'']);
-  it.push(['车体故障', B.fault?'E1023 激光传感器异常':'没有', B.fault?'bad':'']);
+  it.push(['车体故障码', B.fault?'E1023 激光传感器异常':'没有', B.fault?'bad':'']);
   let order='没有', ok='';
   if(S.mode==='charging') order='充电中';
   else if(S.banner.startsWith('订单暂停了')) {order='挂起'; ok='warn'}
@@ -532,7 +532,7 @@ function bodyItems(){
   const ch=S.mode==='charging'||B.charging;
   it.push(['充电', ch?'在充电':'没在充电', B.charging&&S.mode!=='charging'?'bad':'']);
   it.push(['调度上下线', B.down?'已下线':'已上线', B.down?'bad':'']);
-  it.push(['车队调度系统', B.offline?'连不上车':'在线', B.offline?'bad':'']);
+  it.push(['在车队调度系统里', B.offline?'不在线':'在线', B.offline?'bad':'']);
   return it;
 }
 function bodyBtn(){
