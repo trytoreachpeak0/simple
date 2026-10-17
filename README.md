@@ -20,6 +20,7 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 | `src/Simple.MesGateway` | MES 网关，独立的小进程 |
 | `src/Simple.IoSimulator` | 车上 IO 模块的模拟器 |
 | `src/Simple.Protocol` | 服务端与车载终端之间的协议契约 |
+| `src/Simple.Logging` | 各程序共用的程序日志：写本机文件、限大小、脱敏、记下没接住的异常 |
 | `src/Simple.Cli` | `simple` 命令行：在本机一条命令起停整套系统、查看状态、事件和日志 |
 | `tests/` | 每个项目一个 `*.Tests` 测试项目，另有调度平台的行为契约测试 |
 | `scenarios/` | 统一格式的测试场景 |
@@ -79,21 +80,22 @@ dotnet test --solution simple.slnx
 ./simple up --terminals 3   # 再起 3 个无界面车载终端
 ./simple status      # 每个进程在不在、就绪没有，以及服务端自己的状态
 ./simple events --since 5m
-./simple logs server --tail 50
+./simple logs server --tail 50   # 服务端自己写的程序日志
+./simple logs server --output    # 服务端打到控制台上的输出（启动被拒的原因、崩溃时运行时打印的内容）
 ./simple down        # 正常停止本实例起的进程
 ./simple down --reset   # 再删掉本实例的库
 ```
 
-从别的 shell 调用写成 `pwsh -File <clone>/simple.ps1 up`。每个命令都接受 `--json`：标准输出上只有一个 JSON 对象 `{exitCode, error, result}`，进度提示写在标准错误上。退出码是固定的，`./simple --help` 列出全表：0 成功；1 意外错误；`down` 之后仍有进程在跑；或进程停后程序目录里仍有文件被占用（`up`、`down`，state 文件保留，再跑一次即可）；2 参数或设置不对；3 编译失败；4 有部件没就绪（已起的会被停掉）；5 实例没在运行；6 实例不健康、只起了一半，或是从另一个 clone 起的；7 另一条 simple 命令正在操作这个实例；8 有进程超时没停下、被强杀；9 连不上 SQL Server，或删库、删服务端钥匙失败。
+从别的 shell 调用写成 `pwsh -File <clone>/simple.ps1 up`。每个命令都接受 `--json`：标准输出上只有一个 JSON 对象 `{exitCode, error, result}`，进度提示写在标准错误上。退出码是固定的，`./simple --help` 列出全表：0 成功；1 意外错误；`down` 之后仍有进程在跑；或进程停后程序目录里仍有文件被占用（`up`、`down`，state 文件保留，再跑一次即可）；2 参数或设置不对；3 编译失败；4 有部件没就绪（已起的会被停掉）；5 实例没在运行（`logs`：没有这份日志，或还没有程序日志）；6 实例不健康、只起了一半，或是从另一个 clone 起的；7 另一条 simple 命令正在操作这个实例；8 有进程超时没停下、被强杀；9 连不上 SQL Server，或删库、删服务端钥匙失败。
 
 目前系统里有三种部件，按这个顺序起：MES 网关（背后接假 MES）、服务端（启动参数里带上网关的地址）、无界面车载终端（`--terminals N` 个，默认 0）。`simple status` 除了列出每个进程，还有一行写服务端最近从网关看到了什么（网关通不通、最近一轮是第几轮、几点读的、多少行），以及服务端看到的每台车载终端。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪，以及起之前要准备什么；以后加 IO 模拟器、假 RIoT，都是往这里加一项。部件按登记的顺序一个一个起，前一个全部就绪才起下一个，因为后面的部件可能要用前面的：服务端第一次去网关取数时网关已经在了，车载终端要先从服务端的状态接口读到证书指纹。
 
 - **实例**：不写 `--instance` 时，实例名取 clone 所在文件夹的名字（例如 `29-simple-cli`），所以两个 worktree 各起一套互不干扰。库名是 `Simple_<实例名>`；端口按实例名在 20000～29999 之间选一段，被占用就往后挪，同一个实例每次拿到的端口一般不变。
-- **起**：`up` 先 `dotnet build` 各部件的项目，再把编译输出复制到 `artifacts/simple/<实例名>/` 下运行，所以系统起着的时候照样可以重新编译、跑测试，不会碰到文件被占用。部件是独立的进程，命令行返回后它们继续运行；每个进程的输出写进自己的日志文件。重复执行 `up` 不会起第二套。
+- **起**：`up` 先 `dotnet build` 各部件的项目，再把编译输出复制到 `artifacts/simple/<实例名>/` 下运行，所以系统起着的时候照样可以重新编译、跑测试，不会碰到文件被占用。部件是独立的进程，命令行返回后它们继续运行；每个进程都被告知自己的程序日志目录（`--Simple:Logs:Directory`，见"程序日志"一节），打到控制台上的输出另外写进一个文件。重复执行 `up` 不会起第二套。
 - **停**：`down` 只停本实例的状态文件里记下的进程（按进程号和进程启动时间核对，绝不按进程名），用 Ctrl+Break 让它们正常退出，服务端因此会在事件记录里留下 `server.stopped`；30 秒还没退出才强杀，并以退出码 8 报告。
 - **库**：默认用本机 LocalDB `(localdb)\MSSQLLocalDB`。要用本机别的命名实例（CI 用 `.\SQLEXPRESS`），把不带库名的连接串放进 `SIMPLE_SQLSERVER`。命令行拒绝别的机器上的 SQL Server、本机的默认实例（`.`、`localhost`、`MSSQLSERVER`）、带端口的写法（带端口时 SqlClient 不看实例名，本机 1433 上通常是默认实例）、故障转移伙伴，以及带 SQL 登录用户名或密码的连接串（连接串会记在状态文件里，所以本机只用 Windows 集成认证）；起服务端和删库之前，还会连上去问服务器自己是谁（`SERVERPROPERTY` 的 `IsLocalDB`、`InstanceName`、`MachineName`），只接受 LocalDB，或本机上名字不是 `MSSQLSERVER` 的命名实例，这样别名和端口转发也绕不过去。`down --reset` 只删 `Simple_<实例名>` 这一个库，删在 `up` 当时用的那个 SQL Server 上。
 - **只起本机的假系统**：命令行没有任何指向真实系统的开关。起部件时会去掉环境里以 `Simple__`、`ConnectionStrings__`、`ASPNETCORE_`、`Kestrel__` 开头的变量和 `DOTNET_ENVIRONMENT`，免得外面设好的真实地址、连接串、监听地址或运行环境被带进本机系统；部件总是以 Production 运行。
-- **文件放在哪**：状态文件和日志在 `%LOCALAPPDATA%\simple\instances\<实例名>\`（可用环境变量 `SIMPLE_HOME` 换位置）；日志在 `down` 之后保留，下次 `up` 时覆盖。每个车载终端的本机配置在同一目录的 `processes\terminal-<n>\terminal.json`，`up` 时按服务端的状态重新写。
+- **文件放在哪**：状态文件和日志在 `%LOCALAPPDATA%\simple\instances\<实例名>\`（可用环境变量 `SIMPLE_HOME` 换位置）。每个进程的程序日志在 `logs\<进程名>\`，由程序自己限制大小，跨多次 `up` 保留，`simple logs <进程名>` 显示它（还没有程序日志或日志是空的，例如进程在日志起来之前就拒绝启动了，命令以退出码 5 说明这一点，并提示改用 `--output`）；控制台输出在 `logs\<进程名>.log`，`down` 之后保留，下次 `up` 时覆盖，`simple logs <进程名> --output` 显示它（`simple logs build --output` 是最近一次编译的输出）。每个车载终端的本机配置在同一目录的 `processes\terminal-<n>\terminal.json`，`up` 时按服务端的状态重新写。
 - **车载终端**：`terminal-1`、`terminal-2`…分别自报车辆 `vehicle-1`、`vehicle-2`…，连本实例服务端的终端端点。`./simple status` 末尾按服务端看到的样子列出每台车载终端：连着没有、上报新不新鲜、最新鲜的那份上报最多是几秒前写的、版本、屏上文字。每个终端在测试模式下开一个只听回环地址的测试输入（地址就是 `status` 里该进程的 URL），用来代替车旁的人：
   - `POST /test/keyboard`，正文 `{"text": "LOT123\r"}`：像扫码枪那样敲键盘，每个回车结束一次扫码；
   - `POST /test/press`，正文 `{"button": "<按钮名>"}`：按屏上的一个按钮；
@@ -133,6 +135,17 @@ dotnet test --solution simple.slnx
 - **远端的服务端钥匙在本机级存储里**：经 SSH 密钥登录的会话用不了按用户加密的 Windows 存储（DPAPI），所以 `simple remote up` 让服务端把钥匙放在那台机器的本机级密钥存储里。**本机级的钥匙只有管理员能建、能删**，所以远端的 SSH 账户必须是那台机器的本机管理员。`simple remote down --reset` 和 `forget` 按 `up` 时的记录把它删掉。
 
 为什么手写这一层：现成的同步工具（Mutagen、Syncthing 等）都是持续同步型的，说不出某一次运行看到的是哪个状态的树，"同步到一半就开跑"正是要避免的；`simple remote` 只是 git、ssh、scp 之上的一层薄胶水，"这次跑的是哪棵树"由提交号保证。
+
+## 程序日志
+
+服务端、MES 网关、车载终端（WPF 外壳和无界面版）、IO 模拟器都用 Serilog 写程序日志（ADR 0034），接在 `Microsoft.Extensions.Logging` 后面，代码里照常用 `ILogger`。程序日志是程序自己的调试记录，不是事件记录：统计和"谁按了什么"仍然只查事件记录（ADR 0019）。
+
+- **写在哪**：本机的 `<目录>\<程序>.log`，满了另起 `<程序>_001.log`、`<程序>_002.log`……，超过保留个数就删最旧的。目录默认是 `%ProgramData%\Simple\<程序>\logs`（程序是 `Server`、`MesGateway`、`OnboardTerminal`、`IoSimulator`），每个文件默认 10 MB、保留 10 个，所以一个程序最多约占 100 MB。三项都能改：`Simple:Logs:Directory`、`Simple:Logs:FileSizeLimitBytes`、`Simple:Logs:RetainedFileCount`。服务端和 MES 网关和其他设置一样读（命令行、环境变量、`Simple:SettingsFile`）；车载终端和 IO 模拟器只从命令行读，例如 `--Simple:Logs:Directory=D:\logs`。一个文件写到上限时，正在写的那一条仍然完整写完。同一台机器上同一个程序跑两份时（例如上面"再起一套"服务端），给它们不同的目录，否则两份日志会交错在同一组文件里；`simple up` 已经给每个进程单独一个目录。
+- **每次启动的第一行**：`<程序> started (version …, process …)`，即使程序别的什么都没说，也能从日志里看出它起过几次、是哪个版本。
+- **凭据不进日志**：脱敏在日志这一层统一做，控制台输出和文件都经过它。属性名表明是凭据的值（名字里含 `Password`、`Token`、`Secret`、`ApiKey`、`PairingCode` 等，或以 `Key` 结尾，例如 `SigningKey`；`ServerKeyName` 这种中间带 Key 的不算）整个换成 `***`。文字里的凭据只去掉值、保留名字：连接串的 `Password=`/`Pwd=`（带引号 `"a""b"`、ODBC 大括号 `{a;b}` 的整体去掉）、`--Simple:...:Password=x` 和 `--Simple:...:Password x`、查询串的 `api_key=`、JSON 的 `"password": "…"`、对象里的 `Password = …`、网址里的 `user:密码@`（密码里有没转义的 `@` 也一样）、`Authorization:` 后面的凭据（不论 Bearer、Basic、Token、ApiKey 哪种方案）、`Cookie:`/`Set-Cookie:` 的整个值、JWT、PEM 私钥（缺了 END 行的从 BEGIN 去到结尾）、GitHub 令牌、"配对码 123456"。异常的消息和内层异常也一样。值在连接串里取到下一个 `;`（可以含空格），在别处取到空格或 `&`、`,`、`;`、`)` 这类分隔符为止，所以 `password=x&user=y` 只去掉 `x`。配对码只在写明是配对码时去掉，不按"像不像 6 位数"去猜：批次号、机台号、站点号常常就是一串数字，要在日志里照常看得到；单独的 `Basic`、`Bearer` 后面跟的是普通单词时也不去掉。宁可多去掉一点：被去掉一个无害的值，这行日志照样能用；漏一个凭据就不行。
+- **不拖慢写日志的线程**：脱敏在写日志的那个线程上做（WPF 外壳里就是界面线程），所以每条规则都只从词首起匹配，耗时随文字长度线性增长，不会因为一个长值卡上几分钟。常见的 1 MB 长串在 1 秒左右做完；最费时的形状（例如 1 MB 的 `a=a=a=…`，每处都要查一次名字）在 1.5 秒左右。每条规则各有 1 秒的时限，所以一条日志最坏要等"规则条数 × 1 秒"；超时的那条日志，正文整段换成 `*** (not shown: redacting it took too long)`，宁可看不到也不漏。脱敏本身出了别的错时，正文换成 `*** (not shown: the log line could not be redacted)`，这一行照样写出、不和下一行粘在一起。
+- **没接住的异常**：进程级的未处理异常记成 `FTL` 后进程照常结束；没人等的失败任务记成 `ERR`，不改变它原来的处理；WPF 界面线程上没接住的异常记成 `FTL`（带完整堆栈）后照常交给 WPF，程序随之结束时再记一句 `The exception above, which nothing in the UI thread caught, ends the process`，不重复堆栈。
+- **拒绝启动时**：服务端、MES 网关、无界面车载终端因设置不对拒绝启动时（退出码 2），原因除了写在标准错误上，也写进程序日志（`FTL`），因为作为 Windows 服务运行时标准错误没人看。只有日志设置本身不对时（上限不是正整数）写不进日志，只在标准错误上。IO 模拟器遇到这种情况弹框说明后退出；车载终端的 WPF 外壳不因日志设置起不来，改用默认上限并在日志里写一行警告。
 
 ## 只运行服务端
 

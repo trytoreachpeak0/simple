@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Simple.Cli/Simple.Cli.csproj" />
     <Project Path="src/Simple.IoSimulator/Simple.IoSimulator.csproj" />
+    <Project Path="src/Simple.Logging/Simple.Logging.csproj" />
     <Project Path="src/Simple.MesGateway/Simple.MesGateway.csproj" />
     <Project Path="src/Simple.OnboardTerminal.Core/Simple.OnboardTerminal.Core.csproj" />
     <Project Path="src/Simple.OnboardTerminal.Headless/Simple.OnboardTerminal.Headless.csproj" />
@@ -13,9 +14,11 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Simple.Cli.Tests/Simple.Cli.Tests.csproj" />
+    <Project Path="tests/Simple.Logging.Tests/Simple.Logging.Tests.csproj" />
     <Project Path="tests/Simple.MesGateway.Tests/Simple.MesGateway.Tests.csproj" />
     <Project Path="tests/Simple.OnboardTerminal.Core.Tests/Simple.OnboardTerminal.Core.Tests.csproj" />
     <Project Path="tests/Simple.OnboardTerminal.Headless.Tests/Simple.OnboardTerminal.Headless.Tests.csproj" />
+    <Project Path="tests/Simple.OnboardTerminal.Tests/Simple.OnboardTerminal.Tests.csproj" />
     <Project Path="tests/Simple.Server.Riot.Tests/Simple.Server.Riot.Tests.csproj" />
     <Project Path="tests/Simple.Server.Tests/Simple.Server.Tests.csproj" />
   </Folder>

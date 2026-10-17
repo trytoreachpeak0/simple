@@ -77,7 +77,15 @@ public sealed class InstanceStore(string home)
 
     public string LogDirectory(string instance) => Path.Combine(InstanceDirectory(instance), "logs");
 
+    /// <summary>What a process wrote to its console (stdout and stderr), or the last build's output; written anew at each up.</summary>
     public string LogPath(string instance, string processName) => Path.Combine(LogDirectory(instance), $"{processName}.log");
+
+    /// <summary>
+    /// A process's program log directory (ADR 0034), given to it as
+    /// <c>--Simple:Logs:Directory</c>. The program limits its size itself and
+    /// keeps it from one up to the next.
+    /// </summary>
+    public string ProgramLogDirectory(string instance, string processName) => Path.Combine(LogDirectory(instance), processName);
 
     /// <summary>A process's own files, for example an onboard terminal's settings. Kept after down; up writes them anew.</summary>
     public string ProcessDirectory(string instance, string processName) => Path.Combine(InstanceDirectory(instance), "processes", processName);

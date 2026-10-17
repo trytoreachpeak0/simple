@@ -55,14 +55,16 @@ public sealed class GatewaySettingsTests
     [InlineData("--urls=http://0.0.0.0:5190", "urls 'http://0.0.0.0:5190' is not a loopback address")]
     [InlineData("--Simple:Mes:Source=Oracle", "Simple:Mes:Source 'Oracle' is not a known MES source")]
     [InlineData("--Simple:SettingsFile=no-such-settings.json", "Simple:SettingsFile")]
+    [InlineData("--Simple:Logs:RetainedFileCount=0", "Simple:Logs:RetainedFileCount '0' is not a whole number above 0")]
     public async Task TheGatewayRefusesToStartAndNamesTheSetting(string argument, string message)
     {
+        var logDirectory = Path.Combine(Path.GetTempPath(), "simple-gateway-tests", Guid.NewGuid().ToString("N"));
         var start = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Simple.MesGateway.exe" : "Simple.MesGateway"))
         {
             WorkingDirectory = AppContext.BaseDirectory,
             RedirectStandardError = true,
             RedirectStandardOutput = true,
-            ArgumentList = { argument },
+            ArgumentList = { argument, $"--Simple:Logs:Directory={logDirectory}" },
         };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(60));
@@ -77,12 +79,30 @@ public sealed class GatewaySettingsTests
             Assert.Equal(2, process.ExitCode);
             Assert.Contains("The MES gateway refuses to start", error, StringComparison.Ordinal);
             Assert.Contains(message, error, StringComparison.Ordinal);
+            // Run as a service, nobody reads standard error: the reason is in the program log
+            // too, unless the log settings themselves are what is wrong.
+            if (!argument.StartsWith("--Simple:Logs:", StringComparison.Ordinal))
+            {
+                var log = string.Concat(Simple.Logging.ProgramLog.Files(logDirectory).Select(File.ReadAllText));
+                Assert.Contains("[FTL] Simple.Logging.ProgramLog: The MES gateway refuses to start", log, StringComparison.Ordinal);
+                Assert.Contains(message, log, StringComparison.Ordinal);
+            }
         }
         finally
         {
             if (!process.HasExited)
             {
                 process.Kill(entireProcessTree: true);
+            }
+
+            try
+            {
+                Directory.Delete(logDirectory, recursive: true);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Best effort: a file just closed can still be held for a moment
+                // (a virus scan, or a process that has it loaded), and a leftover temp folder does no harm.
             }
         }
     }

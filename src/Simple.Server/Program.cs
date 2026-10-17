@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Simple.Logging;
 using Simple.Server.Configuration;
 using Simple.Server.Events;
 using Simple.Server.Mes;
@@ -20,13 +21,26 @@ if (!string.IsNullOrEmpty(settingsFile))
     var path = Path.GetFullPath(settingsFile);
     if (!File.Exists(path))
     {
-        await Console.Error.WriteLineAsync($"The server refuses to start: Simple:SettingsFile '{path}' does not exist.");
-        return 2;
+        return await ProgramLog.RefuseToStartAsync(
+            "Server", builder.Configuration, null, $"The server refuses to start: Simple:SettingsFile '{path}' does not exist.");
     }
 
     builder.Configuration.AddJsonFile(path, optional: false, reloadOnChange: false);
     builder.Configuration.AddEnvironmentVariables();
     builder.Configuration.AddCommandLine(args);
+}
+
+// The program log (ADR 0034): a size-limited file under Simple:Logs:Directory
+// (default %ProgramData%\Simple\Server\logs) and the console, both redacted;
+// unhandled exceptions are recorded too.
+try
+{
+    builder.Logging.AddProgramLog("Server", builder.Configuration, console: true);
+}
+catch (InvalidDataException e)
+{
+    await Console.Error.WriteLineAsync($"The server refuses to start: {e.Message}");
+    return 2;
 }
 
 builder.Services.AddSingleton(TimeProvider.System);
@@ -57,10 +71,12 @@ builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 
 // Building already reads the settings (Kestrel binds from them), so an
-// invalid configuration can surface here as well as at start.
+// invalid configuration can surface here as well as at start. The app is
+// disposed only after a refusal is in its log.
+WebApplication? app = null;
 try
 {
-    var app = builder.Build();
+    app = builder.Build();
 
     app.UseRouting();
     app.Use(OnboardEndpoint.KeepToOwnListener);
@@ -72,25 +88,30 @@ try
     app.MapStatusEndpoints();
     app.MapEventEndpoints();
 
-    await app.RunAsync();
+    await app.StartAsync();
+    await app.WaitForShutdownAsync();
     return 0;
 }
 catch (System.Security.Cryptography.CryptographicException e)
 {
     // For example a machine key store the account may not create keys in.
     var settings = builder.Configuration;
-    await Console.Error.WriteLineAsync(
+    return await ProgramLog.RefuseToStartAsync(
+        "Server",
+        builder.Configuration,
+        app?.Services,
         $"The server refuses to start: it cannot open or create its terminal certificate key {settings[ServerSettings.ServerKeyNameKey] ?? $"Simple-Server-{settings[ServerSettings.InstanceKey]}"} "
         + $"in the {settings[ServerSettings.ServerKeyStoreKey] ?? "User"} key store: {e.Message}");
-    return 2;
 }
 catch (OptionsValidationException e)
 {
-    await Console.Error.WriteLineAsync("The server refuses to start: the configuration is invalid.");
-    foreach (var failure in e.Failures)
+    return await ProgramLog.RefuseToStartAsync(
+        "Server", builder.Configuration, app?.Services, "The server refuses to start: the configuration is invalid.", e.Failures.ToList());
+}
+finally
+{
+    if (app is not null)
     {
-        await Console.Error.WriteLineAsync($"  - {failure}");
+        await app.DisposeAsync();
     }
-
-    return 2;
 }
