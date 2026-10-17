@@ -50,6 +50,19 @@ public sealed class RemoteCommandTests
         Assert.Equal(["test", "--solution", "simple.slnx", "--results-directory", "D:/elsewhere"], chosen.Arguments);
     }
 
+    /// <summary>
+    /// Restore there is locked as on CI (Directory.Build.props), whatever the
+    /// machine's own environment: a stale lock file passed there and failed CI
+    /// with NU1004 (#76, #80).
+    /// </summary>
+    [Fact]
+    public void CommandsThereRestoreAsOnCi()
+    {
+        var environment = RemoteRun.RunEnvironment(new DirectoryMachine("unused"));
+
+        Assert.Equal("true", environment["CI"]);
+    }
+
     [Theory]
     [InlineData("up", true, true)]
     [InlineData("down", false, false)]

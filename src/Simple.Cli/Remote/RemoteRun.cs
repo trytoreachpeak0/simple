@@ -301,7 +301,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         Arguments = plan.CommandLine,
         Slot = plan.Slot,
         machine.Slots,
-        Environment = RunEnvironment(),
+        Environment = RunEnvironment(machine),
         Run = run,
         WaitSeconds = (int)Wait.TotalSeconds,
         AliveSeconds = Alive.TotalSeconds,
@@ -310,10 +310,14 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         machine.Sweep,
     };
 
-    private Dictionary<string, string> RunEnvironment()
+    /// <summary>Set for every command run on <paramref name="machine"/>, on top of the machine's own.</summary>
+    internal static Dictionary<string, string> RunEnvironment(IRemoteMachine machine)
     {
         var environment = new Dictionary<string, string>
         {
+            // Restore as on CI (Directory.Build.props): a stale
+            // packages.lock.json fails there with NU1004, not first on CI (#80).
+            ["CI"] = "true",
             // The remote machine may run another language; output is judged
             // by people and sessions reading English.
             ["DOTNET_CLI_UI_LANGUAGE"] = "en",
