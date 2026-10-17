@@ -50,7 +50,7 @@ public static class RemoteCommand
         {
             outcome = Outcome.Fail(
                 ExitCodes.Usage,
-                environment.RemoteAlias is null ? $"{SshMachine.Variable} is not set: set it to the SSH alias of the remote machine, for example simple01." : refusal);
+                environment.RemoteAlias is null ? $"{SshMachine.Variable} is not set: set it to the alias of the remote machine in your SSH configuration (Host <alias> in ~/.ssh/config)." : refusal);
         }
         else if (command == "exec" && arguments.Count == 0)
         {
@@ -60,8 +60,16 @@ public static class RemoteCommand
         {
             machine ??= new SshMachine(environment.RemoteAlias!);
             var instance = SimpleCommand.InstanceOf(parse, environment.Repository);
-            outcome = await new RemoteRun(environment.Repository, instance, machine, environment.Out, environment.Error)
-                .RunAsync(command, arguments, json, cancellationToken);
+            try
+            {
+                outcome = await new RemoteRun(environment.Repository, instance, machine, environment.Out, environment.Error)
+                    .RunAsync(command, arguments, json, cancellationToken);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                // As for every simple command: with --json, stdout stays one JSON object.
+                outcome = Outcome.Fail(ExitCodes.Unexpected, e.ToString());
+            }
         }
 
         return outcome.Write(json, environment.Out, environment.Error);

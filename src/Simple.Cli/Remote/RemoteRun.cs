@@ -69,7 +69,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
     private async Task<Outcome> RunCoreAsync(string command, IReadOnlyList<string> arguments, bool json, CancellationToken cancellationToken)
     {
         originUrl = (await Git.TryAsync(repository, ["remote", "get-url", "origin"], cancellationToken)) is { ExitCode: 0 } origin
-            ? origin.Output.Trim()
+            ? WithoutCredentials(origin.Output.Trim())
             : string.Empty;
         var checkout = RemotePlan.For(command, arguments, string.Empty, json).Checkout;
         Snapshot? snapshot = null;
@@ -230,6 +230,17 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         }
     }
 
+    /// <summary>
+    /// The origin as the remote side gets it: without a user name or password
+    /// in the URL, which would otherwise travel in the request, show in the
+    /// remote command line and be printed into the run's output. The remote
+    /// side only fetches; the repository it fetches is public.
+    /// </summary>
+    public static string WithoutCredentials(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.UserInfo.Length > 0
+            ? new UriBuilder(uri) { UserName = string.Empty, Password = string.Empty }.Uri.AbsoluteUri
+            : url;
+
     /// <summary>A line the remote side printed outside the command, already marked as its own.</summary>
     private void PassOn(string line)
     {
@@ -324,7 +335,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            Scratch.Delete(directory);
         }
     }
 
@@ -353,9 +364,17 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
                 output,
                 line =>
                 {
-                    if (line.StartsWith(marker, StringComparison.Ordinal))
+                    // The command's last output may not end its line, and then
+                    // the result follows it on the same line.
+                    var at = line.IndexOf(marker, StringComparison.Ordinal);
+                    if (at >= 0)
                     {
-                        using var document = JsonDocument.Parse(line[marker.Length..]);
+                        if (at > 0)
+                        {
+                            error(line[..at]);
+                        }
+
+                        using var document = JsonDocument.Parse(line[(at + marker.Length)..]);
                         result = document.RootElement.Clone();
                     }
                     else
@@ -406,7 +425,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            Scratch.Delete(directory);
         }
     }
 

@@ -145,7 +145,7 @@ public static partial class SimpleCommand
             system.UpAsync(
                 instance,
                 environment.SqlServer,
-                new UpOptions(parse.GetValue(terminals), parse.GetValue(breakAway), StoreOf(parse.GetValue(keyStore))),
+                UpOptionsOf(parse),
                 TimeSpan.FromSeconds(parse.GetValue(timeout)),
                 cancellationToken)));
 
@@ -249,9 +249,16 @@ public static partial class SimpleCommand
         return outcome.Write(json, environment.Out, environment.Error);
     }
 
-    /// <summary>The validated value of --server-key-store.</summary>
-    private static ServerKeyStore StoreOf(string? text) =>
-        ServerKey.TryParse(text, out var store) ? store : throw new ArgumentException($"'{text}' is neither User nor Machine.", nameof(text));
+    /// <summary>What a parsed <c>up</c> asks for.</summary>
+    public static UpOptions UpOptionsOf(ParseResult parse)
+    {
+        ArgumentNullException.ThrowIfNull(parse);
+        var text = parse.GetValue<string>(ServerKeyStoreOption);
+        return new UpOptions(
+            parse.GetValue<int>("--terminals"),
+            parse.GetValue<bool>(BreakAwayOption),
+            ServerKey.TryParse(text, out var store) ? store : throw new ArgumentException($"'{text}' is neither User nor Machine.", nameof(parse)));
+    }
 
     public static string ExitCodesOf(string command) => $"Exit codes {string.Join(", ", CommandExitCodes[command])}.";
 

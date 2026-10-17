@@ -37,9 +37,9 @@ public static class ChildProcess
     /// <param name="breakAway">
     /// Start it outside the job the command line runs in. Only simple remote
     /// up asks for it: over SSH the command line runs in the session's job,
-    /// which kills every process in it when the session ends (on simple01,
-    /// 2026-10-17: KILL_ON_JOB_CLOSE | BREAKAWAY_OK), and the components must
-    /// outlive it. Everywhere else they stay in the caller's job, so a job
+    /// which kills every process in it when the session ends (on the remote
+    /// machine, 2026-10-17: KILL_ON_JOB_CLOSE | BREAKAWAY_OK), and the
+    /// components must outlive it. Everywhere else they stay in the caller's job, so a job
     /// that cleans up after a run (a CI runner's) still catches a component
     /// a test failed to stop.
     /// </param>

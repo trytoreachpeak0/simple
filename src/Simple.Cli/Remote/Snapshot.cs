@@ -56,8 +56,8 @@ public sealed record Snapshot(string Commit, string Head, int Uncommitted)
         }
         finally
         {
-            File.Delete(index);
-            File.Delete(index + ".lock");
+            Scratch.Delete(index);
+            Scratch.Delete(index + ".lock");
         }
     }
 

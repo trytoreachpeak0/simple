@@ -149,12 +149,58 @@ public sealed class RemoteCommandTests
     }
 
     [Fact]
+    public async Task AnUnexpectedFailureStillEndsInOneJsonObject()
+    {
+        using var stdout = new StringWriter();
+        // A real directory, so the failure is the machine's and not a missing clone's.
+        var environment = Environment with { Repository = Path.GetTempPath(), Out = stdout, RemoteMachine = new FailingMachine() };
+
+        var exitCode = await SimpleCommand.InvokeAsync(["remote", "status", "--json"], environment, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExitCodes.Unexpected, exitCode);
+        using var output = JsonDocument.Parse(stdout.ToString());
+        Assert.Equal(ExitCodes.Unexpected, output.RootElement.GetProperty("exitCode").GetInt32());
+        Assert.Contains("the machine broke", output.RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("https://someone:secret@github.com/owner/repo.git", "https://github.com/owner/repo.git")]
+    [InlineData("https://github.com/owner/repo.git", "https://github.com/owner/repo.git")]
+    [InlineData(@"C:\clones\origin.git", @"C:\clones\origin.git")]
+    [InlineData("", "")]
+    public void TheOriginIsHandedOnWithoutCredentials(string url, string handedOn)
+    {
+        Assert.Equal(handedOn, RemoteRun.WithoutCredentials(url));
+    }
+
+    /// <summary>A machine whose every call fails with something simple remote does not expect.</summary>
+    private sealed class FailingMachine : IRemoteMachine
+    {
+        public string Name => "failing";
+
+        public string Root => "C:/nowhere";
+
+        public int Slots => 1;
+
+        public IReadOnlyDictionary<string, string> Environment { get; } = new Dictionary<string, string>();
+
+        public Task<int> RunAsync(string script, Action<string> onOutput, Action<string> onError, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("the machine broke");
+
+        public Task SendAsync(string file, string directory, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("the machine broke");
+
+        public Task ReceiveAsync(string directory, string localParent, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("the machine broke");
+    }
+
+    [Fact]
     public async Task ExecWithoutACommandIsAnError()
     {
         using var stderr = new StringWriter();
 
         var exitCode = await SimpleCommand.InvokeAsync(
-            ["remote", "exec"], Environment with { Error = stderr, RemoteAlias = "simple01" }, TestContext.Current.CancellationToken);
+            ["remote", "exec"], Environment with { Error = stderr, RemoteAlias = "remote-test" }, TestContext.Current.CancellationToken);
 
         Assert.Equal(ExitCodes.Usage, exitCode);
         Assert.Contains("needs a command", stderr.ToString(), StringComparison.Ordinal);

@@ -33,9 +33,51 @@ public sealed class GitSandbox : IAsyncDisposable
 
     public string RemoteRoot => Path.Combine(Directory, "remote");
 
+    private const string Prefix = "simple-remote-test-";
+
     public static async Task<GitSandbox> CreateAsync(CancellationToken cancellationToken)
     {
-        var sandbox = new GitSandbox(System.IO.Directory.CreateTempSubdirectory("simple-remote-test-").FullName);
+        RemoveLeftovers();
+        var sandbox = new GitSandbox(System.IO.Directory.CreateTempSubdirectory(Prefix).FullName);
+        try
+        {
+            await sandbox.SetUpAsync(cancellationToken);
+        }
+        catch
+        {
+            await sandbox.DisposeAsync();
+            throw;
+        }
+
+        return sandbox;
+    }
+
+    /// <summary>
+    /// Sandboxes of test runs that were killed before they could clean up
+    /// (a test host stopped by a timeout runs no disposal). No run takes an
+    /// hour, so one older than that is nobody's.
+    /// </summary>
+    private static void RemoveLeftovers()
+    {
+        foreach (var directory in new DirectoryInfo(Path.GetTempPath()).EnumerateDirectories(Prefix + "*"))
+        {
+            if (directory.LastWriteTimeUtc < DateTime.UtcNow.AddHours(-1))
+            {
+                try
+                {
+                    Delete(directory.FullName);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    // Still held by something: the next run tries again.
+                }
+            }
+        }
+    }
+
+    private async Task SetUpAsync(CancellationToken cancellationToken)
+    {
+        var sandbox = this;
         System.IO.Directory.CreateDirectory(sandbox.Clone);
         System.IO.Directory.CreateDirectory(sandbox.RemoteRoot);
         await Git.RunAsync(sandbox.Directory, ["init", "--quiet", "--bare", "--initial-branch=main", sandbox.Origin], cancellationToken);
@@ -57,7 +99,6 @@ public sealed class GitSandbox : IAsyncDisposable
         await sandbox.GitAsync(cancellationToken, "remote", "add", "origin", sandbox.Origin);
         await sandbox.GitAsync(cancellationToken, "push", "--quiet", "origin", "main");
         await sandbox.GitAsync(cancellationToken, "fetch", "--quiet", "origin");
-        return sandbox;
     }
 
     public void Write(string path, string text)
@@ -79,25 +120,40 @@ public sealed class GitSandbox : IAsyncDisposable
         return (await GitAsync(cancellationToken, "rev-parse", "HEAD")).Trim();
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        // git marks pack files read-only.
-        foreach (var file in System.IO.Directory.EnumerateFiles(Directory, "*", SearchOption.AllDirectories))
-        {
-            File.SetAttributes(file, FileAttributes.Normal);
-        }
+        Delete(Directory);
+        return ValueTask.CompletedTask;
+    }
 
+    /// <summary>
+    /// Deletes a sandbox. A process a test started (git, the agent's pwsh)
+    /// may still be letting go of a file, so it tries for 10 s; after that it
+    /// throws, and the test fails instead of leaving the sandbox silently.
+    /// </summary>
+    private static void Delete(string directory)
+    {
         for (var attempt = 0; ; attempt++)
         {
             try
             {
-                System.IO.Directory.Delete(Directory, recursive: true);
+                if (!System.IO.Directory.Exists(directory))
+                {
+                    return;
+                }
+
+                // git marks pack files read-only.
+                foreach (var file in System.IO.Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+                {
+                    File.SetAttributes(file, FileAttributes.Normal);
+                }
+
+                System.IO.Directory.Delete(directory, recursive: true);
                 return;
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException && attempt < 10)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException && attempt < 50)
             {
-                // A process the test started may still be letting go of a file.
-                await Task.Delay(200);
+                Thread.Sleep(200);
             }
         }
     }

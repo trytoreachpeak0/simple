@@ -40,6 +40,20 @@ public sealed class RemoteRunTests
     }
 
     [Fact]
+    public async Task OutputWithoutAFinalNewlineKeepsTheExitCode()
+    {
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+
+        var (exitCode, _, stderr) = await RunAsync(
+            sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "[Console]::Error.Write('partial'); exit 8");
+
+        Assert.True(exitCode == 8, stderr);
+        Assert.Contains(Lines(stderr), line => line == "partial");
+        Assert.DoesNotContain("##simple-remote", stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SendsOnlyWhatTheRemoteCacheLacks()
     {
         await using var sandbox = await GitSandbox.CreateAsync(Cancel);
