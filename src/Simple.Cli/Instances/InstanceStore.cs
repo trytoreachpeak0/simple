@@ -47,6 +47,9 @@ public sealed class InstanceStore(string home)
 
     public string LogPath(string instance, string processName) => Path.Combine(LogDirectory(instance), $"{processName}.log");
 
+    /// <summary>A process's own files, for example an onboard terminal's settings. Kept after down; up writes them anew.</summary>
+    public string ProcessDirectory(string instance, string processName) => Path.Combine(InstanceDirectory(instance), "processes", processName);
+
     /// <summary>Where a component's build output is copied to, so a rebuild in the clone never meets a locked file.</summary>
     public static string BinDirectory(string repository, string instance, string component) =>
         Path.Combine(RunDirectory(repository, instance), component);

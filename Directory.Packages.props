@@ -7,6 +7,13 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Server ↔ onboard terminal protocol (ADR 0025): gRPC on Kestrel,
+         contracts generated from .proto files in Simple.Protocol. -->
+    <PackageVersion Include="Google.Protobuf" Version="3.36.2" />
+    <PackageVersion Include="Grpc.AspNetCore.Server" Version="2.84.0" />
+    <PackageVersion Include="Grpc.Core.Api" Version="2.84.0" />
+    <PackageVersion Include="Grpc.Net.Client" Version="2.84.0" />
+    <PackageVersion Include="Grpc.Tools" Version="2.84.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.13" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.13" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.13" />
@@ -29,7 +36,7 @@
          use, and before Simple.Server.Riot calls RIoT at run time (ADR 0028). -->
     <PackageVersion Include="Microsoft.Kiota.Bundle" Version="1.22.2" />
     <PackageVersion Include="Microsoft.Windows.CsWin32" Version="0.3.363" />
-    <!-- Retries with backoff and jitter (ADR 0008): the MES gateway's rounds and the server's polling of the gateway. -->
+    <!-- Retries with backoff and jitter (ADR 0008): the MES gateway's rounds, the server's polling of the gateway and the onboard terminal's reconnects. -->
     <PackageVersion Include="Polly.Core" Version="8.8.0" />
     <!-- From trytoreachpeak0/riot-sdk on GitHub Packages (nuget.config, ADR 0028).
          Brings RIoT.Sdk.Core and RIoT.Sdk.Generated at the same version. -->
