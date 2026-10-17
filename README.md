@@ -107,13 +107,15 @@ dotnet test --solution simple.slnx
 
 ```
 ./simple remote build
-./simple remote test --filter-class "*CliTests"     # 后面的参数原样交给 dotnet test（MTP 选项）
+./simple remote test                                # 全量测试；后面的参数原样交给 dotnet test（MTP 选项）
+./simple remote test --project tests/Simple.Cli.Tests --filter-class "*CommandLineTests"   # 只跑一个类时要带 --project
 ./simple remote up                                  # 远端起整套系统，返回后系统继续运行
 ./simple remote status                              # 还有 down、events、logs，转给远端那份 simple
 ./simple remote exec -- dotnet --info               # 在远端的工作树里跑任意命令
 ./simple remote forget                              # 停掉、删库、删远端目录；删 worktree 之前用
 ```
 
+- **只跑一个类时用 `--project`**：`simple remote test` 默认对整个解决方案跑 `dotnet test --solution simple.slnx`。这时按类过滤（`--filter-class`），其余测试项目一个测试都匹配不到，各自以 8（一个测试都没跑到）结束，整次运行也就以 8 结束。带上 `--project <测试项目路径>`（必须在本仓库里），就只跑那一个项目，跑通了以 0 结束。
 - **跑的恰好是本机这棵树**：每次先把工作树做成一个快照提交，包括没提交的改动和还没 `git add` 的新文件，按 `.gitignore` 排除被忽略的文件；用的是一份临时索引，不动真正的索引和工作区。作者、时间都是固定值，所以同一棵树每次得到同一个提交号；工作树干净时就用 `HEAD` 本身。远端检出这个确切的提交再跑，开头和结尾各打印一行：提交号、基于哪个 `HEAD`、几个未提交的文件、哪台机器。
 - **怎么送**：只把 `origin/main` 之后的部分（本地没推送的提交加快照）打成 git bundle，经 scp 送到远端的裸仓库缓存；远端缺前置对象时从 origin 拉一次，还不行就送完整历史。远端已经有这个提交就什么都不送。不往 GitHub 推任何分支。快照里新增了超过 10 MiB 的文件时列出来并拒绝发送。
 - **远端的目录**：`C:\simple-remote\` 下有 `repo.git`（所有实例共用的对象缓存）、`wt\<实例名>`（每个 worktree 一个检出目录）、`runs\<实例名>`（每次运行的结果，保留最近 20 次）、`locks`、`slots`。实例名与本机相同，所以远端的 `simple up` 也按本机那套实例规则分开端口和库。**注意**：本机上两个文件夹同名的 clone（例如两台机器上都叫 `repo`）到了远端是同一个实例、同一个目录，本机"实例是从另一个 clone 起的"那道保护在远端不起作用，后跑的会改掉先跑的检出；这种情况下用 `--instance` 给其中一个起别的名字。检出时清掉残留文件，但保留被忽略的 `bin/`、`obj/`、`artifacts/`，编译是增量的。

@@ -28,7 +28,8 @@ public sealed record RemotePlan(
         return command switch
         {
             "build" => new("dotnet", ["build", "simple.slnx", "-nologo", .. arguments], Checkout: true, Slot: true, KeepsResults: true, RunsSimple: false),
-            "test" => new("dotnet", ["test", "--solution", "simple.slnx", .. ResultsArguments(arguments, runDirectory), .. arguments], true, true, true, false),
+            // --project (RemoteCommand) runs one project in place of the solution.
+            "test" => new("dotnet", ["test", .. Target(arguments), .. ResultsArguments(arguments, runDirectory), .. arguments], true, true, true, false),
             "exec" when arguments.Count > 0 => new(arguments[0], arguments.Skip(1).ToList(), true, true, true, false),
             "exec" => throw new RemoteException(ExitCodes.Usage, "simple remote exec needs a command: simple remote exec -- <command> [arguments]."),
             // up builds, so it takes a slot like the other heavy commands; the
@@ -51,6 +52,9 @@ public sealed record RemotePlan(
 
     private static RemotePlan SimpleCli(IReadOnlyList<string> arguments, bool checkout, bool slot) =>
         new("pwsh", ["-NoProfile", "-NonInteractive", "-File", "simple.ps1", .. arguments], checkout, slot, KeepsResults: false, RunsSimple: true);
+
+    private static string[] Target(IReadOnlyList<string> arguments) =>
+        arguments.Contains(RemoteCommand.ProjectOption, StringComparer.OrdinalIgnoreCase) ? [] : ["--solution", "simple.slnx"];
 
     /// <summary>TRX results into the run directory, unless the caller chose where results go.</summary>
     private static string[] ResultsArguments(IReadOnlyList<string> arguments, string runDirectory) =>

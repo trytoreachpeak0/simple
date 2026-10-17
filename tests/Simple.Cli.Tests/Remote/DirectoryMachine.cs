@@ -36,7 +36,9 @@ public sealed class DirectoryMachine(string root) : IRemoteMachine
     {
         // As sshd does with DefaultShell pwsh: the command line SSH would send,
         // run by an outer pwsh -c, which turns every non-zero exit code into 1.
-        var start = new ProcessStartInfo("pwsh");
+        // And, as sshd gives each session, a console of its own, in the
+        // machine's code page (936 on a Chinese Windows), not this test's.
+        var start = new ProcessStartInfo("pwsh") { CreateNoWindow = true };
         foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-c", SshMachine.Command(script) })
         {
             start.ArgumentList.Add(argument);

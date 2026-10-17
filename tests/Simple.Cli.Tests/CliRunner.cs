@@ -56,6 +56,9 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // Through a pipe the command line writes UTF-8 (Program.cs).
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
             UseShellExecute = false,
             WorkingDirectory = Repository,
         };

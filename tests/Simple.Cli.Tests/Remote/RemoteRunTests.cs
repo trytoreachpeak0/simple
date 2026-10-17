@@ -40,6 +40,20 @@ public sealed class RemoteRunTests
     }
 
     [Fact]
+    public async Task ChineseOutputComesBackAsItWasWritten()
+    {
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+
+        // 已连接服务端, written as code points so no file encoding is involved.
+        var (exitCode, stdout, stderr) = await RunAsync(
+            sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "-join ([char[]](0x5DF2, 0x8FDE, 0x63A5, 0x670D, 0x52A1, 0x7AEF))");
+
+        Assert.True(exitCode == 0, stderr);
+        Assert.Equal(["已连接服务端"], Lines(stdout));
+    }
+
+    [Fact]
     public async Task OutputWithoutAFinalNewlineKeepsTheExitCode()
     {
         await using var sandbox = await GitSandbox.CreateAsync(Cancel);
@@ -294,6 +308,8 @@ public sealed class RemoteRunTests
 
         Assert.True(exitCode == 0, stderr);
         Assert.Equal(["fake simple down --reset"], Lines(stdout));
+        // Removing the directories must not show up as serialized progress.
+        Assert.DoesNotContain("CLIXML", stderr, StringComparison.Ordinal);
         Assert.False(Directory.Exists(sandbox.RemoteWorktree()));
         Assert.False(Directory.Exists(Path.Combine(sandbox.RemoteRoot, "runs", sandbox.Instance)));
         Assert.NotEqual(0, (await Git.TryAsync(sandbox.Clone, ["rev-parse", "--verify", "--quiet", Snapshot.Ref(sandbox.Instance)], Cancel)).ExitCode);

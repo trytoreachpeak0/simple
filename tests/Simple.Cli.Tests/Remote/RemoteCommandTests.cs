@@ -149,6 +149,76 @@ public sealed class RemoteCommandTests
     }
 
     [Fact]
+    public void OneProjectReplacesTheSolution()
+    {
+        var plan = RemotePlan.For("test", ["--project", "tests/Simple.Cli.Tests", "--filter-class", "*X"], "C:/simple-remote/runs/i/r", json: false);
+
+        Assert.Equal(
+            ["test", "--results-directory", "C:/simple-remote/runs/i/r/TestResults", "--report-xunit-trx", "--project", "tests/Simple.Cli.Tests", "--filter-class", "*X"],
+            plan.Arguments);
+    }
+
+    [Fact]
+    public void AProjectMustBeInsideTheClone()
+    {
+        var repository = CliEnvironment.FindRepository(AppContext.BaseDirectory);
+
+        Assert.Equal("tests/Simple.Cli.Tests", RemoteCommand.ProjectPath(repository, "tests/Simple.Cli.Tests"));
+        Assert.Equal("tests/Simple.Cli.Tests", RemoteCommand.ProjectPath(repository, @"tests\Simple.Cli.Tests\"));
+        Assert.Equal("tests/Simple.Cli.Tests/Simple.Cli.Tests.csproj", RemoteCommand.ProjectPath(repository, "tests/Simple.Cli.Tests/Simple.Cli.Tests.csproj"));
+        Assert.Null(RemoteCommand.ProjectPath(repository, "../elsewhere"));
+        Assert.Null(RemoteCommand.ProjectPath(repository, "tests/../../elsewhere"));
+        Assert.Null(RemoteCommand.ProjectPath(repository, Path.Combine(repository, "tests", "Simple.Cli.Tests")));
+        Assert.Null(RemoteCommand.ProjectPath(repository, "tests/NoSuch.Tests"));
+        Assert.Null(RemoteCommand.ProjectPath(repository, "README.md"));
+        Assert.Null(RemoteCommand.ProjectPath(repository, "."));
+    }
+
+    [Fact]
+    public async Task AProjectOutsideTheCloneIsRefusedAsJson()
+    {
+        using var stdout = new StringWriter();
+        var environment = Environment with { Repository = CliEnvironment.FindRepository(AppContext.BaseDirectory), Out = stdout, RemoteAlias = "remote-test" };
+
+        var exitCode = await SimpleCommand.InvokeAsync(["remote", "test", "--project", "../elsewhere", "--json"], environment, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        using var output = JsonDocument.Parse(stdout.ToString());
+        Assert.Contains("--project '../elsewhere'", output.RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ThroughAPipeTheCommandLineWritesUtf8()
+    {
+        // Sessions read simple's output through pipes as UTF-8. A Chinese
+        // Windows console's code page (936) would garble every Chinese
+        // character: screen texts, test names. The error echoes the argument.
+        // A console of its own, in the machine's code page, as the shell a
+        // session runs simple from has.
+        var start = new System.Diagnostics.ProcessStartInfo("dotnet")
+        {
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
+            UseShellExecute = false,
+        };
+        foreach (var argument in new[] { Path.Combine(AppContext.BaseDirectory, "simple.dll"), "status", "--instance", "已连接 服务端", "--json" })
+        {
+            start.ArgumentList.Add(argument);
+        }
+
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var stdout = await process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        await process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
+        await process.WaitForExitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExitCodes.Usage, process.ExitCode);
+        Assert.Contains("'已连接 服务端'", JsonDocument.Parse(stdout).RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AnUnexpectedFailureStillEndsInOneJsonObject()
     {
         using var stdout = new StringWriter();

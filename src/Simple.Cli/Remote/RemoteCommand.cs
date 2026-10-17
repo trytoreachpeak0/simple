@@ -8,7 +8,9 @@ public static class RemoteCommand
     private static readonly Dictionary<string, string> Descriptions = new()
     {
         ["build"] = "Build the solution there (dotnet build simple.slnx). Further arguments go to dotnet build.",
-        ["test"] = "Run the tests there (dotnet test --solution simple.slnx). Further arguments are MTP options, for example --filter-class \"*CliTests\". "
+        ["test"] = "Run the tests there (dotnet test --solution simple.slnx). Further arguments are MTP options. "
+            + "To run one class, also name its project, or every other project ends with 8: "
+            + "simple remote test --project tests/Simple.Cli.Tests --filter-class \"*CommandLineTests\". "
             + "TRX results come back unless --results-directory is given.",
         ["exec"] = "Run any command there in the instance's worktree: simple remote exec -- <command> [arguments]. "
             + "Files it writes to %SIMPLE_REMOTE_RUN% come back.",
@@ -20,6 +22,33 @@ public static class RemoteCommand
         ["forget"] = "Stop the instance there, drop its database and delete its worktree and runs (simple down --reset, then remove). "
             + "Use it before deleting the worktree here.",
     };
+
+    public const string ProjectOption = "--project";
+
+    /// <summary>
+    /// The project as the remote side gets it: relative to the clone, with
+    /// forward slashes. Null when it is outside the clone or does not exist:
+    /// the remote tree is this one, so what is not here is not there.
+    /// </summary>
+    public static string? ProjectPath(string repository, string project)
+    {
+        ArgumentNullException.ThrowIfNull(repository);
+        ArgumentNullException.ThrowIfNull(project);
+        if (project.Length == 0 || Path.IsPathRooted(project))
+        {
+            return null;
+        }
+
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repository));
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(root, project)));
+        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || !(Directory.Exists(full) || (File.Exists(full) && full.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))))
+        {
+            return null;
+        }
+
+        return Path.GetRelativePath(root, full).Replace('\\', '/');
+    }
 
     public static Command Create(CliEnvironment environment)
     {
@@ -33,6 +62,15 @@ public static class RemoteCommand
         foreach (var name in RemotePlan.Commands)
         {
             var command = new Command(name, $"{Descriptions[name]} Ends with that command's exit code, or: {SimpleCommand.ExitCodesOf("remote")}") { TreatUnmatchedTokensAsErrors = false };
+            if (name == "test")
+            {
+                command.Add(new Option<string?>(ProjectOption)
+                {
+                    Description = "Run only this test project, a path inside the clone (tests/Simple.Cli.Tests). Use it to run one class: "
+                        + "across the whole solution every other project finds no test and ends with 8, so the run does too.",
+                });
+            }
+
             command.SetAction((parse, cancellationToken) => RunAsync(parse, environment, name, cancellationToken));
             remote.Add(command);
         }
@@ -45,12 +83,29 @@ public static class RemoteCommand
         var json = parse.GetValue<bool>(SimpleCommand.JsonOption);
         var arguments = parse.UnmatchedTokens.ToList();
         Outcome outcome;
+        string? projectRefusal = null;
+        if (command == "test" && parse.GetValue<string?>(ProjectOption) is { } project)
+        {
+            if (ProjectPath(environment.Repository, project) is { } relative)
+            {
+                arguments.InsertRange(0, [ProjectOption, relative]);
+            }
+            else
+            {
+                projectRefusal = $"{ProjectOption} '{project}' is not a test project or a project file inside this clone ({environment.Repository}).";
+            }
+        }
+
         var machine = environment.RemoteMachine;
         if (machine is null && SshMachine.Refusal(environment.RemoteAlias) is { } refusal)
         {
             outcome = Outcome.Fail(
                 ExitCodes.Usage,
                 environment.RemoteAlias is null ? $"{SshMachine.Variable} is not set: set it to the alias of the remote machine in your SSH configuration (Host <alias> in ~/.ssh/config)." : refusal);
+        }
+        else if (projectRefusal is not null)
+        {
+            outcome = Outcome.Fail(ExitCodes.Usage, projectRefusal);
         }
         else if (command == "exec" && arguments.Count == 0)
         {

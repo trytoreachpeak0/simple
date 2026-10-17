@@ -15,6 +15,18 @@
 param([Parameter(Mandatory)][string] $Request)
 
 $ErrorActionPreference = 'Stop'
+# Progress records would reach the command line as CLIXML on stderr.
+$ProgressPreference = 'SilentlyContinue'
+# The session's console, which the command shares, writes UTF-8, which is how
+# the command line reads it. In the machine's code page (936 on a Chinese
+# Windows) every Chinese character would arrive garbled.
+try {
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+    [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+}
+catch [IO.IOException] {
+    # No console to set: then nothing shares one either.
+}
 
 # The file is named after the hash of its content. A copy that does not match
 # (cut short, edited by hand) does not run; the line ##simple-remote-agent-missing
