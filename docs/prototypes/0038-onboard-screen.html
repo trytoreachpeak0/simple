@@ -1,0 +1,1159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>车载屏原型</title>
+<style>
+/* 布局：左栏是场景目录与模拟动作，右栏是一块仿真车载屏（横屏触摸屏） */
+:root{
+  --bg:#eef1f4; --panel:#ffffff; --ink:#1b2430; --muted:#5d6b7a; --line:#d5dce4;
+  --accent:#1f6feb; --ok:#1a7f4b; --warn:#b26a00; --bad:#c62f2f;
+  --screen:#0f1720; --screen-2:#18232f; --screen-ink:#e8eef5; --screen-muted:#8fa1b3; --screen-line:#2a3a4a;
+  --font:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#11161c; --panel:#1a2129; --ink:#e3e9ef; --muted:#93a2b1; --line:#2c3743;
+  --accent:#5b9cff; --ok:#3fb67a; --warn:#e0a03a; --bad:#ff6b6b; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#11161c; --panel:#1a2129; --ink:#e3e9ef; --muted:#93a2b1; --line:#2c3743;
+  --accent:#5b9cff; --ok:#3fb67a; --warn:#e0a03a; --bad:#ff6b6b; color-scheme:dark}
+html,body{background:var(--bg);color:var(--ink);font-family:var(--font)}
+.wrap{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px;display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px;max-width:1500px;margin:0 auto}
+@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr)}.device{order:-1}.screen{font-size:13px}}
+@media (max-width:640px){.main{grid-template-columns:minmax(0,1fr)}}
+h1{font-size:18px;margin:0 0 4px}
+.note{font-size:12.5px;color:var(--muted);line-height:1.6}
+.side{display:flex;flex-direction:column;gap:12px;min-width:0}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.box h2{font-size:13px;margin:0;color:var(--muted);letter-spacing:.04em}
+.scenes{display:flex;flex-direction:column;gap:2px}
+.scenes .grp{font-size:11.5px;color:var(--muted);margin-top:6px}
+.scenes button{all:unset;cursor:pointer;padding:5px 8px;border-radius:5px;font-size:13.5px}
+.scenes button:hover{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.scenes button.on{background:var(--accent);color:#fff}
+.scenes button:focus-visible{outline:2px solid var(--accent)}
+.sim{display:flex;flex-wrap:wrap;gap:6px}
+.sim button,.tog button{font:inherit;font-size:13px;padding:6px 10px;border-radius:6px;border:1px dashed var(--muted);background:transparent;color:var(--ink);cursor:pointer}
+.sim button:disabled{opacity:.35;cursor:not-allowed}
+.sim button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.tog{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:13px}
+.tog button.on{background:var(--accent);color:#fff;border-style:solid;border-color:var(--accent)}
+.state{font-family:var(--mono);font-size:11.5px;white-space:pre-wrap;line-height:1.55;color:var(--ink);max-height:280px;overflow:auto}
+.log{font-size:12px;line-height:1.55;max-height:160px;overflow:auto;color:var(--muted)}
+/* 车载屏 */
+.device{background:#0a0e13;border-radius:18px;padding:14px;box-shadow:0 8px 30px rgba(0,0,0,.25);min-width:0}
+.screen{position:relative;background:var(--screen);color:var(--screen-ink);border-radius:6px;min-height:36em;max-width:100%;overflow:hidden;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;font-size:clamp(11px,1.15vw,16px)}
+.top{display:flex;align-items:center;gap:1.2em;padding:.6em 1em;background:var(--screen-2);border-bottom:1px solid var(--screen-line)}
+.top .car{font-family:var(--mono);font-weight:700;font-size:1.25em}
+.top .doing{flex:1;font-weight:500}
+.top .bat,.top .conn{font-size:.9em;color:var(--screen-muted)}
+.dot{display:inline-block;width:.6em;height:.6em;border-radius:50%;background:#3fb67a;margin-right:.3em;vertical-align:middle}
+.body{display:flex;flex-wrap:wrap;gap:.4em;padding:.5em 1em;border-bottom:1px solid var(--screen-line);background:#121c26}
+.bs{font-size:.88em;padding:.25em .7em;border-radius:99px;border:1.5px solid #2f4a3c;color:#9fd8b8;white-space:nowrap}
+.bs.warn{border-color:#8a6a1e;color:#ffd58a;background:#2c2208}
+.bs.bad{border-color:#a33;color:#ffc4c4;background:#3a1515;font-weight:700}
+.route{display:flex;flex-wrap:wrap;gap:.35em;align-items:center;font-size:.95em}
+.route .lbl{color:var(--screen-muted);margin-right:.2em}
+.route .st{padding:.25em .65em;border-radius:8px;border:1.5px solid var(--screen-line)}
+.route .st.now{border-color:#5b9cff;background:#1d3a66;font-weight:700}
+.route .st.after{border-style:dashed;color:var(--screen-muted)}
+.route .ar{color:var(--screen-muted)}
+.banner{padding:.55em 1em;font-weight:500}
+.banner.warn{background:#5a3d00;color:#ffd58a}
+.banner.bad{background:#5c1717;color:#ffc4c4}
+.banner:empty{display:none!important}
+.main{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:1em;padding:1em;min-height:0}
+.left{display:flex;flex-direction:column;gap:.8em;min-height:0;min-width:0}
+.instr{background:var(--screen-2);border:1px solid var(--screen-line);border-radius:6px;padding:.9em 1em}
+.instr .big{font-size:1.75em;font-weight:700;line-height:1.3}
+.instr .sub{color:var(--screen-muted);margin-top:.3em}
+.instr .qbtns{display:flex;gap:.6em;margin-top:.8em;flex-wrap:wrap}
+.cd{display:flex;align-items:baseline;gap:.8em}
+.cd .t{font-family:var(--mono);font-size:2em;font-weight:700;font-variant-numeric:tabular-nums}
+.cd .s{color:var(--screen-muted)}
+.tasks{display:flex;flex-direction:column;gap:.35em;overflow:auto;min-height:0}
+.task{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.7em;align-items:center;padding:.7em .9em;border:2px solid var(--screen-line);border-radius:10px;min-height:3.2em}
+.task.pick{cursor:pointer;touch-action:manipulation}
+.task.pick .ck{width:1.6em;height:1.6em;border-radius:50%;border:2px solid #8fa1b3;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
+.task.pick.sel{border-color:#ff6b6b;background:#3a1515}
+.task.pick.sel .ck{background:#ff6b6b;border-color:#ff6b6b;color:#fff}
+.task.pick.dis{opacity:.4;cursor:not-allowed}
+.task .sl{font-family:var(--mono);font-weight:700}
+.task .meta{color:var(--screen-muted);font-size:.88em}
+.chip{font-size:.82em;padding:.15em .55em;border-radius:99px;border:1px solid currentColor;white-space:nowrap}
+.c-wait{color:#8fa1b3}.c-load{color:#5b9cff}.c-done{color:#3fb67a}.c-cxl{color:#ff8a8a}.c-to{color:#e0a03a}
+.slots{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:.8em;min-width:0;align-content:start}
+.col{display:flex;flex-direction:column;gap:.4em}
+.side-lbl{font-size:.85em;color:var(--screen-muted)}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.4em}
+.slot{border:2px solid var(--screen-line);border-radius:10px;padding:.5em;min-height:5em;display:flex;flex-direction:column;gap:.15em;font-size:.85em}
+.slot .no{font-family:var(--mono);font-weight:700;font-size:1.15em}
+.slot.loaded{background:#123524;border-color:#2d6a4a}
+.slot.reserved{border-style:dashed;border-color:#5b9cff}
+.slot.open{background:#1d3a66;border-color:#5b9cff;box-shadow:0 0 0 2px #5b9cff inset}
+.slot.off{opacity:.45;background:repeating-linear-gradient(45deg,transparent 0 6px,#2a3a4a 6px 8px)}
+.slot.faulty{border-color:#ff6b6b;background:#3a1515}
+.bar{display:flex;gap:.6em;padding:.7em 1em;border-top:1px solid var(--screen-line);background:var(--screen-2);align-items:center;flex-wrap:wrap}
+.bar .sp{flex:1}
+.sb{font:inherit;font-size:1.15em;font-weight:500;padding:.7em 1.4em;border-radius:12px;border:2px solid #3a4c5e;background:#223141;color:var(--screen-ink);cursor:pointer;min-height:3.2em;min-width:6em;touch-action:manipulation;user-select:none}
+.sb:active:not(:disabled){transform:scale(.97);filter:brightness(1.35)}
+.sb:disabled{opacity:.35;cursor:not-allowed}
+.sb.go{background:#1a7f4b;border-color:#1a7f4b;font-weight:700}
+.sb.danger{background:#7a2323;border-color:#7a2323}
+.sb.ghost{background:transparent}
+.sb.busy::after{content:" · 处理中"}
+.overlay{position:absolute;inset:0;background:rgba(10,14,19,.86);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:.6em;text-align:center;padding:2em}
+.overlay .big{font-size:1.8em;font-weight:700}
+.overlay[hidden]{display:none}
+.dlg{position:absolute;inset:0;background:rgba(5,8,12,.7);display:flex;align-items:center;justify-content:center}
+.dlg[hidden]{display:none}
+.dlg .card{background:var(--screen-2);border:2px solid var(--screen-line);border-radius:14px;padding:1.4em 1.5em;width:min(36em,92%);display:flex;flex-direction:column;gap:.8em}
+.dlg .card h3{margin:0;font-size:1.5em}
+.dlg .card .say{font-size:1.1em;line-height:1.6}
+.dlg .card ul{margin:.3em 0;padding-left:1.2em;font-family:var(--mono)}
+.dlg .row .sb{flex:1}
+.dlg label{display:flex;gap:.6em;align-items:center;padding:.45em .5em;border:1px solid var(--screen-line);border-radius:5px;cursor:pointer}
+.dlg input{width:1.3em;height:1.3em}
+.dlg .row{display:flex;gap:.6em;justify-content:flex-end;flex-wrap:wrap}
+.code{font-family:var(--mono);font-size:3.2em;letter-spacing:.15em;font-weight:700}
+.flash{position:absolute;left:50%;top:4.2em;transform:translateX(-50%);background:#5c1717;color:#ffd0d0;padding:.5em 1em;border-radius:6px;font-weight:500}
+.flash[hidden]{display:none}
+@media (prefers-reduced-motion: no-preference){.slot.open{transition:background .2s}}
+/* 每种场景一套摆法：.screen 带 k-取货 / k-卸货 / k-路上 / k-空闲 / k-充电 / k-出问题 / k-停用 之一 */
+.screen{row-gap:.7em;column-gap:1.1em;padding:0 1.1em .9em;align-content:start;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr)}
+.main{display:contents}
+.top,.banner{margin-inline:-1.1em;padding-inline:1.1em}
+.top{grid-area:top}.banner{grid-area:banner;display:flex;align-items:center;gap:1em}.banner .sp{flex:1}
+.route{grid-area:route}.instr{grid-area:instr}.cd{grid-area:cd}.taskp{grid-area:tasks;min-height:0;display:flex;flex-direction:column;gap:.4em}
+.slotp{grid-area:slots;display:flex;flex-direction:column;gap:.5em;align-self:start}
+.hero{grid-area:hero}.trip{grid-area:trip}
+.screen>.body{grid-area:body}
+.k-pickup{grid-template-rows:auto auto auto auto auto minmax(0,1fr) auto;grid-template-areas:"top top" "banner banner" "route route" "instr slots" "cd slots" "tasks slots" "body body"}
+.k-unload{grid-template-rows:auto auto auto auto minmax(0,1fr) auto;grid-template-areas:"top top" "banner banner" "route route" "instr slots" "tasks slots" "body body"}
+.k-move{grid-template-rows:auto auto auto minmax(0,1fr) auto;grid-template-areas:"top top" "banner banner" "hero slots" "trip slots" "body body"}
+.k-idle,.k-charge{grid-template-rows:auto auto auto minmax(0,1fr) auto;grid-template-areas:"top top" "banner banner" "hero slots" ". slots" "body body"}
+.k-alert{grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-areas:"top top" "hero slots" "tasks slots" "body body"}
+.k-disabled{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto minmax(0,1fr) auto;grid-template-areas:"top" "banner" "hero" "slots" "body"}
+.k-disabled .slots{grid-template-columns:repeat(2,minmax(0,1fr))}
+.k-disabled .slot{font-size:1em;padding:.5em .7em}
+/* 大块的主信息 */
+.hero{background:var(--screen-2);border:2px solid var(--screen-line);border-radius:12px;padding:1em 1.2em;display:flex;flex-direction:column;gap:.4em}
+.hero .k{color:var(--screen-muted);font-size:.95em}
+.hero .v{font-size:2em;font-weight:700;line-height:1.25}
+.hero .sub{color:var(--screen-muted)}
+.hero.alert{background:#3a1212;border-color:#a33}
+.hero.alert .v{color:#ffd0d0}
+.hero .acts{display:flex;gap:.6em;flex-wrap:wrap;margin-top:.4em}
+.batt{height:1.6em;border-radius:8px;background:#0b1118;border:2px solid var(--screen-line);position:relative;overflow:hidden;margin-top:.3em}
+.batt i{position:absolute;inset:0 auto 0 0;background:#1a7f4b}
+.batt b{position:absolute;top:-2px;bottom:-2px;width:2px;background:#e0a03a}
+.batt-l{display:flex;justify-content:space-between;font-size:.8em;color:var(--screen-muted)}
+/* 路上：竖着的行程 */
+.trip{display:flex;flex-direction:column;gap:0;padding:.2em .2em .2em .4em}
+.trip .tl{color:var(--screen-muted);font-size:.9em;margin-bottom:.3em}
+.trip .stp{display:grid;grid-template-columns:1.4em minmax(0,1fr);gap:.6em;align-items:start}
+.trip .dot2{width:.9em;height:.9em;border-radius:50%;border:2px solid #8fa1b3;margin-top:.35em;justify-self:center}
+.trip .stp.now .dot2{background:#5b9cff;border-color:#5b9cff;box-shadow:0 0 0 4px rgba(91,156,255,.25)}
+.trip .stp.after .dot2{border-style:dashed}
+.trip .line{border-left:2px solid var(--screen-line);margin-left:.68em;height:.9em}
+.trip .nm{font-weight:500}.trip .stp.now .nm{font-size:1.15em;font-weight:700}
+.trip .ds{color:var(--screen-muted);font-size:.88em}
+.ph{display:flex;align-items:center;gap:.5em;flex-wrap:wrap}
+.ph .tt{color:var(--screen-muted);font-size:.9em;flex:1}
+.mini{font:inherit;font-size:.95em;font-weight:500;padding:.45em .9em;border-radius:10px;border:2px solid #3a4c5e;background:#223141;color:var(--screen-ink);cursor:pointer;min-height:2.6em;touch-action:manipulation}
+.mini:active:not(:disabled){filter:brightness(1.35)}
+.mini:disabled{opacity:.35;cursor:not-allowed}
+.mini.go{background:#1a7f4b;border-color:#1a7f4b;font-weight:700}
+.mini.danger{background:#7a2323;border-color:#7a2323}
+.mini.ghost{background:transparent}
+.cd{display:flex;align-items:center;gap:.8em;flex-wrap:wrap}
+.cd .grow{flex:1}
+/* 仓位：小格子，前后两列，自上而下 */
+.slots{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:.6em}
+.col{display:flex;flex-direction:column;gap:.3em}
+.slot{border:2px solid var(--screen-line);border-radius:8px;padding:.3em .5em;min-height:0;display:flex;flex-direction:row;align-items:center;gap:.5em;font-size:.85em}
+.slot .no{font-family:var(--mono);font-weight:700;font-size:1.1em;width:1.3em;text-align:center}
+.slot .tx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slot .tx small{color:var(--screen-muted)}
+.slot.pickable{cursor:pointer;border-color:#5b9cff;border-style:dashed}
+.slot.dim{opacity:.35}
+.slot .open-btn{margin-left:auto}
+/* 行程 */
+.route .more{font:inherit;font-size:.95em;padding:.25em .65em;border-radius:8px;border:1.5px dashed #5b9cff;background:transparent;color:#9cc3ff;cursor:pointer}
+/* 车体状态：只把不正常的摆出来，其余收起 */
+.screen>.body{display:flex;flex-wrap:wrap;gap:.4em;align-items:center;margin-inline:-1.1em;padding:.5em 1.1em;border-top:1px solid var(--screen-line);border-bottom:0;background:#121c26}
+.screen>.body .lbl{color:var(--screen-muted);font-size:.85em;margin-right:.2em}
+.bs b{font-weight:500;color:var(--screen-muted);margin-right:.35em}
+.bs.warn b,.bs.bad b{color:inherit;opacity:.8}
+.bodyall{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.3em .9em;width:100%;margin-top:.3em;font-size:.88em}
+.bodyall div{display:flex;justify-content:space-between;gap:.5em;border-bottom:1px dotted var(--screen-line);padding:.2em 0}
+.bodyall div span:first-child{color:var(--screen-muted)}
+.bodyall .warn{color:#ffd58a}.bodyall .bad{color:#ffc4c4;font-weight:700}
+/* 第 8 版：屏幕固定成 16:10 的一块，各块撑满，不留空；仓位格子按高度均分、放大 */
+.screen{aspect-ratio:16/10;min-height:0;font-size:clamp(12px,1.2vw,17px);padding-bottom:0}
+.k-idle,.k-charge{grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-areas:"top top" "banner banner" "hero slots" "body body"}
+.k-move{grid-template-rows:auto auto auto minmax(0,1fr) auto}
+.k-idle .hero,.k-charge .hero,.k-disabled .hero{justify-content:center}
+.k-idle .hero .v,.k-charge .hero .v{font-size:2.6em}
+.k-charge .hero .v{font-family:var(--mono)}
+.hero{align-self:stretch}
+.trip{min-height:0;overflow:auto;background:var(--screen-2);border:2px solid var(--screen-line);border-radius:12px;padding:.8em 1em}
+.slotp{align-self:stretch;min-height:0}
+.slots{flex:1;min-height:0}
+.front,.rear{display:flex;flex-direction:column;gap:.3em;min-height:0}
+.col{flex:1;display:grid;grid-template-rows:repeat(4,minmax(0,1fr));gap:.4em;min-height:0}
+.slot{font-size:1em;padding:.4em .7em;gap:.7em;border-radius:10px;min-height:3.4em}
+.slot .no{font-size:1.7em;width:1.4em}
+.slot .tx{display:flex;flex-direction:column;justify-content:center;gap:.1em;line-height:1.3}
+.slot .tx .sb1{font-family:var(--mono);font-weight:700}
+.slot .tx small{font-size:.85em}
+.taskp{min-height:0}
+.tasks{min-height:0}
+.k-disabled .slots{grid-template-columns:repeat(2,minmax(0,1fr))}
+.k-disabled{grid-template-rows:auto auto auto minmax(0,1fr) auto}
+.screen>.body{margin-top:auto}
+.screen{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}
+.k-disabled{grid-template-columns:minmax(0,1fr)}
+.front,.rear,.col,.slot{min-width:0}
+.slot{overflow:hidden}
+.slot .tx .sb1{font-size:.92em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 第 9 版：右边一列固定——上面仓位（压紧），下面行程（太长就在框里滚动）；左边一列随场景换 */
+.screen[class]{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-areas:"top top" "banner banner" "left side" "body body"}
+.leftcol{grid-area:left;display:flex;flex-direction:column;gap:.7em;min-height:0;min-width:0}
+.leftcol>.hero{flex:1}
+.leftcol>.taskp{flex:1;min-height:0}
+.rightcol{grid-area:side;display:flex;flex-direction:column;gap:.6em;min-height:0;min-width:0}
+.rightcol .slotp{flex:0 0 auto}
+.rightcol .col{grid-template-rows:repeat(4,auto);gap:.3em}
+.rightcol .slot{min-height:2.7em;padding:.25em .6em}
+.rightcol .slot .no{font-size:1.35em}
+.rightcol .trip{flex:1;min-height:3em;overflow:auto;scroll-behavior:smooth}
+.leftcol>.hero{justify-content:center}
+.k-move .hero .v,.k-alert .hero .v{font-size:2.6em}
+.banner{font-size:.92em;line-height:1.35;padding-block:.4em}
+/* 第 10 版：屏上任何地方都不滚动。行程自上而下排，排到底就折到右边一列，最多三列；任务清单放不下就分页，用大按钮翻 */
+.trip,.tasks,.taskp,.leftcol,.rightcol{overflow:hidden!important}
+.tripgrid{display:grid;grid-auto-flow:column;gap:.45em 1em;align-content:start;flex:1;min-height:0}
+.tripgrid .stp{display:grid;grid-template-columns:1.7em minmax(0,1fr);gap:.5em;align-items:start;min-width:0}
+.tripgrid .num{width:1.6em;height:1.6em;border-radius:50%;border:2px solid #8fa1b3;display:inline-flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.85em;font-weight:700}
+.tripgrid .stp.now .num{background:#5b9cff;border-color:#5b9cff;color:#fff}
+.tripgrid .stp.after .num{border-style:dashed}
+.tripgrid .nm{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.tripgrid .stp.now .nm{font-weight:700}
+.tripgrid .ds{color:var(--screen-muted);font-size:.85em;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tripgrid .moretile{font:inherit;border:2px dashed #5b9cff;border-radius:10px;background:transparent;color:#9cc3ff;cursor:pointer;padding:.4em .6em;text-align:left}
+.rightcol .trip{display:flex;flex-direction:column}
+.pager{display:inline-flex;gap:.4em;align-items:center}
+.pager .pg{color:var(--screen-muted);font-family:var(--mono);font-size:.9em}
+.rightcol .slot{min-height:2.2em;padding:.15em .55em}
+.rightcol .slot .no{font-size:1.2em}
+.rightcol .slot .tx{flex-direction:row;align-items:baseline;gap:.5em}
+.task{padding:.35em .7em;min-height:2.4em}
+.task .meta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dlg .card.wide{width:min(60em,96%)}
+.dlg .alltrip{display:grid;grid-auto-flow:column;grid-template-rows:repeat(6,auto);gap:.5em 1.2em}
+/* 第 11 版：车体状态挪到右上角一个按钮；最下面不再有状态行；行程也分页 */
+.screen[class]{grid-template-rows:auto auto minmax(0,1fr);grid-template-areas:"top top" "banner banner" "left side";padding-bottom:.9em}
+.bodybtn{font:inherit;font-size:.92em;font-weight:700;padding:.35em .9em;border-radius:99px;border:2px solid #2f6a4a;background:#123524;color:#9fd8b8;cursor:pointer;max-width:22em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;touch-action:manipulation}
+.bodybtn.warn{border-color:#8a6a1e;background:#2c2208;color:#ffd58a}
+.bodybtn.bad{border-color:#c33;background:#5c1717;color:#ffd0d0}
+.trip .tl{display:flex;align-items:center;gap:.5em}
+.trip .tl .tt2{flex:1}
+.bodylist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.35em 1.4em}
+.bodylist div{display:flex;justify-content:space-between;gap:.6em;border-bottom:1px dotted var(--screen-line);padding:.35em 0;font-size:1.05em}
+.bodylist div span:first-child{color:var(--screen-muted)}
+.bodylist .warn{color:#ffd58a}.bodylist .bad{color:#ffc4c4;font-weight:700}
+/* 第 12 版：顶栏写这台车负责的任务类型；行程只一列，上下页按钮一直在 */
+.top .duty{font:inherit;background:transparent;cursor:pointer;touch-action:manipulation;font-size:.85em;color:var(--screen-muted);border:1.5px solid var(--screen-line);border-radius:8px;padding:.2em .6em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:26em}
+.top .duty b{color:var(--screen-ink);font-family:var(--mono);font-weight:500}
+/* 第 14 版：顶栏"在做什么"换成车现在的位置：站号 + 站名，一直显示 */
+.top .doing{flex:0 1 auto;margin-left:auto;display:flex;align-items:baseline;gap:.45em;min-width:0;overflow:hidden;white-space:nowrap}
+.top .doing .k{color:var(--screen-muted);font-size:.85em}
+.top .doing .no2{font-family:var(--mono);font-weight:700;font-size:1.1em}
+.top .doing .nm2{overflow:hidden;text-overflow:ellipsis}
+.top .doing .off{color:var(--screen-muted)}
+/* 第 15 版：扫码框带"确认"按钮，键盘输入时用 */
+.scanrow{display:flex;gap:.6em;margin-top:.7em}
+.scanrow input{flex:1;min-width:0;font:inherit;font-family:var(--mono);font-size:1.15em;padding:.55em .8em;border-radius:10px;border:2px solid #3a4c5e;background:#0b1118;color:var(--screen-ink)}
+.scanrow input:focus{outline:none;border-color:#5b9cff}
+.instr .cd{margin-top:.7em;padding-top:.6em;border-top:1px solid var(--screen-line)}
+/* 第 19 版：任务行 = 子批 | 机台号·区域号 | 已放/应放 | 放在哪几号仓 | 状态；任务类型做成分组标题 */
+.task.r5{grid-template-columns:minmax(0,1.1fr) minmax(0,1.8fr) 3.2em minmax(0,.8fr) auto;gap:.6em}
+.task .ar2{color:var(--screen-muted);font-family:var(--font)}
+.task .dn{font-family:var(--font);font-weight:500}
+.task.r5.pick{grid-template-columns:auto minmax(0,1.1fr) minmax(0,1.8fr) 3.2em minmax(0,.8fr) auto}
+.task .eq{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task .eq small{color:var(--screen-muted);font-family:var(--font)}
+.task .pr{font-family:var(--mono);font-weight:700;font-size:1.1em;text-align:center}
+.task .pr.full{color:#3fb67a}
+.task .sp2{color:var(--screen-muted);font-size:.9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tgrp{display:flex;align-items:baseline;gap:.6em;padding:.15em .2em;border-bottom:1px solid var(--screen-line)}
+.tgrp b{font-family:var(--mono)}
+.tgrp span{color:var(--screen-muted);font-size:.88em}
+.taskp .tasks{flex:1;min-height:0;display:flex;flex-direction:column;gap:.35em}
+.task.r5{font-size:.82em;gap:.5em}
+.task.r5 .pr{font-size:1.05em}
+.task.r5 .sl{font-size:1em}
+/* 第 23 版：四块统一成同样的卡片背景 */
+.instr,.hero,.taskp,.slotp,.trip{background:var(--screen-2);border:2px solid var(--screen-line);border-radius:12px;padding:.8em 1em}
+.taskp .task,.slotp .slot{background:#121c26}
+.slotp .slot.loaded{background:#123524}.slotp .slot.open{background:#1d3a66}.slotp .slot.faulty{background:#3a1515}
+.hero.alert{background:#3a1212;border-color:#a33}
+/* 第 24 版：四块按两行对齐——上一行左右等高，下一行左右等高 */
+.screen[class][id]{grid-template-rows:auto auto auto minmax(0,1fr);grid-template-areas:"top top" "banner banner" "L1 slots" "L2 trip"}
+.leftcol,.rightcol{display:contents}
+.leftcol>*{min-height:0;min-width:0;align-self:stretch}
+.leftcol>:first-child{grid-area:L1}
+.leftcol>:nth-child(2){grid-area:L2}
+.leftcol>:only-child{grid-area:auto;grid-column:1;grid-row:3 / 5}
+.rightcol .slotp{grid-area:slots;align-self:stretch}
+.rightcol .trip{grid-area:trip;align-self:stretch}
+.instr{display:flex;flex-direction:column;justify-content:center}
+.tripgrid .stp.hint{opacity:.6}
+.tripgrid .stp.hint .num{border-style:dotted}
+.tripgrid .ds{white-space:nowrap}
+/* 边界场景：处理中、网络不稳时按钮变灰；离站过渡；提示横幅 */
+.screen.busy .leftcol button,.screen.busy .rightcol button,.screen.busy .scanrow input,
+.screen.stale .leftcol button,.screen.stale .rightcol button,.screen.stale .scanrow input{opacity:.35;pointer-events:none}
+.toast{position:absolute;left:50%;top:5.2em;transform:translateX(-50%);background:#223141;border:2px solid #5b9cff;color:var(--screen-ink);padding:.5em 1.2em;border-radius:10px;font-weight:700;z-index:5}
+.toast.warn{border-color:#e0a03a;color:#ffd58a;background:#2c2208}
+.banner.info{background:#16304f;color:#bcd6ff}
+.hero .flist{margin:.3em 0 0;padding-left:1.2em;display:flex;flex-direction:column;gap:.3em;font-size:1.05em}
+.hero .flist small{color:var(--screen-muted)}
+.screen.busy .leftcol button.busyBtn,.screen.busy .rightcol button.busyBtn{opacity:1;filter:none;border-style:dashed}
+.failmsg{color:#ff9a9a;font-weight:500;margin-top:.4em;font-size:.95em}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <aside class="side">
+    <div class="box">
+      <h1>车载屏原型（第九场，#53）</h1>
+      <div class="note">这是产品负责人 2026-10-18 确认定稿的那一版（第 38 版）。车载屏的结构以 ADR 0038 为准，本页是它的参考：每个场景屏上有哪些块、放什么、按钮在哪，可以在这里点着看。配色、尺寸和文字细节不由本页定，长相细节以实现时为准（主持会话补充；产品负责人没有就长相是否定稿表态）。定稿后审查又改了 ADR 0035、0036、0038 的几处，本页没跟着改，凡不同以 ADR 为准（已知的几处列在 ADR 0038 的"后果"里）。<br>本页不加载任何外部文件，字体用本机的系统字体；左边的场景和虚线按钮是模拟现场用的，不是车载屏的一部分。</div>
+    </div>
+    <div class="box">
+      <h2>场景</h2>
+      <div class="scenes" id="scenes"></div>
+    </div>
+    <div class="box">
+      <h2>模拟现场动作（虚线 = 屏外发生的事）</h2>
+      <div class="sim" id="sim"></div>
+    </div>
+    <div class="box">
+      <h2>确认规矩（第 11 题）</h2>
+      <div class="note">按了不能撤回的要确认：取消任务、就装这些、立即出发、解除二类急停、报告仓有问题。<br>按错了也没关系的不确认：重新打开、装货纠错（点仓直接开门）、停用车上开门。</div>
+    </div>
+    <div class="box">
+      <h2>服务端此刻记录的状态</h2>
+      <div class="state" id="state"></div>
+    </div>
+    <div class="box">
+      <h2>事件</h2>
+      <div class="log" id="log"></div>
+    </div>
+  </aside>
+
+  <section class="device">
+    <div class="screen" id="screen">
+      <div class="top">
+        <span class="car">agv02</span>
+        <button class="duty" id="duty" onclick="showDuty()">负责 3 类任务 ▸</button>
+        <span class="doing" id="doing"></span>
+        <button class="bodybtn" id="bodybtn" onclick="showBody()"></button>
+        <span class="bat" id="bat">电量 72%</span>
+        <span class="conn" id="conn"><span class="dot"></span>已连接</span>
+      </div>
+      <div class="banner" id="banner"></div>
+      <div class="main" id="main"></div>
+      <div class="flash" id="flash" hidden></div>
+      <div class="toast" id="toast" hidden></div>
+      <div class="dlg" id="dlg" hidden><div class="card" id="dlgcard"></div></div>
+      <div class="overlay" id="overlay" hidden></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const FULL={'还没装上货':300,'一批装到一半':120,'两批之间':300,'全部装完':60};
+let S;      // 全部状态
+let timer=null;
+
+function fresh(){
+  return {
+    mode:'pickup', scene:'pickup_arrive',
+    station:{name:'派工待送区', short:'派工待送区', no:'159', fixed:true, doneWait:600},
+    battery:72, charge:35,
+    tasks:[
+      {id:'T1',sublot:'B89-1012-H-1',type:'STAGING_TO_WIRE',dest:'N1-3',grp:'A',expected:2,slots:[],st:'待扫码',stop:'here'},
+      {id:'T2',sublot:'B89-1013-H-2',type:'STAGING_TO_WIRE',dest:'N1-5',grp:'B',expected:1,slots:[],st:'待扫码',stop:'here'},
+      {id:'T3',sublot:'B89-1017-H-1',type:'STAGING_TO_WIRE',dest:'N1-3',grp:'A',expected:1,slots:[],st:'待扫码',stop:'here'},
+    ],
+    slots:[1,2,3,4,5,6,7,8].map(n=>({no:n,grp:n<=4?'A':'B',cargo:null,open:false,off:n===8,faulty:false})),
+    op:null,          // {kind:'load'|'takeout'|'correct'|'unload', slot, task}
+    q:null,           // 屏上的提问
+    queue:[],         // 取消时排队取出的仓
+    cd:null, cdName:null,
+    banner:'', bannerKind:'',
+    disconnected:false, busy:null, events:[], bodyOpen:false,
+    body:{brake:false,manual:false,lost:false,fault:false,obstacle:false,traffic:false,charging:false,down:false,offline:false}
+  };
+}
+function log(t){S.events.unshift(t);}
+function mach(area){ return `${EQP[area]||'W-0'+String(area).replace(/\D/g,'')} · ${area}`; }
+function destText(t){ return t.eqp?t.dest:mach(t.dest); }
+function destKey(t){ return {nm:destText(t)}; }
+function routeStops(){
+  if(S.mode==='idle' && S.cannot && S.cannot.includes('等桩')) return [{nm:'agv02 的等待点',ds:['在这里等桩'],now:true},{nm:'1 号桩',ds:['有空桩就去充电'],after:true}];
+  if(S.mode==='idle') return [{nm:'agv02 的等待点',ds:['停在这里，空闲；有任务会自动出发'],now:true}];
+  if(S.mode==='charging') return [{nm:'1 号桩',ds:['充电中（在这里）'],now:true},{nm:'回 agv02 的等待点',ds:['充到 99% 后（预计）；有活就先去接活'],after:true}];
+  if(S.mode==='alert2' && S.al && S.al.charge) return [{nm:'1 号桩',ds:['充电失败（在这里）'],now:true}];
+  if(S.mode==='disabled') return [{nm:'没有行程',ds:['车已停用，SIMPLE 不派任务'],now:true}];
+  const withCargo=t=>t.slots.length>0 && t.stop!=='gone' && t.st==='已装完';
+  const dests=[], after=S.battery<S.charge?'去充电':'回 agv02 的等待点';
+  const add=t=>{const k=destKey(t); let d=dests.find(x=>x.nm===k.nm); if(!d){d={nm:k.nm,ds:[]};dests.push(d)} d.ds.push(`${t.sublot} 卸 ${t.slots.length} 仓`)};
+  let stops=[];
+  if(S.mode==='toPickup') stops.push({nm:S.nextPick||'派工待送区',ds:['去取货 '+(S.nextPick?S.tasks.filter(t=>t.pick===S.nextPick).length+' 条':'')],now:true});
+  else if(S.mode==='pickup') stops.push({nm:S.station.short,ds:['取货（在这里）'],now:true});
+  if(S.mode==='pickup'||S.mode==='toPickup'){
+    const later=[...new Set(S.tasks.filter(t=>t.stop==='later'&&t.pick!==S.nextPick).map(t=>t.pick))];
+    later.forEach(pk=>stops.push({nm:pk,ds:['取货 '+S.tasks.filter(t=>t.stop==='later'&&t.pick===pk).length+' 条']}));
+  }
+  if(S.mode!=='idleReturn') S.tasks.filter(withCargo).forEach(add);
+  const here=S.mode==='unload'?destKey(S.tasks.find(t=>t.dest===S.unloadAt)||{dest:S.unloadAt}).nm:null;
+  dests.forEach(d=>stops.push({nm:d.nm,ds:d.ds,now:d.nm===here}));
+  if(S.mode==='idleReturn') return [{nm:'回 agv02 的等待点',ds:[S.posOv?(S.scene==='yield'?'让出了 1 号桩；有活就直接去接活':'当作充满；有活就直接去接活'):'没有任务'],now:true}];
+  if((S.mode==='pickup'||S.mode==='toPickup') && !dests.length && !S.tasks.some(t=>t.stop==='later')){ stops.push({nm:'还没有装完的子批',ds:['一批装完后才显示卸货站'],hint:true}); return stops; }
+  if(stops.length && !stops.some(x=>x.now)) stops[0].now=true;
+  stops.push({nm:after,ds:['这一趟结束后（预计）'],after:true});
+  return stops;
+}
+function tripHtml(){
+  const st=routeStops();
+  let i=0;
+  return `<div class="trip"><div class="tl"><span class="tt2">行程</span></div><div class="tripgrid">`+st.map(x=>x.hint?`<div class="stp hint"><span class="num">…</span><span><span class="nm">${x.nm}</span>${x.ds.map(d=>`<span class="ds">${d}</span>`).join('')}</span></div>`:`<div class="stp ${x.now?'now':''} ${x.after?'after':''}"><span class="num">${++i}</span><span><span class="nm">${x.nm}</span>${x.ds.map(d=>`<span class="ds">${d}</span>`).join('')}</span></div>`).join('')+`</div></div>`;
+}
+function showAllTrip(){
+  const st=routeStops();
+  dialog(`<h3>全部行程（${st.length} 站）</h3><div class="alltrip">`+st.map((x,i)=>`<div class="say"><b style="font-family:var(--mono)">${i+1}.</b> ${x.nm} <span style="color:var(--screen-muted)">${[].concat(x.ds).join('；')}</span></div>`).join('')+`</div><div class="row"><button class="sb go" onclick="closeDlg()">知道了</button></div>`);
+  $('dlgcard').classList.add('wide');
+}
+/* 不滚动：按框的大小算能放几行几列，放不下的行程折成"还有 N 站"，任务清单分页 */
+function fitLists(){
+  const tr=document.querySelector('.tripgrid');
+  if(tr){
+    const items=[...tr.children]; tr.style.gridTemplateRows=''; tr.style.gridTemplateColumns='minmax(0,1fr)'; tr.style.gridAutoFlow='row';
+    const avail=tr.getBoundingClientRect().height, gap=parseFloat(getComputedStyle(tr).rowGap)||6;
+    const hs=items.map(r=>r.getBoundingClientRect().height);
+    const pageOf=[]; let pg=0, used=0;
+    items.forEach((r,i)=>{ const need=hs[i]+(used?gap:0); if(used && used+need>avail){pg++;used=0} pageOf[i]=pg; used+=hs[i]+(used?gap:0); });
+    const tpages=pg+1;
+    S.tripPage=Math.min(S.tripPage||0,tpages-1);
+    items.forEach((el,i)=>{ if(pageOf[i]!==S.tripPage) el.style.display='none'; });
+    const tlh=tr.parentElement.querySelector('.tl'); const pgEl=document.createElement('span'); pgEl.className='pager';
+    pgEl.innerHTML=`<button class="mini" ${S.tripPage?'':'disabled'} onclick="S.tripPage--;render()">‹ 上一页</button><span class="pg">${S.tripPage+1}/${tpages}</span><button class="mini" ${S.tripPage<tpages-1?'':'disabled'} onclick="S.tripPage++;render()">下一页 ›</button>`;
+    tlh.appendChild(pgEl);
+  }
+  const tl=document.querySelector('.tasks');
+  if(tl && tl.children.length){
+    const rows=[...tl.children]; rows.forEach(r=>r.style.display='');
+    const avail=tl.getBoundingClientRect().height, gap=parseFloat(getComputedStyle(tl).rowGap)||5;
+    const hs=rows.map(r=>r.getBoundingClientRect().height);
+    // 按实际高度一页一页往下排；分组标题不留在页尾，和它下面的第一行一起换到下一页
+    const pageOf=[]; let pg=0, used=0;
+    rows.forEach((r,i)=>{
+      let need=hs[i]+(used?gap:0);
+      const isHead=r.classList.contains('tgrp');
+      if(isHead && i+1<rows.length) need+=gap+hs[i+1];
+      if(used && used+need>avail){ pg++; used=0; }
+      pageOf[i]=pg; used+=hs[i]+(used?gap:0);
+    });
+    const pages=pg+1;
+    S.taskPage=Math.min(S.taskPage||0,pages-1);
+    {
+      rows.forEach((r,i)=>{ if(pageOf[i]!==S.taskPage) r.style.display='none'; });
+      const ph=tl.parentElement.querySelector('.ph');
+      const pg=document.createElement('span'); pg.className='pager';
+      pg.innerHTML=`<button class="mini" ${S.taskPage?'':'disabled'} onclick="S.taskPage--;render()">‹ 上一页</button><span class="pg">${S.taskPage+1}/${pages}</span><button class="mini" ${S.taskPage<pages-1?'':'disabled'} onclick="S.taskPage++;render()">下一页 ›</button>`;
+      ph.insertBefore(pg, ph.children[1]||null);
+    }
+  }
+}
+function routeHtml(){
+  const live=t=>!['已取消','站点超时','送达','送达（部分）'].includes(t.st) && !(t.st==='取消中');
+  const withCargo=t=>t.slots.length>0 && t.stop!=='gone' && t.st!=='取消中';
+  const dests=[];
+  const pushDest=(t,cnt)=>{let d=dests.find(x=>x.name===t.dest); if(!d){d={name:t.dest,n:0};dests.push(d)} d.n+=cnt;};
+  let stops=[];
+  const after=S.battery<S.charge?'去充电':'回 agv02 的等待点';
+  if(S.mode==='pickup'){
+    stops.push({t:'派工待送区 · 取货',now:true});
+    S.tasks.filter(t=>t.stop==='here'&&live(t)).forEach(t=>pushDest(t,1));
+  } else if(S.mode==='toPickup'){
+    stops.push({t:'派工待送区 · 取 3 条',now:true});
+    S.tasks.forEach(t=>pushDest(t,1));
+  } else if(['toUnload','unload','fault','hang','estop1','estop2','estop3','estopConsole'].includes(S.mode)){
+    S.tasks.filter(withCargo).forEach(t=>pushDest(t,1));
+  } else if(S.mode==='idleReturn'){
+    return `<div class="route"><span class="lbl">行程</span><span class="st now">回 agv02 的等待点</span></div>`;
+  } else if(S.mode==='charging'){
+    return `<div class="route"><span class="lbl">行程</span><span class="st now">1 号桩 · 充电</span><span class="ar">→</span><span class="st after">充到 99% 后回等待点（有活就先去接活）</span></div>`;
+  } else return '';
+  dests.forEach((d,i)=>stops.push({t:d.name+' · 送 '+d.n+' 条',now:!stops.length&&i===0&&S.mode==='unload'}));
+  if(!stops.some(x=>x.now)&&stops.length) stops[0].now=(S.mode!=='toUnload');
+  stops.push({t:after,after:true});
+  const one=x=>`<span class="st ${x.now?'now':''} ${x.after?'after':''}">${x.t}</span>`;
+  let shown=stops.map(one);
+  if(stops.length>4 && !S.routeOpen) shown=[one(stops[0]),one(stops[1]),`<button class="more" onclick="S.routeOpen=true;render()">还有 ${stops.length-3} 站 ▸</button>`,one(stops[stops.length-1])];
+  else if(stops.length>4) shown.push(`<button class="more" onclick="S.routeOpen=false;render()">收起</button>`);
+  return `<div class="route"><span class="lbl">行程</span>`+shown.join('<span class="ar">→</span>')+`</div>`;
+}
+function moving(){return ['toPickup','toUnload','idleReturn'].includes(S.mode)}
+function bodyItems(){
+  const B=S.body, it=[];
+  const es={estop1:['车上急停按钮','bad'],estop2:['二类（触边或软件）','bad'],estopConsole:['控制台下的','bad'],estop3:['SIMPLE 下的（门锁）','bad']}[S.mode] || (S.mode==='slotfault'&&S.sf.estop?['SIMPLE 下的（门锁）','bad']:null);
+  it.push(['急停', es?es[0]:'没有', es?es[1]:'']);
+  it.push(['抱闸', B.brake?'松开':'合上', B.brake?'bad':'']);
+  it.push(['模式', B.manual?'手动':'自动', B.manual?'bad':'']);
+  it.push(['定位', B.lost?'未定位':'已定位', B.lost?'bad':'']);
+  it.push(['车体报的故障码', B.fault?'E1023 激光传感器异常':'没有', B.fault?'bad':'']);
+  let order='没有', ok='';
+  if(S.mode==='charging') order='充电中';
+  else if(S.banner.startsWith('订单暂停了')) {order='挂起'; ok='warn'}
+  else if(moving()||['estop1','estop2','estopConsole','estop3'].includes(S.mode)) order='执行中';
+  it.push(['订单', order, ok]);
+  let mv='停着', mk='';
+  if(moving() && !es && !S.banner.startsWith('订单暂停了')){ mv=B.obstacle?'停着，可能在避障':B.traffic?'停着，在等交管':'在走'; mk=(B.obstacle||B.traffic)?'warn':'' }
+  it.push(['行驶', mv, mk]);
+  it.push(['交管', B.traffic&&moving()?'在等放行':'通行', B.traffic&&moving()?'warn':'']);
+  const ch=S.mode==='charging'||B.charging;
+  it.push(['充电', ch?'在充电':'没在充电', B.charging&&S.mode!=='charging'?'bad':'']);
+  it.push(['调度上下线', B.down?'已下线':'已上线', B.down?'bad':'']);
+  it.push(['在车队调度系统里', B.offline?'不在线':'在线', B.offline?'bad':'']);
+  return it;
+}
+function bodyBtn(){
+  const it=bodyItems(), bad=it.filter(x=>x[2]==='bad'), warn=it.filter(x=>x[2]==='warn'), b=$('bodybtn');
+  if(bad.length){ b.className='bodybtn bad'; b.textContent=`车体异常 ${bad.length+warn.length} 项：`+[...bad,...warn].map(x=>x[0]+'：'+x[1]).join('、')+' ▸'; }
+  else if(warn.length){ b.className='bodybtn warn'; b.textContent='车体提示：'+warn.map(x=>x[0]+'：'+x[1]).join('、')+' ▸'; }
+  else { b.className='bodybtn'; b.textContent='车体状态正常 ▸'; }
+}
+const TTN={STAGING_TO_WIRE:'待送区送焊线',WIRE_TO_GATE:'焊线送关卡',WIRE_TO_OPTICAL:'焊线送三光',DIE_TO_WIRE_STAGING:'装片送待送区',DIE_TO_OVEN:'装片送烘箱'};
+const DUTY=[['STAGING_TO_WIRE','派工待送区 → 焊线和键合机台'],['WIRE_TO_GATE','焊线和键合完工 → 关卡'],['WIRE_TO_OPTICAL','焊线和键合完工 → 三光']];
+function showDuty(){
+  dialog(`<h3>agv02 负责的任务</h3><div class="say">派车区：焊线区 <b style="font-family:var(--mono)">WIRE_BONDING</b></div><div class="bodylist" style="grid-template-columns:minmax(0,1fr)">`+
+    DUTY.map(x=>`<div><span style="color:var(--screen-ink);font-weight:500">${TTN[x[0]]}</span><span>${x[1]}</span></div>`).join('')+
+    `</div><div class="row"><button class="sb go" onclick="closeDlg()">知道了</button></div>`);
+}
+function showBody(){
+  const it=bodyItems();
+  dialog(`<h3>车体状态</h3><div class="bodylist">`+it.map(x=>`<div class="${x[2]}"><span>${x[0]}</span><span>${x[1]}</span></div>`).join('')+`</div><div class="row"><button class="sb go" onclick="closeDlg()">知道了</button></div>`);
+}
+function bodyHtml(){
+  const it=bodyItems(), bad=it.filter(x=>x[2]), okN=it.length-bad.length;
+  let h=`<span class="lbl">车体状态</span>`+bad.map(x=>`<span class="bs ${x[2]}"><b>${x[0]}</b>${x[1]}</span>`).join('');
+  h+=`<button class="more mini ghost" onclick="S.bodyOpen=!S.bodyOpen;render()">${bad.length?'其余 '+okN+' 项正常':'全部 '+okN+' 项正常'} ${S.bodyOpen?'▾ 收起':'▸ 展开'}</button>`;
+  if(S.bodyOpen) h+=`<div class="bodyall">`+it.map(x=>`<div class="${x[2]}"><span>${x[0]}</span><span>${x[1]}</span></div>`).join('')+`</div>`;
+  return h;
+}
+function taskOf(id){return S.tasks.find(t=>t.id===id)}
+function hereTasks(){return S.tasks.filter(t=>t.stop==='here')}
+function anyOpen(){return S.slots.some(s=>s.open)}
+function canTakeMore(){
+  if(S.battery<S.charge) return false;
+  return S.slots.some(s=>!s.off&&!s.cargo&&!s.open);
+}
+function stationAllDone(){return hereTasks().every(t=>['已装完','已取消','站点超时'].includes(t.st))}
+function scenario(){
+  if(anyOpen()) return null;
+  const ts=hereTasks();
+  const loadedAny=ts.some(t=>t.slots.length>0&&t.st!=='已取消');
+  if(S.q && (S.q.kind==='emptyLater')) return '一批装到一半';
+  if(stationAllDone()) return '全部装完';
+  if(!loadedAny) return '还没装上货';
+  if(ts.some(t=>t.st==='装货中'&&t.slots.length>0)) return '一批装到一半';
+  return '两批之间';
+}
+function restartCd(){
+  if(S.mode!=='pickup'){S.cd=null;S.cdName=null;return}
+  const n=scenario(); S.cdName=n;
+  if(!n){S.cd=null;return}
+  let full=FULL[n];
+  if(n==='全部装完' && S.station.fixed && canTakeMore()) full=S.station.doneWait;
+  S.cd=full;
+}
+function fmt(s){const m=Math.floor(s/60),x=s%60;return m+':'+String(x).padStart(2,'0')}
+
+/* ---------- 取货 ---------- */
+function openNext(task){
+  const free=S.slots.find(s=>s.grp===task.grp&&!s.off&&!s.cargo&&!s.open);
+  if(!free){log('这一组没有空仓了');return false}
+  free.open=true; S.op={kind:'load',slot:free.no,task:task.id}; return true;
+}
+function submitScan(){ const v=(S.scanText||'').trim(); S.scanText=''; if(!v){flash('请先扫码或输入子批号');render();return} scan(v); if(S.mode==='pickup') render(); }
+function scan(sublot){
+  if(S.mode!=='pickup') return;
+  if(anyOpen()||S.q){flash('请先关好开着的门、回答屏上的问题');return}
+  const t=S.tasks.find(t=>t.sublot===sublot);
+  if(!t||t.stop!=='here'){flash('这个子批不是这一站的任务，不能装');log('扫码 '+sublot+'：拒收（不是这一站的任务）');return}
+  if(t.st!=='待扫码'){flash('这个子批已经扫过了');return}
+  t.st='装货中'; log('扫码 '+sublot+'：核对通过，开门');
+  openNext(t); restartCd(); render();
+}
+function closeWithCargo(){
+  const s=S.slots.find(s=>s.open); if(!s) return;
+  const op=S.op; s.open=false;
+  if(op.kind==='load'||op.kind==='correct'){
+    const t=taskOf(op.task); s.cargo=t.sublot;
+    if(op.kind==='load'){ s.loadedAt=new Date().toTimeString().slice(0,8); if(!t.slots.includes(s.no)) t.slots.push(s.no); log(s.no+' 号仓关门，光幕有货：装上了');
+      if(t.slots.length>=t.expected){t.st='已装完';log(t.sublot+' 装完');S.op=null}
+      else {openNext(t)}
+    } else {log(s.no+' 号仓换货完成');S.op=null}
+  } else if(op.kind==='takeout'){
+    // 关门时光幕还有货
+    s.open=false; S.q={kind:'takeoutStill',slot:s.no}; log(s.no+' 号仓关门，光幕还有货');
+  } else if(op.kind==='unload'){
+    S.q={kind:'unloadStill',slot:s.no}; log(s.no+' 号仓关门，光幕还有货：只能重新打开');
+  }
+  restartCd(); render();
+}
+function closeEmpty(){
+  const s=S.slots.find(s=>s.open); if(!s) return;
+  const op=S.op; s.open=false;
+  if(op.kind==='load'){
+    const t=taskOf(op.task);
+    S.q={kind:t.slots.length===0?'emptyFirst':'emptyLater',slot:s.no,task:t.id};
+    log(s.no+' 号仓关门，光幕是空的：屏上问人');
+  } else if(op.kind==='takeout'||op.kind==='unload'){
+    const t=S.tasks.find(t=>t.slots.includes(s.no)); s.cargo=null;
+    if(t) t.slots=t.slots.filter(n=>n!==s.no);
+    log(s.no+' 号仓取空、关好'); S.op=null;
+    if(op.kind==='takeout') nextTakeout(); else nextUnload();
+  } else if(op.kind==='correct'){
+    s.cargo=null; const t=taskOf(op.task); t.slots=t.slots.filter(n=>n!==s.no); log(s.no+' 号仓纠错后是空的'); S.op=null;
+  }
+  restartCd(); render();
+}
+function askCancelOne(){const t=taskOf(S.q.task); press('取消', ()=>answer('cancel'), `取消 ${t.sublot}（送 ${destText(t)}）？<br><b>取消后不能恢复，这条需求不会再派。</b>`, 'danger', '取消这条任务')}
+function askEnough(){const t=taskOf(S.q.task); press('就装这些', ()=>answer('enough'), `${t.sublot} 只装了 ${t.slots.length} 仓（应装 ${t.expected} 篮），就按这么多送走？剩下的仓不用了，没装上的料盒由人工送。`)}
+function answer(a){
+  const q=S.q; S.q=null;
+  const s=S.slots.find(x=>x.no===q.slot);
+  if(a==='reopen'){
+    s.open=true; S.op=q.kind==='unloadStill'?{kind:'unload',slot:s.no}:q.kind==='takeoutStill'?{kind:'takeout',slot:s.no}:{kind:'load',slot:s.no,task:q.task};
+    log('重新打开 '+s.no+' 号仓');
+  } else if(a==='cancel'){ const t=taskOf(q.task); t.st='已取消'; S.op=null; log(t.sublot+'：取消（结局 取消）'); }
+  else if(a==='enough'){ const t=taskOf(q.task); t.st='已装完'; S.op=null; log(t.sublot+'：就装这些（装了 '+t.slots.length+' 仓）'); }
+  restartCd(); render();
+}
+/* 取消 */
+function doCancel(ids){
+  ids.forEach(id=>{
+    const t=taskOf(id);
+    if(t.slots.length===0){t.st='已取消';log(t.sublot+'：取消（结局 取消）')}
+    else {t.st='取消中'; t.slots.forEach(n=>S.queue.push(n)); log(t.sublot+'：取消，要先取出 '+t.slots.join('、')+' 号仓的货')}
+  });
+  nextTakeout(); restartCd(); render();
+}
+function nextTakeout(){
+  if(S.op) return;
+  const n=S.queue.shift();
+  if(n===undefined){ S.tasks.filter(t=>t.st==='取消中'&&t.slots.length===0).forEach(t=>{t.st='已取消';log(t.sublot+'：货已取出，结局 取消')}); return }
+  const s=S.slots.find(x=>x.no===n); s.open=true; S.op={kind:'takeout',slot:n};
+}
+/* 纠错 */
+function doCorrect(no){
+  const t=S.tasks.find(t=>t.slots.includes(no));
+  const s=S.slots.find(x=>x.no===no); s.open=true; S.op={kind:'correct',slot:no,task:t.id};
+  log('装货纠错：打开 '+no+' 号仓'); restartCd(); render();
+}
+/* 离站 */
+function depart(reason){
+  if(S.departing) return;
+  const dlgOpen=!$('dlg').hidden;
+  if(dlgOpen){ closeDlg(); }
+  S.departing={reason, msg: reason.includes('立即出发')?'车即将离开这一站':'装货时间已到，车即将离开', closedDlg: dlgOpen};
+  S.selecting=false; S.slotPick=null;
+  render();
+  const myS=S; setTimeout(()=>{ if(S!==myS) return; const d=S.departing; if(!d) return; S.departing=null; doDepart(d.reason); },2500);
+}
+function doDepart(reason){
+  hereTasks().forEach(t=>{
+    if(t.st==='待扫码'){t.st='站点超时';log(t.sublot+'：站点超时')}
+    else if(t.st==='装货中'){t.st='已装完';t.partial=true;log(t.sublot+'：部分送达（装了 '+t.slots.length+' 仓）')}
+  });
+  S.q=null; S.op=null;
+  const carrying=S.tasks.some(t=>t.slots.length>0&&!['已取消'].includes(t.st));
+  log('车离开取货站（'+reason+'）');
+  const nextPick=(S.tasks.find(t=>t.stop==='later')||{}).pick;
+  S.tasks.forEach(t=>{ if(t.stop==='here') t.stop=t.slots.length?'unload':'gone'; });
+  if(nextPick){ S.nextPick=nextPick; S.mode='toPickup'; S.scene='to_pickup'; log('去下一个取货站 '+nextPick); }
+  else if(carrying){ S.tasks.forEach(t=>{if(t.slots.length) t.stop='unload'}); S.mode='toUnload'; S.scene='to_unload'; }
+  else { S.mode='idleReturn'; S.scene='idle_return'; log('这一趟没有货，一趟结束，空闲返回等待点'); }
+  S.cd=null; render();
+}
+/* 卸货 */
+function nextDest(){const t=S.tasks.find(t=>t.stop==='unload'&&t.slots.length);return t?t.dest:null}
+function arriveUnload(){
+  S.unloadAt=nextDest(); S.mode='unload'; S.scene='unload'; log('到卸货站 '+S.unloadAt+'，自动开门'); nextUnload(); render();
+}
+function nextUnload(){
+  if(S.op) return;
+  const s=S.slots.find(x=>x.cargo && S.tasks.find(t=>t.slots.includes(x.no)&&t.dest===S.unloadAt));
+  if(!s){
+    S.tasks.filter(t=>t.dest===S.unloadAt&&t.stop==='unload'&&t.slots.length===0&&t.st==='已装完').forEach(t=>{t.st=t.partial?'送达（部分）':'送达';t.stop='gone';log(t.sublot+'：送达')});
+    if(S.mode!=='unload') return;
+    if(nextDest()){S.mode='toUnload';S.scene='to_unload';log('去下一个卸货站 '+nextDest())}
+    else {S.mode='idleReturn';S.scene='idle_return';log('这一趟结束，空闲返回等待点')}
+    return }
+  s.open=true; S.op={kind:'unload',slot:s.no};
+}
+function append(){
+  if(S.mode!=='pickup'){flash('车不在取货站上，不接追加');return}
+  if(!canTakeMore()){flash('车接不了新任务（没有空仓或电量低）');return}
+  const n=S.tasks.length+1;
+  S.tasks.push({id:'T'+n,sublot:'B89-10'+(20+n)+'-H-1',type:'STAGING_TO_WIRE',dest:n%2?'N1-3':'N1-5',grp:n%2?'A':'B',expected:1,slots:[],st:'待扫码',stop:'here'});
+  log('这一站追加了一条新任务 B89-10'+(20+n)+'-H-1，按新情况重新计时'); restartCd(); render();
+}
+
+/* ---------- 场景跳转 ---------- */
+const SCENES=[
+  ['取货：固定站点 → 机台（派工待送区，可以一步步点）',[
+    ['pickup_arrive','到站，等扫码'],
+    ['pickup_open','扫码后，门开着等放货'],
+    ['pickup_emptyFirst','关门是空的：第一个仓'],
+    ['pickup_emptyLater','关门是空的：之后的仓（就装这些）'],
+    ['pickup_between','两批之间'],
+    ['pickup_done','全部装完（立即出发）'],
+    ['pickup_cancelTake','取消任务后：取出已装的货'],
+  ]],
+  ['取货：机台 → 固定站点（W-0312，沿途几台机台取货）',[
+    ['m_pickup_arrive','到站，等扫码'],
+    ['m_pickup_open','扫码后，门开着等放货'],
+    ['m_pickup_emptyFirst','关门是空的：第一个仓'],
+    ['m_pickup_emptyLater','关门是空的：之后的仓（就装这些）'],
+    ['m_pickup_between','两批之间'],
+    ['m_pickup_done','全部装完（立即出发）'],
+    ['m_pickup_cancelTake','取消任务后：取出已装的货'],
+  ]],
+  ['路上与卸货站',[
+    ['to_pickup','去取货站的路上'],
+    ['to_unload','去卸货站的路上'],
+    ['unload','卸货站：自动开门'],
+    ['unload_still','卸货站：关门仍有货'],
+  ]],
+  ['没在干活',[
+    ['idle','空闲：停在等待点'],
+    ['idle_return','回等待点途中'],
+    ['charging','充电中'],
+    ['yield','充电时让位（桩让给电量更低的车）'],
+    ['charge_stall_high','充到 60% 以上不涨了：当作充满'],
+    ['disabled','车已停用：任意开门'],
+  ]],
+  ['边界情况',[
+    ['edge_busy','按下后"处理中"'],
+    ['edge_fail','按下后服务端没执行'],
+    ['edge_stale','网络卡顿：按钮先变灰'],
+    ['edge_expired','确认框开着时倒计时走完'],
+    ['edge_timeout','离站倒计时走完的那一刻'],
+    ['edge_noprog','等人没动静：门开着 10 分钟'],
+    ['edge_noprog_unload','等人没动静：卸货 10 分钟'],
+    ['edge_remote','控制台取消了本站一条任务'],
+    ['edge_wait','空闲但接不了任务：等桩'],
+    ['edge_lowbat','电量低于紧急充电线'],
+    ['edge_manual','手动用车：抱闸松着'],
+    ['edge_multi','同时有两个故障'],
+  ]],
+  ['仓位故障（服务端自动认出）',[
+    ['sf_door','行驶中仓门开了'],
+    ['sf_unlock','开锁后门打不开'],
+    ['sf_curtain','卸完后光幕还报有货'],
+    ['sf_change','车停着、锁着，光幕却变了'],
+    ['sf_stuck','开锁信号撤不掉'],
+  ]],
+  ['出问题时',[
+    ['fault','故障处置：按指示取货'],
+    ['hang','订单挂起（例：断过电）'],
+    ['estop2','二类急停（触边、别处的软件急停）'],
+    ['estopConsole','控制台下的急停'],
+    ['charge_fail','充电失败：一到桩就充不进'],
+    ['charge_fail_mid','充电失败：充到一半不涨了'],
+    ['estop1','一类急停（车上的急停按钮）'],
+    ['estop3','三类急停（门锁未证明锁闭）'],
+    ['disconnected','与服务端断开'],
+  ]],
+  ['装机与升级',[
+    ['pairing','新车载电脑待确认（配对码）'],
+    ['version','车载终端版本需要更新'],
+  ]],
+];
+const SF={"sf_door": {"no": 3, "estop": true, "at": null, "k": "仓位故障 · 车已急停", "v": "行驶中 3 号仓门开了", "sub": "SIMPLE 已让车急停。请把 3 号仓门关好、看看货还在不在。车不会自己走，等班组长在控制台处理。"}, "sf_unlock": {"no": 5, "estop": false, "at": ["159", "派工待送区"], "k": "仓位故障 · 等班组长在控制台处理", "v": "5 号仓门打不开", "sub": "发了开锁信号，锁没有打开。不要硬撬。车停在这里不走，离站倒计时也停了。"}, "sf_curtain": {"no": 2, "estop": false, "at": ["212", "焊线机台 W-0312 · N1-3"], "k": "仓位故障 · 等班组长在控制台处理", "v": "2 号仓卸完了，光幕还报有货", "sub": "请看一下 2 号仓里还有没有东西。有就取出来；没有就是光幕坏了。车停在这里不走。"}, "sf_change": {"no": 1, "estop": false, "at": ["305", "agv02 等待点"], "k": "仓位故障 · 等班组长在控制台处理", "v": "1 号仓门锁着，光幕却变了", "sub": "可能有人拨应急位置开过门，或者光幕坏了。不要再动这个仓，等班组长处理。"}, "sf_stuck": {"no": 6, "estop": false, "at": ["159", "派工待送区"], "k": "仓位故障 · 等班组长在控制台处理", "v": "6 号仓的开锁信号撤不掉", "sub": "这个仓的锁可能一直处在打开状态。请把 6 号仓门关好，不要往里放东西。车停在这里不走。"}};
+function loadScene(id){
+  closeDlg(); S=fresh(); S.scene=id; S.busy=null; S.departing=null; S.fail=null;
+  if(id.startsWith('m_')){ id=id.slice(2);
+    S.station={name:'焊线机台 W-0312 · N1-3', short:'W-0312 · N1-3', no:'212', fixed:false, doneWait:60};
+    S.tasks=[
+      {id:'T1',sublot:'B89-0992-H-2',type:'WIRE_TO_OPTICAL',dest:'三光',eqp:'W-0312',area:'N1-3',pick:'W-0312 · N1-3',grp:'A',expected:2,slots:[],st:'待扫码',stop:'here'},
+      {id:'T2',sublot:'B89-0991-H-1',type:'WIRE_TO_GATE',dest:'关卡',eqp:'W-0312',area:'N1-3',pick:'W-0312 · N1-3',grp:'B',expected:1,slots:[],st:'待扫码',stop:'here'},
+      {id:'T3',sublot:'B89-0995-H-1',type:'WIRE_TO_GATE',dest:'关卡',eqp:'W-0312',area:'N1-3',pick:'W-0312 · N1-3',grp:'A',expected:1,slots:[],st:'待扫码',stop:'here'},
+      {id:'L1',sublot:'B89-0997-H-1',type:'WIRE_TO_GATE',dest:'关卡',eqp:'W-0318',area:'N1-7',pick:'W-0318 · N1-7',grp:'B',expected:1,slots:[],st:'待扫码',stop:'later'}];
+  }
+  const T=S.tasks, sl=n=>S.slots.find(s=>s.no===n);
+  const load=(t,nos)=>{nos.forEach((n,i)=>{sl(n).cargo=t.sublot;sl(n).loadedAt='10:4'+(2+i)+':1'+n;t.slots.push(n)})};
+  switch(id){
+    case 'pickup_arrive': break;
+    case 'pickup_machine':
+      S.station={name:'焊线机台 W-0312 · N1-3', short:'W-0312 · N1-3', no:'212', fixed:false, doneWait:60};
+      S.tasks=[
+        {id:'M1',sublot:'B89-0991-H-1',type:'WIRE_TO_GATE',dest:'关卡',eqp:'W-0312',area:'N1-3',grp:'A',expected:1,slots:[],st:'待扫码',stop:'here'},
+        {id:'M2',sublot:'B89-0992-H-2',type:'WIRE_TO_OPTICAL',dest:'三光',eqp:'W-0312',area:'N1-3',grp:'A',expected:2,slots:[],st:'待扫码',stop:'here'},
+        {id:'M3',sublot:'B89-0995-H-1',type:'WIRE_TO_GATE',dest:'关卡',eqp:'W-0312',area:'N1-3',grp:'A',expected:1,slots:[],st:'待扫码',stop:'here'}];
+      load(S.tasks[0],[1]); S.tasks[0].st='已装完'; break;
+    case 'pickup_open': T[0].st='装货中'; sl(1).open=true; S.op={kind:'load',slot:1,task:'T1'}; break;
+    case 'pickup_emptyFirst': T[0].st='装货中'; S.q={kind:'emptyFirst',slot:1,task:'T1'}; break;
+    case 'pickup_emptyLater': T[0].st='装货中'; load(T[0],[1]); S.q={kind:'emptyLater',slot:2,task:'T1'}; break;
+    case 'pickup_between': T[0].st='已装完'; load(T[0],[1,2]); break;
+    case 'pickup_done': T[0].st='已装完'; load(T[0],[1,2]); T[1].st='已装完'; load(T[1],[5]); T[2].st='已取消'; break;
+    case 'pickup_cancelTake': T[0].st='已装完'; load(T[0],[1,2]); T[1].st='待扫码'; doCancelSilently('T1'); break;
+    case 'to_pickup': S.mode='toPickup'; break;
+    case 'to_unload': S.mode='toUnload'; T[0].st='已装完'; load(T[0],[1,2]); T[1].st='已装完'; load(T[1],[5]); T[2].st='已取消'; T.forEach(t=>t.stop=t.slots.length?'unload':'gone'); break;
+    case 'unload': S.mode='toUnload'; T[0].st='已装完'; load(T[0],[1,2]); T[1].st='已装完'; load(T[1],[5]); T[2].st='已取消'; T.forEach(t=>t.stop=t.slots.length?'unload':'gone'); arriveUnload(); break;
+    case 'unload_still': S.mode='unload'; S.unloadAt='N1-3'; T[0].st='已装完'; load(T[0],[1,2]); T[1].st='已装完'; load(T[1],[5]); T[2].st='已取消'; T.forEach(t=>t.stop=t.slots.length?'unload':'gone'); S.q={kind:'unloadStill',slot:1}; break;
+    case 'idle_return': S.mode='idleReturn'; break;
+    case 'idle': S.mode='idle'; break;
+    case 'charging': S.mode='charging'; S.battery=41; break;
+    case 'disabled': S.mode='disabled'; break;
+    case 'fault': S.mode='fault'; T[0].st='已装完'; load(T[0],[1,2]); T[1].st='已装完'; load(T[1],[3]); sl(3).faulty=true; T.forEach(t=>t.stop=t.slots.length?'unload':'gone'); break;
+    case 'hang': S.mode='toUnload'; T[0].st='已装完'; load(T[0],[1,2]); T.forEach(t=>t.stop=t.slots.length?'unload':'gone'); S.banner='订单暂停了：车行驶中断过电，车队调度系统把这一单暂停（挂起）了。等车重新定位好，会自己接着走，不用按任何按钮；10 分钟还走不了，会交给班组长。'; S.bannerKind='warn'; break;
+    case 'estop2': S.mode='estop2'; T[0].st='已装完'; load(T[0],[1,2]); T.forEach(t=>t.stop=t.slots.length?'unload':'gone'); break;
+    case 'estopConsole': S.mode='estopConsole'; T[0].st='已装完'; load(T[0],[1,2]); T.forEach(t=>t.stop=t.slots.length?'unload':'gone'); break;
+    case 'estop1': S.mode='estop1'; T[0].st='已装完'; load(T[0],[1,2]); T.forEach(t=>t.stop=t.slots.length?'unload':'gone'); break;
+    case 'sf_door': case 'sf_unlock': case 'sf_curtain': case 'sf_change': case 'sf_stuck':
+      S.mode='slotfault'; S.sf=SF[id]; T[0].st='已装完'; load(T[0],[1,2]); T[1].st='已装完'; load(T[1],[5]); T.forEach(t=>t.stop=t.slots.length?'unload':'gone');
+      sl(S.sf.no).faulty=true; if(id==='sf_door') sl(3).open=true; if(id==='sf_curtain'){sl(2).cargo=null;} break;
+    case 'dir_m2f':
+      S.station={name:'焊线机台 W-0312 · N1-3', short:'W-0312 · N1-3', no:'212', fixed:false, doneWait:60};
+      S.tasks=[
+        {id:'M1',sublot:'B89-0991-H-1',type:'WIRE_TO_GATE',dest:'关卡',eqp:'W-0312',area:'N1-3',pick:'W-0312 · N1-3',grp:'A',expected:1,slots:[],st:'待扫码',stop:'here'},
+        {id:'M2',sublot:'B89-0992-H-2',type:'WIRE_TO_OPTICAL',dest:'三光',eqp:'W-0312',area:'N1-3',pick:'W-0312 · N1-3',grp:'A',expected:2,slots:[],st:'待扫码',stop:'here'},
+        {id:'L1',sublot:'B89-0997-H-1',type:'WIRE_TO_GATE',dest:'关卡',eqp:'W-0318',area:'N1-7',pick:'W-0318 · N1-7',grp:'A',expected:1,slots:[],st:'待扫码',stop:'later'}];
+      break;
+    case 'edge_busy': T[0].st='已装完'; load(T[0],[1,2]); T[1].st='已装完'; load(T[1],[5]); T[2].st='已取消'; S.busy='立即出发'; S.busyBtn='立即出发'; break;
+    case 'edge_stale': S.stale=true; break;
+    case 'edge_fail': T[0].st='已装完'; load(T[0],[1,2]); T[1].st='已装完'; load(T[1],[5]); T[2].st='已取消'; S.fail={btn:'立即出发',msg:FAILMSG['立即出发']}; break;
+    case 'edge_expired': T[0].st='已装完'; load(T[0],[1,2]); T[1].st='已装完'; load(T[1],[5]); T[2].st='已取消'; S._cd0=6;
+      setTimeout(()=>press('立即出发',()=>depart('人按了立即出发'),'车马上离开这一站。离开后就不能再纠错、取消或装新的货了。'),50); break;
+    case 'edge_timeout': T[0].st='装货中'; load(T[0],[1]); S._cd0=6; break;
+    case 'edge_noprog': T[0].st='装货中'; sl(1).open=true; S.op={kind:'load',slot:1,task:'T1'};
+      S.banner='1 号仓门开着已经 10 分钟，没有新进展。请放好货关门；不装了就关门后取消这条任务。30 分钟没处理会通知班组长。'; S.bannerKind='warn'; break;
+    case 'edge_noprog_unload': S.mode='toUnload'; T[0].st='已装完'; load(T[0],[1,2]); T[1].st='已装完'; load(T[1],[5]); T[2].st='已取消'; T.forEach(t=>t.stop=t.slots.length?'unload':'gone'); arriveUnload();
+      S.banner='卸货已经 10 分钟没有进展。请取出 1 号仓的货、关好门。30 分钟没处理会通知班组长。'; S.bannerKind='warn'; break;
+    case 'edge_remote': T[0].st='已装完'; load(T[0],[1,2]); T[2].st='已取消';
+      S.banner='班组长在控制台取消了 B89-1017-H-1（送 W-0312 · N1-3），这条不用装了。'; S.bannerKind='info'; break;
+    case 'edge_wait': S.mode='idle'; S.battery=31; S.cannot='电量低，等桩——1 号桩被 agv01 占着。有空桩会自动去充电。'; break;
+    case 'edge_lowbat': S.mode='idle'; S.battery=15; S.cannot='电量低，没有可用的充电桩（1 号桩停用了）。';
+      S.banner='电量 15%，低于紧急充电线（20%），又没有在充电。原因：能去的充电桩都停用了。请联系班组长。'; S.bannerKind='warn'; break;
+    case 'edge_manual': S.mode='alert2'; S.body.brake=true; T[0].st='已装完'; load(T[0],[1,2]); T.forEach(t=>t.stop=t.slots.length?'unload':'gone');
+      S.al={k:'车辆本体故障 · 手动用车 · 等班组长在控制台处理', v:'抱闸松着', sub:'有人松了抱闸。要手动用车，请先在控制台停用这台车。推完车请合上抱闸，再由班组长在控制台按"继续"。'}; break;
+    case 'edge_multi': S.mode='alert2'; T[0].st='已装完'; load(T[0],[1,2]); T[1].st='已装完'; load(T[1],[5]); T.forEach(t=>t.stop=t.slots.length?'unload':'gone'); sl(5).faulty=true; sl(5).cargo=null;
+      S.al={k:'2 个故障 · 等班组长在控制台处理', v:'车刚断过电', sub:'下面每个故障各自告警、各自记录；班组长按一次"继续"会一起处理。', list:['车辆本体故障：车在车队调度系统里离线超过 2 分钟 <small>（要班组长按"继续"）</small>','仓位故障：5 号仓门锁着，光幕却变了 <small>（断电期间可能有人开门取过货）</small>']}; break;
+    case 'charge_fail_mid': S.mode='alert2'; S.battery=45;
+      S.al={k:'车辆本体故障 · 充电失败 · 等班组长在控制台处理', v:'充到 45% 不涨了', sub:'从 28% 充到 45% 以后，最近 10 分钟没涨到 3 个百分点。还没到可接活线（60%），所以算充电失败。车停在桩上不动、不接新任务；班组长处理好后按"继续"，会在这个桩上接着充。', at:['88','1 号充电桩'], charge:true}; break;
+    case 'charge_stall_high': S.mode='idleReturn'; S.battery=72; S.posOv=['88','1 号充电桩（正在离开）'];
+      S.banner='电量充到 72% 后 10 分钟没再涨。已经过了可接活线（60%），当作充满，不算故障；车回等待点，有活就直接去接活。'; S.bannerKind='info'; break;
+    case 'yield': S.mode='idleReturn'; S.battery=64; S.posOv=['88','1 号充电桩（正在离开）'];
+      S.banner='让位：agv01 电量 18%，在等桩。这台车已经充过可接活线（60%），把 1 号桩让出来，回等待点；有活就直接去接活。'; S.bannerKind='info'; break;
+    case 'charge_fail': S.mode='alert2'; S.battery=28;
+      S.al={k:'车辆本体故障 · 充电失败 · 等班组长在控制台处理', v:'在 1 号桩上充不进电', sub:'到桩 10 分钟，电量一直是 28%，没涨到 3 个百分点（车队调度系统把充电单挂起、原因是充电失败的，也直接算这一种）。车停在桩上不动、不接新任务。班组长处理好后按"继续"，会在这个桩上接着充；桩停用了就回等待点等别的桩。', at:['88','1 号充电桩'], charge:true}; break;
+    case 'estop3': S.mode='estop3'; T[0].st='已装完'; load(T[0],[1,2]); T.forEach(t=>t.stop=t.slots.length?'unload':'gone'); break;
+    case 'disconnected': S.disconnected=true; T[0].st='已装完'; load(T[0],[1,2]); break;
+    case 'pairing': S.mode='pairing'; break;
+    case 'version': S.mode='version'; break;
+  }
+  restartCd(); if(S._cd0){S.cd=S._cd0;} render();
+}
+function doCancelSilently(id){const t=taskOf(id); t.st='取消中'; t.slots.forEach(n=>S.queue.push(n)); nextTakeout();}
+
+/* ---------- 屏上按钮 ---------- */
+const FAILMSG={'立即出发':'没有出发：门锁读数还没回来，请确认门都关好再按一次。','解除二类急停':'没有解除：车上还有 SIMPLE 下的急停（门锁没证明锁好）。','就装这些':'没有执行：服务端没回话，请再按一次。'};
+function press(label, fn, sentence, kind, btnText){
+  if(sentence){
+    dialog(`<h3>${label}？</h3><div class="say">${sentence}</div><div class="row"><button class="sb ghost" onclick="closeDlg()">返回</button><button class="sb ${kind||'go'}" id="okb">确定${label}</button></div>`);
+    $('okb').onclick=()=>{closeDlg(); S.fail=null; S.busy=label; S.busyBtn=btnText||label; render();
+      setTimeout(()=>{ if(S.busy!==label) return; S.busy=null;
+        if(S.failNext){ S.failNext=false; S.fail={btn:S.busyBtn, msg:FAILMSG[label]||'没有执行：服务端没回话，请再按一次。'}; log('服务端没有执行「'+label+'」：'+S.fail.msg); render(); }
+        else { fn(); render(); } },1200);} }
+  else fn();
+}
+/* 画完以后：处理中的那个按钮改成"处理中…"；失败的那个按钮下面加一行红字 */
+function markButtons(){
+  const btns=[...document.querySelectorAll('.leftcol button,.rightcol button')];
+  if(S.busy){ const b=btns.find(x=>x.textContent.trim()===S.busyBtn); if(b){ b.textContent='处理中…'; b.classList.add('busyBtn'); } }
+  if(S.fail){ const b=btns.find(x=>x.textContent.trim()===S.fail.btn); if(b){ const m=document.createElement('div'); m.className='failmsg'; m.textContent=S.fail.msg; (b.closest('.cd,.qbtns,.ph,.acts')||b.parentElement).after(m); } }
+}
+function dialog(html){$('dlgcard').innerHTML=html;$('dlg').hidden=false}
+function closeDlg(){$('dlg').hidden=true;$('dlgcard').classList.remove('wide')}
+function cancellable(t){return ['待扫码','装货中','已装完'].includes(t.st)}
+function openCancel(){ S.selecting=true; S.sel=new Set(); render(); }
+function togglePick(id){ const t=taskOf(id); if(!cancellable(t)) return; S.sel.has(id)?S.sel.delete(id):S.sel.add(id); render(); }
+function pickAll(){ hereTasks().filter(cancellable).forEach(t=>S.sel.add(t.id)); render(); }
+function endPick(){ S.selecting=false; S.sel=null; render(); }
+function confirmCancel(){
+  const ts=[...S.sel].map(taskOf), loaded=ts.filter(t=>t.slots.length);
+  press('取消', ()=>{const ids=[...S.sel]; endPick(); doCancel(ids)},
+    `要取消这 ${ts.length} 条任务：<ul>${ts.map(t=>`<li>${t.sublot} 送 ${destText(t)}</li>`).join('')}</ul>`+
+    (loaded.length?`装了货的（${loaded.map(t=>t.slots.join('、')+' 号仓').join('，')}）会一仓一仓开门，请把货取出来。<br>`:'')+
+    `<b>取消后不能恢复，这些需求不会再派。</b>`, 'danger', `取消选中的 ${ts.length} 条`);
+}
+function openCorrect(){ S.slotPick='correct'; render(); }
+function openProblem(){ S.slotPick='problem'; render(); }
+function endSlotPick(){ S.slotPick=null; render(); }
+function pickSlot(no){
+  const mode=S.slotPick; S.slotPick=null;
+  if(mode==='correct') doCorrect(no); else if(mode==='problem') problem(no); else render();
+}
+function problem(no){ press('报告', ()=>{const s=S.slots.find(x=>x.no===no); s.faulty=true; S.mode='fault'; S.cd=null; log('车旁的人报 '+no+' 号仓有问题：仓位故障'); render()}, `报告 ${no} 号仓有问题：车会停下仓位操作，算仓位故障，等班组长在控制台处理。`, 'danger', '报告仓有问题')}
+function flash(t){const f=$('flash'); f.textContent=t; f.hidden=false; clearTimeout(flash.h); flash.h=setTimeout(()=>f.hidden=true,2200)}
+
+/* ---------- 画屏 ---------- */
+function correctable(s){return s.cargo&&hereTasks().some(t=>t.slots.includes(s.no)&&t.st!=='取消中')}
+function slotHtml(s){
+  const t=S.tasks.find(t=>t.slots.includes(s.no));
+  let pickable=false;
+  if(S.slotPick==='correct') pickable=!!correctable(s);
+  if(S.slotPick==='problem') pickable=true;
+  const cls=['slot', s.open?'open':'', s.cargo?'loaded':'', s.off?'off':'', s.faulty?'faulty':'', pickable?'pickable':'', S.slotPick&&!pickable?'dim':''].join(' ');
+  let txt=s.off?(s.open?'停用 · 门开着':'停用'):s.open?'门开着':s.cargo?`<span class="sb1">${s.cargo}</span>`:'空';
+  if(s.faulty) txt+=' <span style="color:#ff9a9a">有问题</span>';
+  const openBtn=S.mode==='disabled'?(s.open?'':`<button class="mini open-btn" onclick="event.stopPropagation();openDisabled(${s.no})">开门</button>`):'';
+  const tap=pickable?`onclick="pickSlot(${s.no})"`:(!S.slotPick&&s.cargo&&!s.open?`onclick="showSlot(${s.no})" style="cursor:pointer"`:'');
+  return `<div class="${cls}" ${tap}><span class="no">${s.no}</span><span class="tx">${txt}</span>${openBtn}</div>`;
+}
+const EQP={'N1-3':'W-0312','N1-5':'W-0315'};
+const PKG={'B89-1012-H-1':'QFN-56','B89-1013-H-2':'DFN-8','B89-1017-H-1':'QFN-56'};
+function endText(e){ return e.fixed?e.fixed:`${e.eqp} · ${e.area}`; }
+function showSlot(no){
+  const s=S.slots.find(x=>x.no===no), t=S.tasks.find(t=>t.slots.includes(no));
+  if(!t) return;
+  const from=t.eqp?{eqp:t.eqp,area:t.area}:{fixed:'派工待送区'}, to=t.eqp?{fixed:t.dest}:{eqp:EQP[t.dest]||'W-0'+t.dest.replace(/\D/g,''),area:t.dest};
+  const rows=[['仓位',`${no} 号（车${s.grp==='A'?'前':'后'}）`],['子批',t.sublot],['封装形式',PKG[t.sublot]||'QFN-56'],['任务类型',TTN[t.type]||t.type],
+    ['取货地点',endText(from)],['装进时间（关门）',s.loadedAt||'—'],['目的地',endText(to)]];
+  dialog(`<h3>${no} 号仓的货</h3><div class="bodylist" style="grid-template-columns:minmax(0,1fr)">`+rows.map(r=>`<div><span>${r[0]}</span><span style="font-family:${/子批|封装/.test(r[0])?'var(--mono)':'inherit'};color:var(--screen-ink)">${r[1]}</span></div>`).join('')+
+    `</div><div class="row"><button class="sb go" onclick="closeDlg()">知道了</button></div>`);
+}
+function openDisabled(no){ const s=S.slots.find(x=>x.no===no); s.open=true; log('停用的车：打开 '+no+' 号仓'+(s.off?'（这个仓是停用的，照样能开）':'')); render(); }
+function slotPanel(){
+  let head=`<span class="tt">仓位信息</span>`;
+  if(S.slotPick==='correct') head=`<span class="tt" style="color:#9cc3ff">点一个本站装过的仓，门会打开</span><button class="mini ghost" onclick="endSlotPick()">返回</button>`;
+  else if(S.slotPick==='problem') head=`<span class="tt" style="color:#ffb0b0">点有问题的那个仓</span><button class="mini ghost" onclick="endSlotPick()">返回</button>`;
+  else {
+    const busy=anyOpen()||S.q||S.selecting;
+    if(S.mode==='pickup') head+=`<button class="mini" onclick="openCorrect()" ${busy||!S.slots.some(correctable)?'disabled':''}>装货纠错</button>`;
+    if(!['pairing','version','disabled'].includes(S.mode)) head+=`<button class="mini ghost" onclick="openProblem()" ${S.selecting?'disabled':''}>报告仓有问题</button>`;
+    if(S.mode==='disabled') head+=`<span class="tt" style="flex:0 0 auto">车已停用，可以任意开门</span>`;
+  }
+  return `<div class="slotp"><div class="ph">${head}</div><div class="slots"><div class="front"><div class="side-lbl">车前</div><div class="col">${S.slots.filter(s=>s.grp==='A').map(slotHtml).join('')}</div></div>
+  <div class="rear"><div class="side-lbl">车后</div><div class="col">${S.slots.filter(s=>s.grp==='B').map(slotHtml).join('')}</div></div></div></div>`;
+}
+function chip(st){const m={'待扫码':'c-wait','装货中':'c-load','已装完':'c-done','已取消':'c-cxl','取消中':'c-cxl','站点超时':'c-to'};return `<span class="chip ${m[st]||'c-done'}">${st}</span>`}
+function taskCells(t){
+  const eq=t.eqp||EQP[t.dest]||'W-0'+t.dest.replace(/\D/g,'');
+  const n=t.slots.length, full=n>=t.expected;
+  const mach=`${eq} <small>· ${t.area||t.dest}</small>`;
+  const fromTo=t.eqp?`${mach} <span class="ar2">→</span> <span class="dn">${t.dest}</span>`:`<span class="dn">派工待送区</span> <span class="ar2">→</span> ${mach}`;
+  return `<span class="sl">${t.sublot}</span><span class="eq">${fromTo}</span><span class="pr ${full?'full':''}">${n}/${t.expected}</span><span class="sp2">${n?'仓 '+t.slots.join('、'):'—'}</span>${chip(t.st)}`;
+}
+function taskRow(t){return `<div class="task r5">${taskCells(t)}</div>`}
+function grouped(list,rowFn){ return list.map(rowFn).join(''); }
+function taskPanel(list,title,headBtns){
+  return `<div class="taskp"><div class="ph"><span class="tt">${title}</span>${headBtns||''}</div><div class="tasks">`+grouped(list,taskRow)+`</div></div>`;
+}
+function posHtml(){
+  if(S.posOv) return `<span class="k">位置</span><span class="no2">${S.posOv[0]}</span><span class="nm2">${S.posOv[1]}</span>`;
+  const at=(no,nm)=>`<span class="k">位置</span><span class="no2">${no}</span><span class="nm2">${nm}</span>`;
+  const UNL={'N1-3':['212','焊线机台 W-0312 · N1-3'],'N1-5':['214','焊线机台 W-0315 · N1-5']};
+  switch(S.mode){
+    case 'pickup': return at(S.station.no,S.station.short);
+    case 'alert2': return S.al.at?at(S.al.at[0],S.al.at[1]):`<span class="k">位置</span><span class="off">不在站点上，刚经过</span><span class="no2">160</span><span class="nm2">主通道 3</span>`;
+    case 'unload': {const u=UNL[S.unloadAt]||['301',S.unloadAt]; return at(u[0],u[1]);}
+    case 'idle': case 'disabled': return at('305','agv02 等待点');
+    case 'charging': return at('88','1 号充电桩');
+    case 'pairing': case 'version': return '';
+    case 'slotfault': if(S.sf.at) return at(S.sf.at[0],S.sf.at[1]);
+    default: return `<span class="k">位置</span><span class="off">不在站点上，刚经过</span><span class="no2">160</span><span class="nm2">主通道 3</span>`;
+  }
+}
+function kindOf(){
+  if(['estop1','estop2','estopConsole','estop3','fault','slotfault','alert2'].includes(S.mode)) return 'alert';
+  return {pickup:'pickup',unload:'unload',toPickup:'move',toUnload:'move',idleReturn:'move',idle:'idle',charging:'charge',disabled:'disabled'}[S.mode]||'idle';
+}
+function render(){
+  const main=$('main'), ov=$('overlay'), kind=kindOf();
+  $('screen').className='screen k-'+kind+((S.busy||S.departing)?' busy':'')+(S.stale?' stale':'');
+  const tst=$('toast'); tst.hidden=true; if(false) if(S.busy){tst.className='toast';tst.textContent='处理中：'+S.busy} else if(S.stale){tst.className='toast warn';tst.textContent='网络不稳，按钮暂时不能按'}
+  $('bat').textContent='电量 '+S.battery+'%';
+  if(moving() && !S.banner){
+    if(S.body.obstacle){S.banner='车自己停下了，可能是前面有人或东西挡着（避障）。挪开后车会自己接着走。';S.bannerKind='warn';S._auto=true}
+    else if(S.body.traffic){S.banner='车在等交通管制放行：前面有别的车占着路。放行后车会自己接着走。';S.bannerKind='warn';S._auto=true}
+  } else if(S._auto && !(S.body.obstacle||S.body.traffic)){S.banner='';S._auto=false}
+  if(kind!=='move' && !S._auto && S.banner.startsWith('订单暂停了')===false) {}
+  ov.hidden=true;
+  let doing='', html='';
+  const card=(big,sub,q)=>`<div class="instr"><div class="big">${big}</div><div class="sub">${sub||''}</div>${q||''}</div>`;
+  const hero=(k,v,sub,extra,cls)=>`<div class="hero ${cls||''}"><span class="k">${k}</span><span class="v">${v}</span>${sub?`<span class="sub">${sub}</span>`:''}${extra||''}</div>`;
+  const release=(sentence,msg)=>`<div class="acts"><button class="sb danger" onclick="press('解除二类急停',()=>{S.mode='toUnload';log('${msg}');render()},'${sentence}','danger')">解除二类急停</button></div>`;
+  const cargo=()=>taskPanel(S.tasks.filter(t=>t.slots.length&&t.stop!=='gone'),'车上的货');
+  if(kind==='alert') S.bodyOpen=true;
+  switch(S.mode){
+    case 'pickup':{
+      doing='取货 · '+S.station.name;
+      let big='请扫子批条码', sub='扫这一站的子批，服务端核对后一次开一扇门。', q='';
+      const op=S.op;
+      if(op&&op.kind==='load'){const t=taskOf(op.task); big=`请把 ${t.sublot} 放进 ${op.slot} 号仓，放好关门`; sub=`这个子批应装 ${t.expected} 篮，已装 ${t.slots.length} 篮。`}
+      if(op&&op.kind==='takeout'){big=`请取出 ${op.slot} 号仓的货，取完关门`; sub='在取消任务：装了货的仓一个一个取出。'}
+      if(op&&op.kind==='correct'){big=`请把 ${op.slot} 号仓的货换成正确的，换好关门`; sub='装货纠错，不用重新扫码。'}
+      if(S.q){
+        if(S.q.kind==='emptyFirst'){big=`${S.q.slot} 号仓关上了，但里面是空的`; sub='要放货就重新打开；这个子批不送了就取消。'; q=`<div class="qbtns"><button class="sb" onclick="answer('reopen')">重新打开</button><button class="sb danger" onclick="askCancelOne()">取消这条任务</button></div>`}
+        if(S.q.kind==='emptyLater'){big=`${S.q.slot} 号仓关上了，但里面是空的`; sub='要放货就重新打开；这批就装这么多、剩下的仓不用了，按"就装这些"。'; q=`<div class="qbtns"><button class="sb" onclick="answer('reopen')">重新打开</button><button class="sb" onclick="askEnough()">就装这些</button></div>`}
+        if(S.q.kind==='takeoutStill'){big=`${S.q.slot} 号仓里还有货`; sub='请重新打开，把货取完。'; q=`<div class="qbtns"><button class="sb" onclick="answer('reopen')">重新打开</button></div>`}
+      }
+      const busy=anyOpen()||S.q;
+      if(!op&&!S.q&&!S.selecting&&hereTasks().some(t=>t.st==='待扫码')){
+        q=`<div class="scanrow"><input id="scanbox" value="${S.scanText||''}" placeholder="扫码枪扫子批条码，或用键盘输入" oninput="S.scanText=this.value" onkeydown="if(event.key==='Enter')submitScan()"><button class="sb go" onclick="submitScan()">确认</button></div>`;
+      }
+      if(S.departing){ big=S.departing.msg; sub=(S.departing.closedDlg?'刚才弹出的确认框已经关掉，没有执行。':'')+(hereTasks().some(t=>['待扫码','装货中'].includes(t.st))?'没开始装的按站点超时结束，装了一部分的照常送（部分送达）。':''); q=''; }
+      else if(!op&&!S.q&&stationAllDone()){big='这一站装完了'; sub='装错了按"装货纠错"，不想送了按"取消任务"；不用等了就按"立即出发"。'}
+      let tasks;
+      if(S.selecting){
+        big='点要取消的任务'; sub='可以点一条、几条，或全选。再点一下就不选了。'; q='';
+        const n=S.sel.size;
+        tasks=`<div class="taskp"><div class="ph"><span class="tt">本站任务</span><button class="mini ghost" onclick="endPick()">返回</button><button class="mini" onclick="pickAll()">全选</button><button class="mini danger" onclick="confirmCancel()" ${n?'':'disabled'}>取消选中的 ${n} 条</button></div><div class="tasks">`+
+          grouped(hereTasks(),t=>`<div class="task r5 pick ${S.sel.has(t.id)?'sel':''} ${cancellable(t)?'':'dis'}" onclick="togglePick('${t.id}')"><span class="ck">${S.sel.has(t.id)?'✓':''}</span>${taskCells(t)}</div>`)+`</div></div>`;
+      } else tasks=taskPanel(hereTasks(),'本站任务',`<button class="mini" onclick="openCancel()" ${busy||S.slotPick||!hereTasks().some(cancellable)?'disabled':''}>取消任务</button>`);
+      const cd=S.cd==null?`<div class="cd"><span class="s">有门开着，离站倒计时停着</span></div>`:
+        `<div class="cd"><span class="t">${fmt(S.cd)}</span><span class="s grow">后离开这一站 · ${S.cdName}${S.cdName==='全部装完'&&S.cd>60?'（派工待送区可以多等）':''}</span>`+
+        (stationAllDone()&&!busy&&!S.selecting&&!S.slotPick?`<button class="sb go" onclick="press('立即出发',()=>depart('人按了立即出发'),'车马上离开这一站。离开后就不能再纠错、取消或装新的货了。')">立即出发</button>`:'')+`</div>`;
+      html=card(big,sub,q+cd)+tasks; break;}
+    case 'unload':{ doing='卸货 · '+S.unloadAt; let big='卸货', sub='', q='';
+      if(S.op){big=`请取出 ${S.op.slot} 号仓的货，取完关门`; const t=S.tasks.find(t=>t.slots.includes(S.op.slot)); sub=t?`子批 ${t.sublot}，送 ${destText(t)}。卸货站没有倒计时，货卸完车才走。`:''}
+      if(S.q&&S.q.kind==='unloadStill'){big=`${S.q.slot} 号仓里还有货`; sub='卸货不能取消。请重新打开，把货取完。'; q=`<div class="qbtns"><button class="sb" onclick="answer('reopen')">重新打开</button></div>`}
+      html=card(big,sub,q)+taskPanel(S.tasks.filter(t=>t.stop==='unload'&&t.dest===S.unloadAt),'本站任务'); break;}
+    case 'toPickup': case 'toUnload': case 'idleReturn':{
+      const st=routeStops(), cur=st.find(x=>x.now)||st[0];
+      doing=S.mode==='idleReturn'?'空闲返回':'去'+(S.mode==='toPickup'?'取货站':'卸货站')+'：'+cur.nm;
+      const stopped=(S.banner&&S.bannerKind==='warn')?'（现在停着，见上面的提示）':'';
+      html=hero(S.mode==='idleReturn'?'没有任务，正在回':'正在去', cur.nm, (S.mode==='toUnload'?'到站后自动开门，'+cur.ds:cur.ds)+stopped); break;}
+    case 'idle': doing='空闲';
+      html=hero('空闲','停在 agv02 的等待点',S.cannot?('现在不能接任务：'+S.cannot):('有任务会自动出发。电量 '+S.battery+'%，可以接任务。')); break;
+    case 'alert2': doing='故障';
+      html=hero(S.al.k,S.al.v,S.al.sub,S.al.list?`<ol class="flist">${S.al.list.map(x=>`<li>${x}</li>`).join('')}</ol>`:'','alert')+cargo(); break;
+    case 'charging': doing='充电：1 号桩';
+      html=hero('充电中','41%','到 60% 以后有活就离桩去接活；没活就充到 99% 后回等待点。',
+        `<div class="batt"><i style="width:41%"></i><b style="left:35%"></b><b style="left:60%"></b><b style="left:99%"></b></div><div class="batt-l"><span>0</span><span>35% 去充电</span><span>60% 可接活</span><span>99% 充满</span></div>`); break;
+    case 'disabled': doing='已停用';
+      html=hero('车已停用','维修中','SIMPLE 不派任务、不管这台车。下面每个仓都可以直接开门，可以同时开几扇。'); break;
+    case 'fault': doing='故障处置中';
+      html=hero('故障 · 等班组长在控制台处理','请取出 3 号仓的货，取完关门','3 号仓位故障。这是班组长选了"取出货物交人工"后服务端给的指示；门用信号打不开时会改成"请拨动锁上的应急位置开门"。','','alert')+cargo(); break;
+    case 'estop2': doing='急停中';
+      html=hero('急停 · 二类（触边或别处的软件急停）','车已急停','查看车周围没有障碍后，可以解除。如果车上的急停按钮也按着，要先松开它，否则解除后会马上再停。',release('解除后车会接着走。请先看车周围没有人和障碍。','车旁的人解除了二类急停'),'alert')+cargo(); break;
+    case 'estopConsole': doing='急停中';
+      html=hero('急停 · 控制台下的','车被班组长急停','班组长在控制台按了"急停这台车"。车旁也可以解除，解除前请确认班组长同意。',release('这是班组长在控制台下的急停，解除后车会接着走。请确认班组长同意。','车旁的人解除了控制台急停'),'alert')+cargo(); break;
+    case 'estop1': doing='急停中';
+      html=hero('急停 · 车上的急停按钮','请松开车上的急停按钮','一类急停软件解不了，要在车旁松开按钮或排除车体故障。','','alert')+cargo(); break;
+    case 'slotfault': doing='仓位故障';
+      html=hero(S.sf.k, S.sf.v, S.sf.sub, '', 'alert')+cargo(); break;
+    case 'estop3': doing='急停中';
+      html=hero('急停 · SIMPLE 下的','请检查仓门有没有关好','行驶中仓门没证明锁好。门锁读数恢复、全部锁着，车会自动接着走；否则转故障，等班组长处理。','','alert')+cargo(); break;
+    case 'pairing': doing='等待确认'; ov.hidden=false; ov.innerHTML=`<div>这台车载电脑还没被确认</div><div class="code">382 615</div><div>请工程师在控制台 agv02 的车辆详情里核对这 6 位数，一致后确认</div>`; break;
+    case 'version': doing=''; ov.hidden=false; ov.innerHTML=`<div class="big">车载终端版本需要更新</div><div>请联系系统维护人员</div>`; break;
+  }
+  const showBanner=S.banner && kind!=='alert';
+  $('banner').innerHTML=showBanner?`<span>${S.banner}</span>`:''; $('banner').className='banner '+S.bannerKind;
+  bodyBtn();
+  if(S.disconnected){ ov.hidden=false; ov.innerHTML=`<div class="big">与服务端断开</div><div>扫码和所有按钮都不能用。可以关门、按急停按钮、拨应急位置开门、取出货物。<br>恢复后自动接上。</div>`; $('conn').innerHTML='<span class="dot" style="background:#ff6b6b"></span>断开'; }
+  else $('conn').innerHTML=S.stale?'<span class="dot" style="background:#e0a03a"></span>网络不稳':'<span class="dot"></span>已连接';
+  $('doing').innerHTML=posHtml();
+  main.innerHTML=(S.mode==='pairing'||S.mode==='version')?'':`<div class="leftcol">${html}</div><div class="rightcol">${slotPanel()}${tripHtml()}</div>`;
+  fitLists(); markButtons();
+  document.querySelectorAll('#scenes button').forEach(b=>b.classList.toggle('on',b.dataset.s===S.scene));
+  renderSim(); renderState();
+}
+function renderSim(){
+  const open=S.slots.find(s=>s.open);
+  const sim=[];
+  if(S.mode==='disabled') S.slots.filter(x=>x.open).forEach(x=>sim.push([`关上 ${x.no} 号仓门`,()=>{x.open=false;log(`停用的车：${x.no} 号仓门关上了`);render()}]));
+  if(S.mode==='pickup'){
+    hereTasks().filter(t=>t.st==='待扫码').forEach(t=>sim.push([`扫码 ${t.sublot}`,()=>scan(t.sublot)]));
+    sim.push(['扫一个别处的子批',()=>scan('C15-WRONG-1')]);
+    sim.push(['这一站来了一条新需求',append]);
+    sim.push(['控制台取消了一条任务',()=>{const t=hereTasks().find(t=>t.st==='待扫码'); if(!t){flash('没有还没装的任务');return} t.st='已取消'; S.banner=`班组长在控制台取消了 ${t.sublot}（送 ${destText(t)}），这条不用装了。`; S.bannerKind='info'; log('控制台取消：'+t.sublot); restartCd(); render();}]);
+    if(S.cd!=null) sim.push(['倒计时快进 30 秒',()=>{S.cd=Math.max(0,S.cd-30); tick(true)}]);
+  }
+  if(open){
+    const k=S.op&&S.op.kind;
+    if(k==='load'||k==='correct'){sim.push(['放好货、关门',closeWithCargo]); sim.push(['空着关门',closeEmpty])}
+    if(k==='takeout'||k==='unload'){sim.push(['取完货、关门',closeEmpty]); sim.push(['没取完就关门',closeWithCargo])}
+  }
+  if(S.mode==='idleReturn') sim.push(['到达等待点',()=>{S.mode='idle';S.scene='idle';log('到达等待点，空闲');render()}]);
+  if(S.mode==='idle') sim.push(['来了一个新任务',()=>{S.mode='toPickup';S.scene='to_pickup';log('派了新的一趟：去派工待送区');render()}]);
+  if(S.mode==='toPickup') sim.push(['到达'+(S.nextPick||'派工待送区'),()=>{
+    if(S.nextPick){ const pk=S.nextPick; S.station={name:'焊线机台 '+pk, short:pk, no:'218', fixed:false, doneWait:60}; S.tasks.forEach(t=>{if(t.pick===pk) t.stop='here'}); S.nextPick=null; log('到达取货站 '+pk); }
+    else log('到达派工待送区');
+    S.mode='pickup'; restartCd(); render()}]);
+  if(S.mode==='pickup' && !S.station.fixed) sim.push(['后面一台机台冒出新需求',()=>{
+    const n=S.tasks.length+1; S.tasks.push({id:'L'+n,sublot:'B89-09'+(60+n)+'-H-1',type:'WIRE_TO_OPTICAL',dest:'三光',eqp:'W-0321',area:'N1-9',pick:'W-0321 · N1-9',grp:'B',expected:1,slots:[],st:'待扫码',stop:'later'});
+    log('途中追加：W-0321 · N1-9 有一条去三光，排成后面的一个取货站'); render();}]);
+  if(S.mode==='toUnload'&&!S.banner) sim.push(['到达卸货站 '+nextDest(),arriveUnload]);
+  if(S.mode==='pickup'){
+    sim.push([S.battery<S.charge?'电量回到 72%':'电量跌破去充电线（35%）',()=>{S.battery=S.battery<S.charge?72:30; log(S.battery<S.charge?'电量跌破去充电线：这一趟不再接追加':'电量恢复'); restartCd(); render()}]);
+  }
+  const B=S.body, tg=(k,on,off,msg)=>sim.push([B[k]?off:on,()=>{B[k]=!B[k]; if(!B[k]&&S._auto){S.banner='';S._auto=false} log(msg+(B[k]?'':'（恢复）')); render()}]);
+  if(moving()) sim.push(['行驶中仓门弹开',()=>{log('行驶中 3 号仓门报没锁：SIMPLE 下三类急停，算仓位故障');loadScene('sf_door')}]);
+  if(moving()){ tg('obstacle','车避障停下','障碍挪开了','车避障停下'); tg('traffic','车在等交管','交管放行了','车在等交管'); }
+  tg('brake','有人松了抱闸','抱闸合上了','抱闸松开');
+  tg('manual','切到手动模式','切回自动模式','车切到手动模式');
+  tg('charging','插了手动充电器','拔了充电器','车在充电（SIMPLE 没让它充）');
+  tg('down','车在调度里被下线','车重新上线了','车在车队调度系统里被下线');
+  tg('offline','车队调度系统连不上车','车队调度系统又连上车了','车离线');
+  tg('lost','车丢了定位','车重新定位了','车未定位');
+  tg('fault','车体报故障码','车体故障清除了','车体报故障码 E1023');
+  sim.push([S.failNext?'下一次按键：照常执行':'下一次按键：服务端不执行',()=>{S.failNext=!S.failNext; render()}]);
+  sim.push([S.stale?'网络恢复正常':'网络卡顿（2 秒没收到）',()=>{S.stale=!S.stale; render()}]);
+  sim.push([S.disconnected?'网络恢复':'断网 / 车载电脑关机',()=>{S.disconnected=!S.disconnected; log(S.disconnected?'车载终端与服务端断开':'重新连上'); render()}]);
+  const el=$('sim'); el.innerHTML=''; sim.forEach(([l,f])=>{const b=document.createElement('button'); b.textContent=l; b.onclick=f; el.appendChild(b)});
+}
+function renderState(){
+  const lines=[];
+  lines.push('车辆用途: '+({pickup:'跑一趟（在取货站）',toPickup:'跑一趟（去取货站）',toUnload:'跑一趟（去卸货站）',unload:'跑一趟（在卸货站）',idleReturn:'空闲返回',idle:'—（空闲，在等待点）',charging:'充电',disabled:'—（已停用）',fault:'跑一趟（故障处置中）'}[S.mode]||S.mode));
+  if(S.mode==='pickup') lines.push('离站倒计时: '+(S.cd==null?'停着（有门开着）':fmt(S.cd)+' · '+S.cdName), '车还能接新任务: '+(canTakeMore()?'能':'不能（退回 1 分钟）'));
+  lines.push('','任务:');
+  S.tasks.forEach(t=>lines.push(`  ${t.sublot} → ${t.dest}  ${t.st}${t.partial?'（部分送达）':''}  仓[${t.slots.join(',')}]`));
+  $('state').textContent=lines.join('\n');
+  $('log').innerHTML=S.events.slice(0,30).map(e=>'· '+e).join('<br>');
+}
+function tick(manual){
+  if(S.departing) return;
+  if(S.mode==='pickup' && S.cd!=null && !S.disconnected){
+    if(!manual) S.cd--;
+    if(S.cd<=0){ depart('离站倒计时走完'); return }
+    const t=document.querySelector('.cd .t'); if(t) t.textContent=fmt(S.cd);
+    renderState();
+    if(manual) render();
+  }
+}
+
+/* 初始化 */
+(function(){
+  const box=$('scenes');
+  SCENES.forEach(([g,list])=>{const d=document.createElement('div'); d.className='grp'; d.textContent=g; box.appendChild(d);
+    list.forEach(([id,l])=>{const b=document.createElement('button'); b.textContent=l; b.dataset.s=id; b.onclick=()=>loadScene(id); box.appendChild(b)})});
+  
+  loadScene('pickup_arrive');
+  timer=setInterval(()=>tick(false),1000);
+})();
+</script>
+</body>
+</html>
