@@ -26,7 +26,7 @@ public sealed partial class LocalSystem(
     /// the command line starts a local system only, and these are how a real
     /// endpoint or another database would reach a component.
     /// </summary>
-    private static readonly string[] ScrubbedPrefixes = ["Simple__", "ConnectionStrings__", "ASPNETCORE_"];
+    private static readonly string[] ScrubbedPrefixes = ["Simple__", "ConnectionStrings__", "ASPNETCORE_", "Kestrel__"];
 
     private static readonly string[] ScrubbedNames =
     [

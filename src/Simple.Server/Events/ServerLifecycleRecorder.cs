@@ -16,6 +16,7 @@ public sealed partial class ServerLifecycleRecorder(
     IServiceScopeFactory scopes,
     ServerInfo info,
     OnboardEndpoint endpoint,
+    OnboardTerminalRegistry terminals,
     IOptions<ServerSettings> settings,
     ILogger<ServerLifecycleRecorder> logger) : IHostedLifecycleService
 {
@@ -74,6 +75,20 @@ public sealed partial class ServerLifecycleRecorder(
     {
         try
         {
+            // What terminals' streams recorded while stopping goes in first.
+            using (var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                wait.CancelAfter(TimeSpan.FromSeconds(5));
+                try
+                {
+                    await terminals.FlushAsync(wait.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // The stop is recorded anyway.
+                }
+            }
+
             await AppendAsync(EventTypes.ServerStopped, cancellationToken);
         }
         catch (Exception e) when (e is not OperationCanceledException)

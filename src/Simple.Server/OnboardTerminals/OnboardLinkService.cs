@@ -40,7 +40,7 @@ public sealed partial class OnboardLinkService(
                 ? $"the request names no protocol major ({ProtocolVersion.MajorHeader}); this server serves {string.Join(',', SupportedMajors)}"
                 : $"protocol major {header} is not served; this server serves {string.Join(',', SupportedMajors)}";
             LogRefused(logger, remote, reason);
-            await terminals.RecordRefusalAsync(remote, header, reason, context.CancellationToken);
+            terminals.RecordRefusal(remote, header, reason);
             throw new RpcException(
                 new Grpc.Core.Status(StatusCode.FailedPrecondition, reason),
                 new Metadata { { ProtocolVersion.SupportedMajorsTrailer, string.Join(',', SupportedMajors) } });
@@ -55,7 +55,7 @@ public sealed partial class OnboardLinkService(
         {
             await foreach (var report in requestStream.ReadAllAsync(stop.Token))
             {
-                refusal = await terminals.ReceiveAsync(link, report, stop.Token);
+                refusal = terminals.Receive(link, report);
                 if (refusal is not null)
                 {
                     closeReason = $"refused: {refusal}";
@@ -84,12 +84,12 @@ public sealed partial class OnboardLinkService(
                 // The stream is gone; why is recorded below.
             }
 
-            await terminals.CloseAsync(link, closeReason);
+            terminals.Close(link, closeReason);
         }
 
         if (refusal is not null)
         {
-            await terminals.RecordRefusalAsync(remote, header, refusal, CancellationToken.None);
+            terminals.RecordRefusal(remote, header, refusal);
             throw new RpcException(new Grpc.Core.Status(StatusCode.InvalidArgument, refusal));
         }
     }

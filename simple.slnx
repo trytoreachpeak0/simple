@@ -14,6 +14,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Simple.Cli.Tests/Simple.Cli.Tests.csproj" />
     <Project Path="tests/Simple.OnboardTerminal.Core.Tests/Simple.OnboardTerminal.Core.Tests.csproj" />
+    <Project Path="tests/Simple.OnboardTerminal.Headless.Tests/Simple.OnboardTerminal.Headless.Tests.csproj" />
     <Project Path="tests/Simple.Server.Tests/Simple.Server.Tests.csproj" />
   </Folder>
 </Solution>

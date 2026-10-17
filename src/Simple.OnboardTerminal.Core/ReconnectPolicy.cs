@@ -27,9 +27,12 @@ public static class ReconnectPolicy
                 // Every failure is retried; only the terminal's own stop ends it.
                 ShouldHandle = args => ValueTask.FromResult(
                     args.Outcome.Exception is not null && !args.Context.CancellationToken.IsCancellationRequested),
-                BackoffType = DelayBackoffType.Exponential,
-                UseJitter = true,
-                Delay = FirstDelay,
+                // Polly jitters before it caps, so at the cap every terminal
+                // would retry exactly 25 s apart, all of them in step after a
+                // server restart. The delay is chosen here instead: doubling
+                // from 1 s, capped at 25 s, then 80-100 % of that, so it
+                // stays jittered at the cap and never exceeds it.
+                DelayGenerator = args => ValueTask.FromResult<TimeSpan?>(Delay(args.AttemptNumber)),
                 MaxDelay = MaxDelay,
                 MaxRetryAttempts = int.MaxValue,
                 OnRetry = args =>
@@ -39,4 +42,14 @@ public static class ReconnectPolicy
                 },
             })
             .Build();
+
+    /// <summary>The delay before retry <paramref name="attempt"/> + 1 (0 for the first retry).</summary>
+    public static TimeSpan Delay(int attempt)
+    {
+        var doubled = FirstDelay * Math.Pow(2, Math.Min(attempt, 10));
+        var capped = doubled < MaxDelay ? doubled : MaxDelay;
+#pragma warning disable CA5394 // Jitter, not security.
+        return capped * (0.8 + (0.2 * Random.Shared.NextDouble()));
+#pragma warning restore CA5394
+    }
 }

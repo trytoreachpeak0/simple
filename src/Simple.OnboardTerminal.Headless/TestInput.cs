@@ -44,6 +44,11 @@ internal sealed class TestInput(TestInputOptions options, OnboardInputs inputs, 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
+        // Nothing around the process may add a listener: the builder has read
+        // environment variables (Kestrel__Endpoints__… among them) and
+        // appsettings by now, and Kestrel would bind what they name besides
+        // the loopback address below.
+        builder.Configuration.Sources.Clear();
         builder.Logging.ClearProviders();
         builder.Services.ConfigureHttpJsonOptions(json => json.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
         builder.WebHost.ConfigureKestrel(kestrel =>

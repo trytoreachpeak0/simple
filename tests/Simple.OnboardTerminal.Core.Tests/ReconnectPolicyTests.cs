@@ -33,8 +33,12 @@ public sealed class ReconnectPolicyTests
         await stop.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
 
-        Assert.InRange(seen[0], TimeSpan.Zero, TimeSpan.FromSeconds(3));
+        Assert.InRange(seen[0], TimeSpan.FromSeconds(0.8), TimeSpan.FromSeconds(1));
         Assert.All(seen, d => Assert.InRange(d, TimeSpan.Zero, ReconnectPolicy.MaxDelay));
+        // At the cap the delays still differ, so terminals cut off together do not retry in step.
+        var capped = seen.Skip(10).ToList();
+        Assert.All(capped, d => Assert.InRange(d, ReconnectPolicy.MaxDelay * 0.8, ReconnectPolicy.MaxDelay));
+        Assert.True(capped.Distinct().Count() > capped.Count / 2, string.Join(", ", capped.Select(d => d.TotalSeconds)));
         // Once grown, the delays stay near the cap: retrying goes on, slowly.
         Assert.InRange(seen.Skip(10).Average(d => d.TotalSeconds), 10, 25);
     }

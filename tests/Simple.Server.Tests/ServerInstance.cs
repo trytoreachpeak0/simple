@@ -62,10 +62,12 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
             [ServerSettings.InstanceKey] = Instance,
             [ServerSettings.ConnectionStringKey] = SqlServer,
         };
+        // Without real sockets there is no terminal endpoint to reach, so none
+        // is configured, and no server key is made for the test.
+        settings[ServerSettings.OnboardTerminalsUrlKey] = kestrel ? "https://127.0.0.1:0" : "";
         if (kestrel)
         {
             settings["urls"] = "http://127.0.0.1:0";
-            settings[ServerSettings.OnboardTerminalsUrlKey] = "https://127.0.0.1:0";
         }
 
         var created = new Factory(settings, time);

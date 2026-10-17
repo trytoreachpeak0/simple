@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Simple.Protocol.V1;
 using Simple.Server.Events;
 using Simple.Server.Status;
@@ -18,21 +19,49 @@ namespace Simple.Server.OnboardTerminals;
 /// stale once the freshest one is older than that. Whether the stream is open
 /// does not enter into it: a stream can stay open while nothing gets through,
 /// and a terminal can be reconnecting while its last report is still fresh.
+///
+/// Events go into the event record one at a time, in the order the registry
+/// decided them (under its lock), through one writer: a stale terminal's
+/// fresh-again never lands before its stale, a replaced stream's disconnect
+/// never after the new stream's connect.
 /// </remarks>
-public sealed partial class OnboardTerminalRegistry(
-    TimeProvider time,
-    IServiceScopeFactory scopes,
-    ILogger<OnboardTerminalRegistry> logger) : IDisposable
+public sealed partial class OnboardTerminalRegistry : IDisposable
 {
     /// <summary>ADR 0009: a reading older than this is not a reading.</summary>
     public static readonly TimeSpan StaleAfter = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// Limits on what one report may bring in. Until terminals have keys
+    /// (ADR 0025, pairing), anyone on the plant network can open a stream, so
+    /// these keep a stranger from filling memory and the event record with
+    /// one report. A vehicle id over the limit ends the stream; an input
+    /// over a limit is skipped, as ADR 0024 skips any item it cannot use.
+    /// </summary>
+    public const int MaxVehicleIdLength = 64;
+
+    public const int MaxInputsPerReport = 16;
+
+    public const int MaxInputTextLength = 256;
+
     /// <summary>What the screen shows in this version, where the server has nothing else to say yet.</summary>
     public const string ConnectedScreenText = "已连接服务端";
 
+    private readonly TimeProvider time;
+    private readonly IServiceScopeFactory scopes;
+    private readonly ILogger<OnboardTerminalRegistry> logger;
     private readonly Lock gate = new();
     private readonly Dictionary<string, KnownTerminal> terminals = new(StringComparer.Ordinal);
+    private readonly Channel<Pending> pending = Channel.CreateUnbounded<Pending>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Task writing;
     private bool disposed;
+
+    public OnboardTerminalRegistry(TimeProvider time, IServiceScopeFactory scopes, ILogger<OnboardTerminalRegistry> logger)
+    {
+        this.time = time;
+        this.scopes = scopes;
+        this.logger = logger;
+        writing = Task.Run(WriteAsync);
+    }
 
     public TerminalLink Open(string remoteAddress) =>
         new(Guid.NewGuid().ToString("N")[..12], remoteAddress, time.GetUtcNow());
@@ -72,11 +101,10 @@ public sealed partial class OnboardTerminalRegistry(
     /// Takes in one report. Returns null when it is accepted, or why the
     /// stream must end.
     /// </summary>
-    public async Task<string?> ReceiveAsync(TerminalLink link, OnboardReport report, CancellationToken cancellationToken)
+    public string? Receive(TerminalLink link, OnboardReport report)
     {
         ArgumentNullException.ThrowIfNull(link);
         ArgumentNullException.ThrowIfNull(report);
-        var events = new List<(string Type, string Source, object Data)>();
         TerminalLink? replaced = null;
         lock (gate)
         {
@@ -88,6 +116,11 @@ public sealed partial class OnboardTerminalRegistry(
                 if (string.IsNullOrWhiteSpace(report.VehicleId))
                 {
                     return "the first report names no vehicle. Confirming a terminal with a pairing code is not built yet, so every terminal is configured with its vehicle id.";
+                }
+
+                if (report.VehicleId.Length > MaxVehicleIdLength)
+                {
+                    return $"the vehicle id is longer than {MaxVehicleIdLength} characters.";
                 }
 
                 if (!terminals.TryGetValue(report.VehicleId, out terminal))
@@ -106,13 +139,13 @@ public sealed partial class OnboardTerminalRegistry(
                 terminal.Link = link;
                 terminal.LastScreenText = link.LastScreenText;
                 link.Terminal = terminal;
-                events.Add((EventTypes.OnboardConnected, EventSources.Server, new
+                Record(EventTypes.OnboardConnected, EventSources.Server, new
                 {
                     terminal.VehicleId,
                     report.TerminalVersion,
                     Connection = link.Id,
                     Remote = link.RemoteAddress,
-                }));
+                });
             }
             else if (!string.Equals(report.VehicleId, terminal.VehicleId, StringComparison.Ordinal))
             {
@@ -129,28 +162,36 @@ public sealed partial class OnboardTerminalRegistry(
                 if (terminal.Stale)
                 {
                     terminal.Stale = false;
-                    events.Add((EventTypes.OnboardFresh, EventSources.Server, new { terminal.VehicleId, Connection = link.Id }));
+                    Record(EventTypes.OnboardFresh, EventSources.Server, new { terminal.VehicleId, Connection = link.Id });
                 }
 
                 Arm(terminal, now);
             }
 
-            foreach (var input in report.Inputs)
+            if (report.Inputs.Count > MaxInputsPerReport)
             {
-                if (link.SeenInputs.Add(input.Id))
+                LogInputsSkipped(logger, link.Id, report.Inputs.Count - MaxInputsPerReport, $"more than {MaxInputsPerReport} in one report");
+            }
+
+            foreach (var input in report.Inputs.Take(MaxInputsPerReport))
+            {
+                if ((input.Scan?.Text.Length ?? 0) > MaxInputTextLength || (input.ButtonPress?.Button.Length ?? 0) > MaxInputTextLength)
                 {
-                    events.Add((EventTypes.OnboardInputReceived, EventSources.OnboardTerminal, Describe(terminal, link, input)));
+                    LogInputsSkipped(logger, link.Id, 1, $"longer than {MaxInputTextLength} characters");
+                }
+                else if (link.SeenInputs.Add(input.Id))
+                {
+                    Record(EventTypes.OnboardInputReceived, EventSources.OnboardTerminal, Describe(terminal, link, input));
                 }
             }
         }
 
         replaced?.Stop("replaced by a newer stream from the same vehicle");
-        await RecordAsync(events, cancellationToken);
         return null;
     }
 
     /// <summary>The stream of <paramref name="link"/> has ended.</summary>
-    public async Task CloseAsync(TerminalLink link, string reason)
+    public void Close(TerminalLink link, string reason)
     {
         ArgumentNullException.ThrowIfNull(link);
         string? vehicle;
@@ -161,19 +202,38 @@ public sealed partial class OnboardTerminalRegistry(
             {
                 terminal.Link = null;
             }
+
+            if (vehicle is not null)
+            {
+                Record(EventTypes.OnboardDisconnected, EventSources.Server, new { VehicleId = vehicle, Connection = link.Id, Reason = reason });
+            }
         }
 
         LogClosed(logger, link.Id, vehicle ?? "-", reason);
-        if (vehicle is not null)
+    }
+
+    public void RecordRefusal(string remoteAddress, string? major, string reason)
+    {
+        lock (gate)
         {
-            await RecordAsync(
-                [(EventTypes.OnboardDisconnected, EventSources.Server, new { VehicleId = vehicle, Connection = link.Id, Reason = reason })],
-                CancellationToken.None);
+            Record(EventTypes.OnboardRefused, EventSources.Server, new { Remote = remoteAddress, ProtocolMajor = major, Reason = reason });
         }
     }
 
-    public Task RecordRefusalAsync(string remoteAddress, string? major, string reason, CancellationToken cancellationToken) =>
-        RecordAsync([(EventTypes.OnboardRefused, EventSources.Server, new { Remote = remoteAddress, ProtocolMajor = major, Reason = reason })], cancellationToken);
+    /// <summary>Waits until every event decided so far is in the event record (or failed to get there and was logged).</summary>
+    public Task FlushAsync(CancellationToken cancellationToken)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (gate)
+        {
+            if (!pending.Writer.TryWrite(new Pending(null, null, null, done)))
+            {
+                return Task.CompletedTask;
+            }
+        }
+
+        return done.Task.WaitAsync(cancellationToken);
+    }
 
     public IReadOnlyList<OnboardTerminalStatus> Snapshot()
     {
@@ -204,7 +264,12 @@ public sealed partial class OnboardTerminalRegistry(
             {
                 terminal.Timer?.Dispose();
             }
+
+            pending.Writer.TryComplete();
         }
+
+        // What is queued still gets written; the database outlives this.
+        writing.Wait(TimeSpan.FromSeconds(10));
     }
 
     private static object Describe(KnownTerminal terminal, TerminalLink link, OnboardInput input) => input.KindCase switch
@@ -225,7 +290,6 @@ public sealed partial class OnboardTerminalRegistry(
     private void OnStaleTimer(object? state)
     {
         var terminal = (KnownTerminal)state!;
-        object? stale = null;
         lock (gate)
         {
             if (disposed || terminal.Stale)
@@ -242,37 +306,42 @@ public sealed partial class OnboardTerminalRegistry(
             }
 
             terminal.Stale = true;
-            stale = new
+            Record(EventTypes.OnboardStale, EventSources.Server, new
             {
                 terminal.VehicleId,
                 LastFreshReportWrittenNoEarlierThan = terminal.FreshWrittenAt,
                 Connected = terminal.Link is not null,
-            };
+            });
         }
-
-        _ = RecordAsync([(EventTypes.OnboardStale, EventSources.Server, stale!)], CancellationToken.None);
     }
 
-    /// <summary>Appends in order. A failure is logged, not thrown: it must not end a terminal's stream.</summary>
-    private async Task RecordAsync(List<(string Type, string Source, object Data)> events, CancellationToken cancellationToken)
-    {
-        if (events.Count == 0)
-        {
-            return;
-        }
+    /// <summary>Queues one event for the writer. Called under the lock, so the queue's order is the order of decisions.</summary>
+    private void Record(string type, string source, object data) =>
+        pending.Writer.TryWrite(new Pending(type, source, data, null));
 
-        try
+    /// <summary>
+    /// The one writer. A failure is logged, not thrown: the event record
+    /// being unreachable must not end a terminal's stream.
+    /// </summary>
+    private async Task WriteAsync()
+    {
+        await foreach (var item in pending.Reader.ReadAllAsync())
         {
-            await using var scope = scopes.CreateAsyncScope();
-            var store = scope.ServiceProvider.GetRequiredService<EventStore>();
-            foreach (var (type, source, data) in events)
+            if (item.Flushed is { } flushed)
             {
-                await store.AppendAsync(type, source, data, cancellationToken);
+                flushed.TrySetResult();
+                continue;
             }
-        }
-        catch (Exception e) when (e is not OperationCanceledException)
-        {
-            LogNotRecorded(logger, e, string.Join(", ", events.Select(e => e.Type)));
+
+            try
+            {
+                await using var scope = scopes.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<EventStore>().AppendAsync(item.Type!, item.Source!, item.Data, CancellationToken.None);
+            }
+            catch (Exception e)
+            {
+                LogNotRecorded(logger, e, item.Type!);
+            }
         }
     }
 
@@ -282,8 +351,14 @@ public sealed partial class OnboardTerminalRegistry(
     [LoggerMessage(Level = LogLevel.Information, Message = "Stream {Connection} of vehicle {Vehicle} ended: {Reason}")]
     private static partial void LogClosed(ILogger logger, string connection, string vehicle, string reason);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Could not record {Types} in the event record")]
-    private static partial void LogNotRecorded(ILogger logger, Exception exception, string types);
+    [LoggerMessage(Level = LogLevel.Error, Message = "Could not record {Type} in the event record")]
+    private static partial void LogNotRecorded(ILogger logger, Exception exception, string type);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Stream {Connection}: skipped {Count} onboard input(s), {Why}")]
+    private static partial void LogInputsSkipped(ILogger logger, string connection, int count, string why);
+
+    /// <summary>An event to append, or (with <c>Flushed</c>) a marker that completes once everything before it is written.</summary>
+    private sealed record Pending(string? Type, string? Source, object? Data, TaskCompletionSource? Flushed);
 }
 
 /// <summary>One stream from one terminal. Its sequence numbers start at 1 on every stream.</summary>

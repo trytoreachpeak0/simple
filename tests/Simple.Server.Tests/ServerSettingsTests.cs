@@ -198,6 +198,12 @@ public sealed class ServerSettingsTests
             {
                 process.Kill(entireProcessTree: true);
             }
+
+            // A server that wrongly went on starting has made its key by now.
+            if (OperatingSystem.IsWindows())
+            {
+                Simple.Server.OnboardTerminals.ServerCertificate.Delete(new ServerSettings { Instance = instance }.ServerKeyName, machineKey: false);
+            }
         }
     }
 }
