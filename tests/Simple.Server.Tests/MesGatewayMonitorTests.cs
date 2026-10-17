@@ -95,6 +95,29 @@ public sealed class MesGatewayMonitorTests : IAsyncLifetime
         Assert.Equal(MesGatewayMonitor.CauseGateway, Assert.Single(events).Data!.Value.GetProperty("cause").GetString());
     }
 
+    /// <summary>
+    /// What the gateway or the fetch said goes into the status API and the
+    /// event record redacted, whatever the gateway sent (#80).
+    /// </summary>
+    [Fact]
+    public async Task ErrorsAreShownAndRecordedWithTheirCredentialsTakenOut()
+    {
+        const string Secret = "not-a-real-password";
+        var failed = new MesSnapshot(4, DateTimeOffset.UtcNow, false, new MesReadFailure("read", $"ORA-01017: logon denied (User Id=SIMPLE_RO;Password={Secret})"), null);
+
+        await monitor.SnapshotReceivedAsync(failed, Cancel);
+        var read = monitor.Status();
+        await monitor.GatewayUnreachableAsync($"GET http://simple:{Secret}@127.0.0.1:9/api/v1/snapshot failed", Cancel);
+        var gateway = monitor.Status();
+
+        Assert.DoesNotContain(Secret, read.LastRound!.Failure!.Message, StringComparison.Ordinal);
+        Assert.Contains("ORA-01017", read.LastRound.Failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(Secret, gateway.GatewayError, StringComparison.Ordinal);
+        var events = await MonitorEventsAsync();
+        Assert.Equal([MesGatewayMonitor.CauseRead, MesGatewayMonitor.CauseGateway], events.Select(e => e.Data!.Value.GetProperty("cause").GetString()));
+        Assert.All(events, e => Assert.DoesNotContain(Secret, e.Data!.Value.GetProperty("error").GetString(), StringComparison.Ordinal));
+    }
+
     private static MesSnapshot Round(long round) => new(round, DateTimeOffset.UtcNow, true, null, [Row]);
 
     private async Task<List<EventView>> MonitorEventsAsync()

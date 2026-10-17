@@ -48,6 +48,9 @@ public sealed class FakeRiotTarget : RiotTarget
 
     public override RiotSession Session => session;
 
+    /// <summary>Where the fake writes its program log; deleted, if it can be, when the target is disposed.</summary>
+    public string LogDirectory => logDirectory;
+
     public override FakeRiotControl Control { get; }
 
     public override bool AllowsWrites => true;
@@ -97,8 +100,12 @@ public sealed class FakeRiotTarget : RiotTarget
         {
             Directory.Delete(logDirectory, recursive: true);
         }
-        catch (DirectoryNotFoundException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            // Hosted in process, the fake may not have let go of FakeRiot.log
+            // yet when the factory returns (#80, as in #69), or a scanner holds
+            // it; a folder left in %TEMP% harms nothing. DirectoryNotFoundException
+            // is an IOException too.
         }
     }
 }

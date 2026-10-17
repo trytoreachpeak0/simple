@@ -106,13 +106,17 @@ public sealed class AccountChanges(SimpleDbContext db, EventStore events, IPassw
             return AccountChange.Conflict("Only the watch account has the on-duty pause.");
         }
 
+        // Written in one statement and read back as written: the account read
+        // above may predate a new password set meanwhile, and the registry
+        // ignores a state older than the one it has, so the pause would wait
+        // for the next flush (#80).
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        account.Paused = paused;
-        await db.SaveChangesAsync(cancellationToken);
+        await db.Accounts.Where(a => a.Id == account.Id).ExecuteUpdateAsync(set => set.SetProperty(a => a.Paused, paused), cancellationToken);
         await events.AppendAsync(EventTypes.AccountPauseSet, actor, new { name = account.Name, paused }, cancellationToken);
+        var written = await db.Accounts.AsNoTracking().SingleAsync(a => a.Id == account.Id, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        registry.Put(account, endLogins: false);
-        return AccountChange.Done(account);
+        registry.Put(written, endLogins: false);
+        return AccountChange.Done(written);
     }
 
     /// <summary>

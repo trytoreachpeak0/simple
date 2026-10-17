@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using Simple.Cli.Instances;
 
@@ -9,6 +10,48 @@ public sealed class LocalSystemTests : IDisposable
     private readonly InstanceStore store = new(Path.Combine(Path.GetTempPath(), $"simple-cli-test-{Guid.NewGuid():N}"));
 
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
+
+    /// <summary>"log" is the program log directory (ADR 0034), "output" the console output; status had the latter as "log" (#80).</summary>
+    [Fact]
+    public async Task StatusNamesEachProcesssProgramLogAndItsConsoleOutputApart()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var output = store.LogPath(instance, "mes-gateway");
+        // This process's pid with another start time: recorded, but gone.
+        var gone = new ProcessRecord("mes-gateway", "mes-gateway", 1, Environment.ProcessId, DateTimeOffset.UnixEpoch, "Simple.MesGateway.exe", [20002], output);
+        store.Write(new InstanceState(instance, @"F:\simple\repo", CliRunner.SqlServer, DateTimeOffset.UtcNow, [20002], [gone]));
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null);
+
+        var outcome = await system.StatusAsync(instance, Cancel);
+
+        var line = Assert.Single(outcome.Lines, l => l.TrimStart().StartsWith("mes-gateway ", StringComparison.Ordinal));
+        Assert.EndsWith($"log {store.ProgramLogDirectory(instance, "mes-gateway")}  output {output}", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>The same for up when a process does not get ready: its last console lines are shown, and both are named apart (#80).</summary>
+    [Fact]
+    public void AProcessThatDoesNotGetReadyIsReportedWithItsConsoleOutputAndItsProgramLogNamedApart()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var output = store.LogPath(instance, "mes-gateway");
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        File.WriteAllLines(output, ["starting", "refused: no source"]);
+        var process = new ProcessRecord("mes-gateway", "mes-gateway", 1, 1234, DateTimeOffset.UnixEpoch, "Simple.MesGateway.exe", [20002], output);
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null);
+
+        var outcome = system.NotReady(instance, process, "exited with 3", [], string.Empty);
+
+        var programLog = store.ProgramLogDirectory(instance, "mes-gateway");
+        Assert.Equal(ExitCodes.NotReady, outcome.ExitCode);
+        Assert.Equal(
+            $"mes-gateway exited with 3. Its console output: {output} (simple logs mes-gateway --output); its program log: {programLog} (simple logs mes-gateway).",
+            outcome.Error);
+        Assert.Equal(["Last lines of its console output:", "starting", "refused: no source"], outcome.Lines);
+        var result = JsonSerializer.SerializeToElement(outcome.Result, Outcome.JsonOptions);
+        Assert.Equal(programLog, result.GetProperty("programLog").GetString());
+        Assert.Equal(output, result.GetProperty("output").GetString());
+        Assert.False(result.TryGetProperty("log", out _));
+    }
 
     [Fact]
     public async Task DownRefusesAnInstanceStartedFromAnotherClone()

@@ -301,7 +301,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         Arguments = plan.CommandLine,
         Slot = plan.Slot,
         machine.Slots,
-        Environment = RunEnvironment(),
+        Environment = RunEnvironment(machine),
         Run = run,
         WaitSeconds = (int)Wait.TotalSeconds,
         AliveSeconds = Alive.TotalSeconds,
@@ -310,7 +310,8 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         machine.Sweep,
     };
 
-    private Dictionary<string, string> RunEnvironment()
+    /// <summary>Set for every command run on <paramref name="machine"/>, on top of the machine's own.</summary>
+    internal static Dictionary<string, string> RunEnvironment(IRemoteMachine machine)
     {
         var environment = new Dictionary<string, string>
         {
@@ -331,6 +332,11 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
             environment[name] = value;
         }
 
+        // Restore as on CI (Directory.Build.props), and no machine turns it
+        // off: a lock file that does not match its project fails there with
+        // NU1004, not first on CI (#80). CI's separate "Lock files up to
+        // date" step (ci.yml) is not run there.
+        environment["CI"] = "true";
         return environment;
     }
 
