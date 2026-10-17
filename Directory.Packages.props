@@ -16,7 +16,10 @@
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="6.1.7" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Windows.CsWin32" Version="0.3.363" />
+    <!-- Retries with backoff and jitter (ADR 0008): the MES gateway's rounds and the server's polling of the gateway. -->
+    <PackageVersion Include="Polly.Core" Version="8.8.0" />
     <!-- From trytoreachpeak0/riot-sdk on GitHub Packages (nuget.config, ADR 0028).
          Brings RIoT.Sdk.Core and RIoT.Sdk.Generated at the same version. -->
     <PackageVersion Include="RIoT.Sdk.Facade" Version="0.3.0" />

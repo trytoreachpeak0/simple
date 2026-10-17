@@ -1,0 +1,29 @@
+[
+  {
+    "taskType": "SAMPLE_TO_OVEN",
+    "sublot": "SMP0001.01",
+    "area": "S1-1",
+    "eqp": "SMP-DA-01",
+    "step": "SMP-CURE",
+    "dates": "2026-01-05T08:00:00",
+    "package": "SMP-PKG-A"
+  },
+  {
+    "taskType": "SAMPLE_TO_OVEN",
+    "sublot": "SMP0002.01",
+    "area": "S1-2",
+    "eqp": "SMP-DA-02",
+    "step": "SMP-CURE",
+    "dates": "2026-01-05T08:10:00",
+    "package": "SMP-PKG-A"
+  },
+  {
+    "taskType": "SAMPLE_TO_GATE",
+    "sublot": "SMP0003.01",
+    "area": "S2-1",
+    "eqp": "SMP-WB-01",
+    "step": "SMP-GATE",
+    "dates": "2026-01-05T08:20:00",
+    "package": "SMP-PKG-B"
+  }
+]

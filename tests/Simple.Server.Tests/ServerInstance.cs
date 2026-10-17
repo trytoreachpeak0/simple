@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Simple.Server.Configuration;
+using Simple.Server.Mes;
 using Simple.Server.Persistence;
 
 namespace Simple.Server.Tests;
@@ -10,7 +13,9 @@ namespace Simple.Server.Tests;
 /// <summary>
 /// One server instance, run in process, with a database of its own: a random
 /// instance name, so concurrent tests and sessions never share a database.
-/// Disposing stops the server and drops the database.
+/// Disposing stops the server and drops the database. Its MES gateway is a
+/// <see cref="StubMesGateway"/> that answers a good, empty round unless a
+/// test tells it otherwise, so the MES adds nothing to the event record.
 /// </summary>
 public sealed class ServerInstance : IAsyncDisposable
 {
@@ -34,11 +39,18 @@ public sealed class ServerInstance : IAsyncDisposable
         {
             [ServerSettings.InstanceKey] = Instance,
             [ServerSettings.ConnectionStringKey] = SqlServer,
+            // Nothing listens there; the stub answers in its place.
+            [$"{MesGatewaySettings.Section}:Url"] = "http://127.0.0.1:9",
+            [$"{MesGatewaySettings.Section}:PollInterval"] = "00:00:00.1",
+            [$"{MesGatewaySettings.Section}:RetryMaxDelay"] = "00:00:00.3",
+            [$"{MesGatewaySettings.Section}:StaleAfter"] = "00:00:02",
         };
         Database = new ServerSettings { Instance = Instance, ConnectionString = SqlServer };
     }
 
     public string Instance { get; }
+
+    public StubMesGateway MesGateway { get; } = new();
 
     public ServerSettings Database { get; }
 
@@ -53,7 +65,7 @@ public sealed class ServerInstance : IAsyncDisposable
             throw new InvalidOperationException("The server is already running.");
         }
 
-        var created = new Factory(settings);
+        var created = new Factory(settings, MesGateway);
         try
         {
             var client = created.CreateClient();
@@ -98,9 +110,13 @@ public sealed class ServerInstance : IAsyncDisposable
         }
     }
 
-    private sealed class Factory(Dictionary<string, string?> settings) : WebApplicationFactory<Program>
+    private sealed class Factory(Dictionary<string, string?> settings, StubMesGateway mesGateway) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder) =>
-            builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(settings));
+            builder
+                .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(settings))
+                .ConfigureTestServices(services => services
+                    .AddHttpClient(MesGatewayPoller.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(mesGateway.CreateHandler));
     }
 }

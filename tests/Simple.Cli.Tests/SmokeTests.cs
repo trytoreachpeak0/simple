@@ -54,12 +54,20 @@ public sealed class SmokeTests
         Assert.Equal(ExitCodes.Success, log.ExitCode);
         Assert.Contains("Application started", log.Output, StringComparison.Ordinal);
 
-        // down stops a gracefully: its process is gone and it recorded its stop.
+        // down stops a gracefully: its processes are gone and the server recorded its stop.
+        var gatewayA = Process(ups[0].Output, "mes-gateway");
+        var gatewayStartedA = StartTime(gatewayA.Pid);
         var down = await cli.RunJsonAsync("down", "--instance", a);
         Assert.True(down.ExitCode == ExitCodes.Success, $"down exited with {down.ExitCode}: {down.Output}{Environment.NewLine}{down.Error}");
-        var stopped = Assert.Single(down.Output.GetProperty("result").GetProperty("stopped").EnumerateArray());
-        Assert.Equal("stopped", stopped.GetProperty("outcome").GetString());
+        var stopped = down.Output.GetProperty("result").GetProperty("stopped").EnumerateArray().ToList();
+        Assert.Equal(["server", "mes-gateway"], stopped.Select(s => s.GetProperty("name").GetString()));
+        Assert.All(stopped, s => Assert.Equal("stopped", s.GetProperty("outcome").GetString()));
         using (var gone = ChildProcess.Find(serverA.Pid, startedA))
+        {
+            Assert.Null(gone);
+        }
+
+        using (var gone = ChildProcess.Find(gatewayA.Pid, gatewayStartedA))
         {
             Assert.Null(gone);
         }
@@ -85,15 +93,17 @@ public sealed class SmokeTests
         Assert.False(await cli.DatabaseExistsAsync(b));
     }
 
-    private static (int Pid, string Url) Server(JsonElement output)
+    private static (int Pid, string Url) Server(JsonElement output) => Process(output, "server");
+
+    internal static (int Pid, string Url) Process(JsonElement output, string name)
     {
-        var server = output.GetProperty("result").GetProperty("processes").EnumerateArray().Single(p => p.GetProperty("name").GetString() == "server");
-        return (server.GetProperty("pid").GetInt32(), server.GetProperty("url").GetString()!);
+        var process = output.GetProperty("result").GetProperty("processes").EnumerateArray().Single(p => p.GetProperty("name").GetString() == name);
+        return (process.GetProperty("pid").GetInt32(), process.GetProperty("url").GetString()!);
     }
 
-    private static DateTimeOffset StartTime(int pid)
+    internal static DateTimeOffset StartTime(int pid)
     {
-        using var process = Process.GetProcessById(pid);
+        using var process = System.Diagnostics.Process.GetProcessById(pid);
         return new DateTimeOffset(process.StartTime.ToUniversalTime());
     }
 }
