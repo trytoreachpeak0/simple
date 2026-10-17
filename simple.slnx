@@ -16,6 +16,7 @@
     <Project Path="tests/Simple.MesGateway.Tests/Simple.MesGateway.Tests.csproj" />
     <Project Path="tests/Simple.OnboardTerminal.Core.Tests/Simple.OnboardTerminal.Core.Tests.csproj" />
     <Project Path="tests/Simple.OnboardTerminal.Headless.Tests/Simple.OnboardTerminal.Headless.Tests.csproj" />
+    <Project Path="tests/Simple.Server.Riot.Tests/Simple.Server.Riot.Tests.csproj" />
     <Project Path="tests/Simple.Server.Tests/Simple.Server.Tests.csproj" />
   </Folder>
 </Solution>
