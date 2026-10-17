@@ -35,7 +35,8 @@ public sealed class EventRecordTests : IAsyncLifetime
         while (page.HasMore);
 
         Assert.Equal(
-            [EventTypes.ServerStarted, "test.tick", "test.tick", "test.tick", "test.tick", "test.tick"],
+            // A new instance has no server key yet: its first start makes one and says so.
+            [EventTypes.ServerStarted, EventTypes.OnboardServerKeyCreated, "test.tick", "test.tick", "test.tick", "test.tick", "test.tick"],
             seen.Select(e => e.Type));
         Assert.Equal(seen.Select(e => e.Id).Order(), seen.Select(e => e.Id));
         Assert.Equal(seen.Count, seen.Select(e => e.Id).Distinct().Count());
@@ -97,7 +98,8 @@ public sealed class EventRecordTests : IAsyncLifetime
 
         var afterRestart = await GetPageAsync(client, "");
         Assert.Equal(
-            [EventTypes.ServerStarted, EventTypes.ServerStopped, EventTypes.ServerStarted],
+            // The second start finds the key the first one made.
+            [EventTypes.ServerStarted, EventTypes.OnboardServerKeyCreated, EventTypes.ServerStopped, EventTypes.ServerStarted],
             afterRestart.Items.Select(e => e.Type));
         Assert.All(afterRestart.Items, e => Assert.Equal(EventSources.Server, e.Source));
         Assert.Equal(server.Instance, afterRestart.Items[0].Data!.Value.GetProperty("instance").GetString());

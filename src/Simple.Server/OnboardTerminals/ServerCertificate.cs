@@ -30,9 +30,14 @@ public static class ServerCertificate
 {
     private static readonly CngProvider Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider;
 
-    /// <summary>Opens the named key, creating it first if it does not exist, and makes a certificate for it.</summary>
-    public static X509Certificate2 LoadOrCreate(string keyName, bool machineKey)
+    /// <summary>
+    /// Opens the named key, creating it first if it does not exist, and makes a
+    /// certificate for it. <c>Created</c> tells that the key is new, and with it
+    /// the pin: terminals pinned to an earlier key refuse this server.
+    /// </summary>
+    public static (X509Certificate2 Certificate, bool Created) LoadOrCreate(string keyName, bool machineKey)
     {
+        var created = !Exists(keyName, machineKey);
         using var key = OpenOrCreateKey(keyName, machineKey);
         using var ecdsa = new ECDsaCng(key);
         var request = new CertificateRequest(new X500DistinguishedName("CN=simple-server"), ecdsa, HashAlgorithmName.SHA256);
@@ -42,7 +47,7 @@ public static class ServerCertificate
         // Terminals look at the public key only, so the validity period
         // matters to nothing; the certificate is made anew on every start.
         var now = DateTimeOffset.UtcNow;
-        return request.CreateSelfSigned(now.AddDays(-1), now.AddYears(10));
+        return (request.CreateSelfSigned(now.AddDays(-1), now.AddYears(10)), created);
     }
 
     public static bool Exists(string keyName, bool machineKey) =>

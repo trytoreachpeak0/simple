@@ -65,6 +65,15 @@ try
     await app.RunAsync();
     return 0;
 }
+catch (System.Security.Cryptography.CryptographicException e)
+{
+    // For example a machine key store the account may not create keys in.
+    var settings = builder.Configuration;
+    await Console.Error.WriteLineAsync(
+        $"The server refuses to start: it cannot open or create its terminal certificate key {settings[ServerSettings.ServerKeyNameKey] ?? $"Simple-Server-{settings[ServerSettings.InstanceKey]}"} "
+        + $"in the {settings[ServerSettings.ServerKeyStoreKey] ?? "User"} key store: {e.Message}");
+    return 2;
+}
 catch (OptionsValidationException e)
 {
     await Console.Error.WriteLineAsync("The server refuses to start: the configuration is invalid.");

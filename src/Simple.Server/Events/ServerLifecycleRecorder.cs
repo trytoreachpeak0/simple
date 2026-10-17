@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Simple.Protocol;
 using Simple.Server.Configuration;
+using Simple.Server.OnboardTerminals;
 using Simple.Server.Persistence;
 using Simple.Server.Status;
 
@@ -13,6 +15,7 @@ namespace Simple.Server.Events;
 public sealed partial class ServerLifecycleRecorder(
     IServiceScopeFactory scopes,
     ServerInfo info,
+    OnboardEndpoint endpoint,
     IOptions<ServerSettings> settings,
     ILogger<ServerLifecycleRecorder> logger) : IHostedLifecycleService
 {
@@ -33,6 +36,16 @@ public sealed partial class ServerLifecycleRecorder(
     public async Task StartedAsync(CancellationToken cancellationToken)
     {
         await AppendAsync(EventTypes.ServerStarted, cancellationToken);
+        if (endpoint.ConfiguredUrl is not null && endpoint.Certificate is { } certificate && endpoint.KeyCreated)
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<EventStore>().AppendAsync(
+                EventTypes.OnboardServerKeyCreated,
+                EventSources.Server,
+                new { KeyName = settings.Value.ServerKeyName, Store = settings.Value.ServerKeyIsMachineKey ? "machine" : "user", Pin = CertificatePin.Of(certificate) },
+                cancellationToken);
+        }
+
         lock (gate)
         {
             started = true;

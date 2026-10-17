@@ -21,7 +21,7 @@ namespace Simple.Server.OnboardTerminals;
 /// listener by the connection they arrive on (<see cref="KeepToOwnListener"/>),
 /// not by host name or port, which a caller chooses.
 /// </summary>
-public sealed class OnboardEndpoint(IOptions<ServerSettings> settings) : IDisposable
+public sealed partial class OnboardEndpoint(IOptions<ServerSettings> settings, ILogger<OnboardEndpoint> logger) : IDisposable
 {
     private const string TerminalListenerItem = "Simple.OnboardTerminalListener";
 
@@ -30,6 +30,9 @@ public sealed class OnboardEndpoint(IOptions<ServerSettings> settings) : IDispos
     private ListenOptions? listener;
 
     public string? ConfiguredUrl => settings.Value.OnboardTerminalsUrl;
+
+    /// <summary>Whether this process had to create the server key: a new key, a new pin.</summary>
+    public bool KeyCreated { get; private set; }
 
     /// <summary>The certificate terminals pin, made from the server's persisted key on first use.</summary>
     public X509Certificate2 Certificate
@@ -45,7 +48,20 @@ public sealed class OnboardEndpoint(IOptions<ServerSettings> settings) : IDispos
                         throw new PlatformNotSupportedException("The server's key lives in the Windows key store (CNG); the server runs on Windows.");
                     }
 
-                    certificate = ServerCertificate.LoadOrCreate(settings.Value.ServerKeyName, settings.Value.ServerKeyIsMachineKey);
+                    var store = settings.Value.ServerKeyIsMachineKey ? "machine" : $@"user {Environment.UserDomainName}\{Environment.UserName}";
+                    (certificate, KeyCreated) = ServerCertificate.LoadOrCreate(settings.Value.ServerKeyName, settings.Value.ServerKeyIsMachineKey);
+                    var pin = CertificatePin.Of(certificate);
+                    if (KeyCreated)
+                    {
+                        // Never silently: on a server that had a key before
+                        // (another account, a rebuilt profile) every terminal
+                        // now refuses it until given the new pin.
+                        LogKeyCreated(logger, settings.Value.ServerKeyName, store, pin);
+                    }
+                    else
+                    {
+                        LogKeyLoaded(logger, settings.Value.ServerKeyName, store, pin);
+                    }
                 }
 
                 return certificate;
@@ -147,6 +163,12 @@ public sealed class OnboardEndpoint(IOptions<ServerSettings> settings) : IDispos
             certificate?.Dispose();
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "No server key {KeyName} in the {Store} key store: created a new one. Certificate pin {Pin}. If this server had a key before, its pin has changed and every terminal pinned to the old one refuses this server until it is given the new pin.")]
+    private static partial void LogKeyCreated(ILogger logger, string keyName, string store, string pin);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Server key {KeyName} from the {Store} key store, certificate pin {Pin}")]
+    private static partial void LogKeyLoaded(ILogger logger, string keyName, string store, string pin);
 
     private static void Listen(KestrelServerOptions kestrel, BindingAddress address, Action<ListenOptions> configure)
     {

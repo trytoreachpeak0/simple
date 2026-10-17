@@ -51,6 +51,17 @@ public sealed class ServerSettingsTests
     public void TheTerminalEndpointMayListenWhereVehiclesReachIt(string url) =>
         Assert.Empty(Check((ServerSettings.OnboardTerminalsUrlKey, url)));
 
+    [Fact]
+    public void ATerminalEndpointOffLoopbackDoesNotLetTheApiOffLoopback()
+    {
+        var failures = Check(
+            (ServerSettings.OnboardTerminalsUrlKey, "https://172.19.205.222:5181"),
+            ("urls", "http://172.19.205.222:5180"));
+
+        var failure = Assert.Single(failures);
+        Assert.StartsWith("urls 'http://172.19.205.222:5180' is not a loopback address", failure, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("http://172.19.205.222:5181", "is not an https:// address")]
     [InlineData("https://0.0.0.0:5181", "listens on every network interface")]

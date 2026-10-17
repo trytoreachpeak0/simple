@@ -26,6 +26,13 @@ public static class EventTypes
     public const string ServerStarted = "server.started";
     public const string ServerStopped = "server.stopped";
 
+    /// <summary>
+    /// The server found no key for its terminal certificate and created one:
+    /// the certificate pin is new, and terminals pinned to an earlier key refuse
+    /// the server until they are given it.
+    /// </summary>
+    public const string OnboardServerKeyCreated = "onboard.server-key-created";
+
     /// <summary>The first report arrived on a terminal's new stream.</summary>
     public const string OnboardConnected = "onboard.connected";
 

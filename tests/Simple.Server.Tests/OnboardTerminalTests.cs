@@ -208,9 +208,11 @@ public sealed class OnboardTerminalTests
     {
         await using var server = new ServerInstance(kestrel: true);
         string pin;
+        IReadOnlyList<EventView> created;
         using (var api = server.Start())
         {
             pin = (await TestTerminal.EndpointAsync(api)).CertificatePin;
+            created = await Api.EventsAsync(api, EventTypes.OnboardServerKeyCreated);
             var certificate = server.Services.GetRequiredService<OnboardEndpoint>().Certificate;
             using var key = certificate.GetECDsaPrivateKey();
             // Bound by name to the persisted key: nothing was imported, so
@@ -218,9 +220,12 @@ public sealed class OnboardTerminalTests
             Assert.Equal(server.Database.ServerKeyName, Assert.IsType<ECDsaCng>(key).Key.KeyName);
         }
 
+        // A new key is said so, with its pin, in the event record; a key found again is not.
+        Assert.Equal(pin, Assert.Single(created).Text("pin"));
         await server.StopAsync();
-        using var again = server.Start();
 
+        using var again = server.Start();
         Assert.Equal(pin, (await TestTerminal.EndpointAsync(again)).CertificatePin);
+        Assert.Single(await Api.EventsAsync(again, EventTypes.OnboardServerKeyCreated));
     }
 }
