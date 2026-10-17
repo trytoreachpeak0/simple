@@ -141,6 +141,10 @@ try
     app.MapStatusEndpoints();
     app.MapEventEndpoints();
 
+    // Builds every endpoint now, so that a misuse caught while they are built
+    // (Access.OnboardTerminal on a non-terminal endpoint, ServedOnOverview on
+    // one that needs login) refuses the start instead of failing requests.
+    _ = app.Services.GetRequiredService<Microsoft.AspNetCore.Routing.EndpointDataSource>().Endpoints;
     await app.StartAsync();
     await app.WaitForShutdownAsync();
     return 0;

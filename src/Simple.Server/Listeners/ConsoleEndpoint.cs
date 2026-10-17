@@ -98,9 +98,10 @@ public sealed partial class ConsoleEndpoint(
     /// Reads the console's certificate, or makes it on the first start with a
     /// console address. When the stored certificate does not name the
     /// configured address and this machine, or its key is gone or not its
-    /// own, only the console closes (the product owner, 2026-10-18): the
-    /// server runs on, the console's address closes every connection, and the
-    /// status and the program log say why and what to do. A new certificate
+    /// own, only the console closes and the server runs on, onboard terminals
+    /// and dispatching included (the product owner, 2026-10-18). Here that
+    /// means the console's address closes every connection, and the status
+    /// and the program log say why and what to do. A new certificate
     /// has to be installed on every console PC, so it is never made without a
     /// person asking for it (<see cref="ConsoleCertificateCommands.DiscardName"/>).
     /// </summary>
@@ -160,7 +161,10 @@ public sealed partial class ConsoleEndpoint(
             }
             catch (System.Security.Cryptography.CryptographicException e)
             {
-                Close($"The server cannot open the console certificate's key {keyName} in the {store} key store: {e.Message}");
+                Close(
+                    $"The server cannot read the stored console certificate, or open its key {keyName} in the {store} key store: {e.Message} "
+                    + $"Run Simple.Server {ConsoleCertificateCommands.DiscardName} and restart, so that the server makes a new certificate, "
+                    + "and install that one on every console PC (ADR 0046).");
                 return;
             }
 
@@ -197,7 +201,7 @@ public sealed partial class ConsoleEndpoint(
         }
     }
 
-    /// <summary>Only the console closes; the server runs on (the product owner, 2026-10-18).</summary>
+    /// <summary>Only the console closes; the server runs on (the product owner, 2026-10-18). Says why in the status and the program log.</summary>
     private void Close(string why)
     {
         lock (gate)

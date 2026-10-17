@@ -161,6 +161,45 @@ public sealed class ConsoleListenerTests
     }
 
     [Fact]
+    public async Task ACorruptStoredCertificateClosesOnlyTheConsole()
+    {
+        await using var server = new ServerInstance(kestrel: true, extraSettings: Listening());
+        await ConsoleOfAsync(server.Start());
+        await server.StopAsync();
+        await using (var db = server.CreateDbContext())
+        {
+            var stored = await db.ConsoleCertificates.SingleAsync(Cancel);
+            db.ConsoleCertificates.Remove(stored);
+            await db.SaveChangesAsync(Cancel);
+            db.ConsoleCertificates.Add(new ConsoleCertificateRecord { Certificate = [1, 2, 3], CreatedAt = DateTimeOffset.UtcNow });
+            await db.SaveChangesAsync(Cancel);
+        }
+
+        var admin = server.Start();
+        var closed = await ConsoleOfAsync(admin);
+
+        Assert.False(closed.Serving);
+        Assert.Contains("The server cannot read the stored console certificate", closed.Problem, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync(new Uri("/api/v1/status", UriKind.Relative), Cancel)).StatusCode);
+    }
+
+    [Fact]
+    public async Task DiscardingTheCertificateSaysHowToDeleteItsKeyFromTheServersStore()
+    {
+        await using var server = new ServerInstance(kestrel: true, extraSettings: Listening());
+        await ConsoleOfAsync(server.Start());
+        var output = new StringWriter();
+
+        await ConsoleCertificateCommands.DiscardAsync(server.Services, output, Cancel);
+
+        var store = TestKeyStore.IsMachine ? "MachineKey" : "None";
+        Assert.Contains(
+            $"[System.Security.Cryptography.CngKey]::Open('{server.Database.ConsoleKeyName}', [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider, [System.Security.Cryptography.CngKeyOpenOptions]::{store}).Delete()",
+            output.ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ACertificateForAnotherMachineNameClosesOnlyTheConsole()
     {
         await using var server = new ServerInstance(kestrel: true, extraSettings: Listening());

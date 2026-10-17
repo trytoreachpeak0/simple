@@ -1,5 +1,7 @@
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Simple.Server.Configuration;
 using Simple.Server.Events;
 using Simple.Server.Persistence;
 
@@ -52,6 +54,16 @@ public static class ConsoleCertificateCommands
         return 0;
     }
 
+    /// <summary>The one PowerShell line that deletes the console certificate's key from the store the server uses.</summary>
+    public static string DeleteKeyCommand(ServerSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var options = settings.ServerKeyIsMachineKey ? "MachineKey" : "None";
+        return $"[System.Security.Cryptography.CngKey]::Open('{settings.ConsoleKeyName}', "
+            + "[System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider, "
+            + $"[System.Security.Cryptography.CngKeyOpenOptions]::{options}).Delete()";
+    }
+
     public static async Task<int> DiscardAsync(IServiceProvider services, TextWriter output, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(output);
@@ -69,8 +81,12 @@ public static class ConsoleCertificateCommands
         await transaction.CommitAsync(cancellationToken);
         await output.WriteLineAsync(discarded > 0
             ? "The console certificate is discarded. The server makes a new one at its next start; install that one on every console PC. "
-                + "The key stays and is used again: if it may have leaked, delete it (Simple:Console:KeyName, default Simple-Console-<instance>) as the account the server runs as before the restart."
+                + "The key stays and is used again. If it may have leaked, delete it before the restart, as the account the server runs as, in PowerShell:"
             : "There was no console certificate to discard.");
+        if (discarded > 0)
+        {
+            await output.WriteLineAsync(DeleteKeyCommand(scope.ServiceProvider.GetRequiredService<IOptions<ServerSettings>>().Value));
+        }
         return 0;
     }
 }
