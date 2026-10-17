@@ -5,8 +5,9 @@ name: ci
 # and record how long each phase takes (issue #28).
 #
 # Moving CI to another self-hosted machine: change `runs-on` below (the only
-# place that names the runner) and preinstall on the new machine the .NET SDK
-# that global.json pins, plus SQL Server (Express is enough) reachable as
+# place that names the runner) and preinstall on the new machine the latest
+# .NET SDK patch of the feature band that global.json pins (at least the pinned
+# version), plus SQL Server (Express is enough) reachable as
 # .\SQLEXPRESS with Windows authentication and CREATE ANY DATABASE for the
 # runner account. No step downloads an SDK or names the machine.
 on:
@@ -89,18 +90,11 @@ jobs:
         with:
           persist-credentials: false
 
+      # global.json accepts newer patches of the pinned feature band (issue #43):
+      # Microsoft Update replaces the installed patch on its own.
       - name: SDK matches global.json
         timeout-minutes: 2
-        run: |
-          $pinned = (Get-Content global.json -Raw | ConvertFrom-Json).sdk.version
-          $resolved = dotnet --version
-          $code = $LASTEXITCODE
-          if ($code -ne 0 -or $resolved -ne $pinned) {
-            dotnet --list-sdks
-            Write-Output "::error::global.json pins SDK $pinned; this machine resolves '$resolved' (exit code $code). Install SDK $pinned on the runner."
-            exit 1
-          }
-          Write-Output "SDK $resolved"
+        run: pwsh -File scripts/ci/Assert-SdkVersion.ps1
 
       # GitHub Packages needs a token even to read. NuGet takes the credential of
       # the source named "github" in nuget.config from this variable; the token
