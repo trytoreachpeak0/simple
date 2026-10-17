@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- Throwaway probe for #18: verifies gRPC duplex streaming, TLS 1.2 and
+       per-terminal client certificates on the target machines. Published
+       self-contained for win-x64; not part of the product. -->
+  <PropertyGroup>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <AssemblyName>simple-probe-server</AssemblyName>
+    <RootNamespace>Simple.ProtocolProbe.Server</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Protos\probe_v1.proto" GrpcServices="Server" />
+    <Protobuf Include="Protos\probe_v2.proto" GrpcServices="Server" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore" />
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Sinks.File" />
+  </ItemGroup>
+
+</Project>

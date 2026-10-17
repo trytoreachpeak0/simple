@@ -1,0 +1,55 @@
+// Probe protocol, major version 1, as the SERVER sees it (minor 1.1-server).
+//
+// Fields 1-49 of every message are the shared 1.0 base and must stay identical
+// to client/Protos/probe_v1.proto. Field numbers 50+ are each side's own minor
+// addition, deliberately unknown to the other side, so that step 9(c) of #18
+// can show that both sides skip fields they do not know.
+syntax = "proto3";
+
+package simple.probe.v1;
+
+option csharp_namespace = "Simple.ProtocolProbe.V1";
+
+service Probe {
+  rpc Connect(stream Report) returns (stream Downstream);
+}
+
+message Report {
+  uint64 seq = 1;
+  // Milliseconds since the client process started (monotonic). Never a wall clock.
+  uint64 elapsed_ms = 2;
+  // Random per client process start.
+  string instance_id = 3;
+  // Empty until the server has confirmed which vehicle this key belongs to.
+  string vehicle_id = 4;
+  // Command ids received since the previous report.
+  repeated uint64 received_command_ids = 5;
+  string client_version = 6;
+  uint32 protocol_minor = 7;
+}
+
+message Downstream {
+  oneof body {
+    Command command = 1;
+    Status status = 2;
+  }
+  // 1.1-server addition: unknown to the 1.0 client.
+  string display_hint = 50;
+}
+
+message Command {
+  uint64 id = 1;
+  string text = 2;
+}
+
+message Status {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STATE_PENDING = 1;
+    STATE_ACCEPTED = 2;
+  }
+  State state = 1;
+  string pairing_code = 2;
+  string vehicle_id = 3;
+  string message = 4;
+}

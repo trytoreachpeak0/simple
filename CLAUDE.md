@@ -74,6 +74,7 @@ reviewed in pull requests like the code is.
 | `scenarios/` | Scenarios in the shared format |
 | `samples/replay/` | Replay samples recorded from the real systems |
 | `sites/<site>/` | Per-site starting business configuration |
+| `tools/` | One-off verification tools, not part of the product; removed once their conclusions are written back into the ADR (ADR 0025 for the protocol probe) |
 
 Planned, not created yet: `Simple.Mcp`, the thin AI layer above the command line and the server API.
 
