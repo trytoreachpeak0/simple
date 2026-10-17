@@ -31,27 +31,25 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 RIoT 客户端库 `RIoT.Sdk.*` 来自 `trytoreachpeak0/riot-sdk`，发布在 GitHub Packages（`https://nuget.pkg.github.com/trytoreachpeak0/index.json`），其余包来自 nuget.org，见仓库根的 `nuget.config`。这几个包是公开的，但 GitHub 的 NuGet 源连读取公开包也要令牌，所以每台开发机第一次还原（`dotnet restore`、`dotnet build`、`./simple up` 都会还原）之前，要在本机用户级的 NuGet 配置里存一次令牌：
 
 1. 在 GitHub 的 Settings → Developer settings → Personal access tokens → Tokens (classic) 新建一个令牌，只勾 `read:packages`。GitHub Packages 只认 classic 令牌。每台机器单独建一个，作废时互不影响。
-2. 以之后运行还原的那个用户登录，打开 PowerShell 7，按这台机器的情况选下面一种存法。源的名字必须是 `github`，和 `nuget.config` 里的一致。令牌用 `Read-Host` 读进变量，不直接写在命令行里，免得进 PowerShell 的历史记录文件。
+2. 以之后运行还原的那个用户登录，在本仓库的克隆里打开 PowerShell 7，按这台机器的情况运行下面一条。脚本会提示粘贴令牌，输入时不回显。
 
-   **开发机，交互登录**（例如笔记本）：令牌按当前用户加密（DPAPI）后存进 `%APPDATA%\NuGet\NuGet.Config`，文件里不是明文。
+   **开发机，交互登录**（例如笔记本）：令牌按当前用户加密（DPAPI）保存，文件里不是明文。
 
-   ```powershell
-   $t = Read-Host -Prompt '粘贴令牌后回车' -MaskInput
-   dotnet nuget add source https://nuget.pkg.github.com/trytoreachpeak0/index.json --name github --username trytoreachpeak0 --password $t --configfile "$env:APPDATA/NuGet/NuGet.Config"
-   Remove-Variable t
+   ```
+   pwsh -File scripts/Set-GitHubPackagesToken.ps1
    ```
 
-   **经 SSH 运行还原的远端机器**（例如 `simple remote` 用的 `simple01`）：必须加 `--store-password-in-clear-text`。经 SSH 密钥登录的会话拿不到 DPAPI 的主密钥（实测 `ProtectedData.Protect(CurrentUser)` 报 `Access is denied.`），NuGet 解不开加密存的令牌，还原会 401。代价是这台机器上任何管理员身份的进程都读得到这个令牌；它只有 `read:packages` 权限，泄露了也只能读包。令牌要以运行还原的那个用户（`simple01` 上是 `simpleops`）登录远程桌面去存，存进那个用户自己的配置。
+   **经 SSH 运行还原的远端机器**（例如 `simple remote` 用的 `simple01`）：要加 `-ClearText` 明文保存。经 SSH 密钥登录的会话拿不到 DPAPI 的主密钥（实测 `ProtectedData.Protect(CurrentUser)` 报 `Access is denied.`），NuGet 解不开加密存的令牌，还原会 401。代价是这台机器上任何管理员身份的进程都读得到这个令牌；它只有 `read:packages` 权限，泄露了也只能读包。要以运行还原的那个用户（`simple01` 上是 `simpleops`）登录远程桌面去运行，令牌才会存进那个用户自己的配置。
 
-   ```powershell
-   $t = Read-Host -Prompt '粘贴令牌后回车' -MaskInput
-   dotnet nuget add source https://nuget.pkg.github.com/trytoreachpeak0/index.json --name github --username trytoreachpeak0 --password $t --store-password-in-clear-text --configfile "$env:APPDATA/NuGet/NuGet.Config"
-   Remove-Variable t
+   ```
+   pwsh -File scripts/Set-GitHubPackagesToken.ps1 -ClearText
    ```
 
-   这条命令同时会在用户级配置里登记这个源，别的项目还原时也会查它，不影响本仓库（`nuget.config` 先清掉了机器上的源）。用户级配置里已经有名为 `github` 的源时，命令会报已存在；令牌过期或换了新令牌时也一样。这两种情况把命令里的 `add source https://nuget.pkg.github.com/trytoreachpeak0/index.json --name github` 换成 `update source github --source https://nuget.pkg.github.com/trytoreachpeak0/index.json`，其余照旧。
+   换令牌（过期或作废）时再运行一次同一条命令，新令牌会替换旧的。
 
-仓库里不放任何令牌。
+脚本只往用户级的 `%APPDATA%\NuGet\NuGet.Config` 里写名为 `github` 的凭据（`packageSourceCredentials`），不在那里登记源。源只由本仓库的 `nuget.config` 定义，NuGet 按源的名字把用户级的凭据配上去。这样同一台机器上别的仓库不会因此去查 GitHub Packages。如果改成用 `dotnet nuget add source` 存令牌，源会登记到用户级，所有没写 `<clear />` 的仓库还原时都会去查它；令牌一过期或 GitHub 连不上，它们的还原就会因 `NU1301` 失败。笔记本上 v2 线的 `8005-agv-onboard-hmi`、`slots-simulator`、`8005-mes-ingest` 和 riot-sdk 都没有自己的 `nuget.config`，会受影响。用户级配置里已经登记了名为 `github` 的源（例如以前照旧写法存过）时，脚本会删掉那一行并说明。
+
+令牌从头到尾不出现在任何命令行上：不进 PowerShell 的历史记录，也不会作为 `dotnet.exe` 的参数被开了命令行审计的机器记下来。仓库里不放任何令牌。
 
 没做这一步时，还原 `RIoT.Sdk.*` 会因为 401 失败。CI 不用这一步：它用每次运行自带的 `GITHUB_TOKEN`。
 
