@@ -730,8 +730,8 @@ public sealed class FakeRiotWorld
     /// RIoT gives the vehicle no order and the vehicle does not move (rounds
     /// 29-F and 30; ADR 0022 and BC-VEH-007, the product owner's statements).
     /// Pressing the emergency-stop button stops the vehicle (CAN_NOT_RECOVER);
-    /// the executing order stays EXECUTING, held by the stop (rounds 27 A and
-    /// 28: about 14 minutes, never HANG; Q-035). RIoT cannot release it while
+    /// the executing order stays EXECUTING, held by the stop (round 28: about
+    /// 14 minutes, 520 samples, never HANG; round 27 A, a short watch; Q-035). RIoT cannot release it while
     /// the button is pressed; letting go leaves the software stop set,
     /// CAN_RECOVER, until it is released in RIoT (round 27 A; the product
     /// owner, ADR 0009).
@@ -956,8 +956,9 @@ public sealed class FakeRiotWorld
         }
 
         // The head of the vehicle's queue goes first, promoted orders ahead
-        // (BC-ORDER-014); a head too new to start yet is waited for, not
-        // passed over by an older order behind it.
+        // (BC-ORDER-014). A head too new to start yet is waited for, not
+        // passed over by an older order behind it: the fake's choice; the lab
+        // never saw a promoted order that was newer than the queue time.
         var next = orders
             .Where(o => o.State == OrderStates.Queueing && o.AppointVehicleKey == v.Key)
             .OrderByDescending(o => o.Promotion)

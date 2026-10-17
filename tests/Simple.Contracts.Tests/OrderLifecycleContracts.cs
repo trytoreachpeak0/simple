@@ -30,7 +30,13 @@ public sealed class OrderLifecycleContracts : OrderContractTest
         Assert.Equal(Facts.ReachableStation, idle.CurrentPosition);
     }
 
-    /// <summary>Every executing order shows CONTROL_STATE_ERR, with no emergency stop: it is not a fault signal.</summary>
+    /// <summary>
+    /// Every executing order shows CONTROL_STATE_ERR, with no emergency stop:
+    /// it is not a fault signal. Seen on the production RIoT only (round 44,
+    /// two orders); in round 38 on the test RIoT (map 30) all 36 readings
+    /// while the order executed were CONTROL_STATE_OK, 8 of them with the
+    /// vehicle moving. It may hold on the production RIoT only.
+    /// </summary>
     [Fact]
     [Contract("BC-VEH-005")]
     public async Task AnExecutingOrderShowsControlStateErrWithoutAnyEmergencyStop()

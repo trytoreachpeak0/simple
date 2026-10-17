@@ -14,7 +14,7 @@ namespace Simple.FakeRiot;
 /// </summary>
 public sealed class FakeRiotLoad(IOptions<FakeRiotSettings> settings, TimeProvider time)
 {
-    /// <summary>The POSTs that only read: the three route queries.</summary>
+    /// <summary>The POSTs that only read: the three route queries, by route template.</summary>
     private static readonly HashSet<string> ReadingPosts = new(StringComparer.Ordinal)
     {
         "/api/task/v1/route/getRouteCostsBy",
@@ -38,12 +38,15 @@ public sealed class FakeRiotLoad(IOptions<FakeRiotSettings> settings, TimeProvid
 
     public void Count(string key) => calls.AddOrUpdate(key, 1, (_, n) => n + 1);
 
-    /// <summary>Holds a read (a GET, or one of the route queries) for the read delay, on the fake's clock.</summary>
-    public Task DelayIfReadAsync(HttpRequest request, CancellationToken cancellationToken)
+    /// <summary>
+    /// Holds a read (a GET, or one of the route queries) for the read delay, on
+    /// the fake's clock. <paramref name="route"/> is the matched route template,
+    /// so a path in other letter case, which routing matches, counts the same.
+    /// </summary>
+    public Task DelayIfReadAsync(string method, string? route, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(request);
         var delay = ReadDelay;
-        var read = HttpMethods.IsGet(request.Method) || (HttpMethods.IsPost(request.Method) && ReadingPosts.Contains(request.Path.Value ?? ""));
+        var read = HttpMethods.IsGet(method) || (HttpMethods.IsPost(method) && route is not null && ReadingPosts.Contains(route));
         return read && delay > TimeSpan.Zero ? Task.Delay(delay, time, cancellationToken) : Task.CompletedTask;
     }
 }
@@ -58,11 +61,11 @@ public static class FakeRiotLoadMiddleware
             if (request.Path.StartsWithSegments("/api", StringComparison.Ordinal))
             {
                 var load = context.RequestServices.GetRequiredService<FakeRiotLoad>();
-                var route = context.GetEndpoint() is RouteEndpoint { RoutePattern: RoutePattern pattern }
+                var template = context.GetEndpoint() is RouteEndpoint { RoutePattern: RoutePattern pattern }
                     ? "/" + pattern.RawText?.TrimStart('/')
-                    : request.Path.Value;
-                load.Count($"{request.Method} {route}");
-                await load.DelayIfReadAsync(request, context.RequestAborted);
+                    : null;
+                load.Count($"{request.Method} {template ?? request.Path.Value}");
+                await load.DelayIfReadAsync(request.Method, template, context.RequestAborted);
             }
 
             await next(context);

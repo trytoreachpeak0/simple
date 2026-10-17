@@ -78,7 +78,7 @@ public sealed class FakeRiotTimingTests : IDisposable
         Assert.True(clock.Elapsed >= TimeSpan.FromMilliseconds(290), $"读只用了 {clock.ElapsedMilliseconds} ms。");
     }
 
-    /// <summary>The three route queries are POSTs that only read; they wait too.</summary>
+    /// <summary>The three route queries are POSTs that only read; they wait too, whatever the letter case of the path routing matched.</summary>
     [Fact]
     public async Task ARouteQueryWaitsTheReadDelay()
     {
@@ -88,9 +88,47 @@ public sealed class FakeRiotTimingTests : IDisposable
         (await client.PostAsJsonAsync(new Uri("/api/task/v1/route/getRouteCostsBy", UriKind.Relative), query, Cancel)).Dispose();
         var clock = Stopwatch.StartNew();
 
-        using var response = await client.PostAsJsonAsync(new Uri("/api/task/v1/route/getRouteCostsBy", UriKind.Relative), query, Cancel);
+        using var response = await client.PostAsJsonAsync(new Uri("/api/task/v1/route/GETROUTECOSTSBY", UriKind.Relative), query, Cancel);
 
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
         Assert.True(clock.Elapsed >= TimeSpan.FromMilliseconds(290), $"路线查询只用了 {clock.ElapsedMilliseconds} ms。");
+    }
+
+    /// <summary>
+    /// A hold and continue with no emergency stop in between starts again at
+    /// once: the 16-second start was seen only after a stop while held
+    /// (BC-ORDER-020 item 3), and round 10 continued a plain hold without it.
+    /// A fake choice, not a contract: real RIoT has no control experiment.
+    /// </summary>
+    [Fact]
+    public async Task APlainHoldAndContinueStartsAgainWithoutTheLongDelay()
+    {
+        // Four times as fast: it executes after half a second and travels for five; the long delay would be four.
+        await using var factory = Fake(("FakeRiot:Timing:Speedup", "4"));
+        using var client = Client(factory);
+        var orderId = await CreateMoveAsync(client, "plain-hold", station: 3);
+        Assert.Equal(3, await StateWithinAsync(client, "plain-hold", TimeSpan.FromSeconds(5), 3));
+        await CommandAsync(client, orderId, "CMD_ORDER_HELD");
+        Assert.Equal(7, await StateWithinAsync(client, "plain-hold", TimeSpan.FromSeconds(5), 7));
+
+        await CommandAsync(client, orderId, "CMD_ORDER_CONTINUE_FROM_HELD");
+        var clock = Stopwatch.StartNew();
+        var speed = 0d;
+        while (speed == 0 && clock.Elapsed < TimeSpan.FromSeconds(1))
+        {
+            using var info = JsonDocument.Parse(await client.GetStringAsync(new Uri($"/api/task/v1/task/getVehicleInfo/{Vehicle1}", UriKind.Relative), Cancel));
+            speed = info.RootElement.GetProperty("vehicle").GetProperty("speed").GetDouble();
+            await Task.Delay(20, Cancel);
+        }
+
+        Assert.True(speed > 0, $"普通暂停后继续，{clock.ElapsedMilliseconds} ms 内车还没起步。");
+    }
+
+    private static async Task CommandAsync(HttpClient client, string orderId, string commandType)
+    {
+        using var response = await client.PostAsJsonAsync(new Uri($"/api/task/v1/order/command/{orderId}", UriKind.Relative), new { commandType }, Cancel);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Cancel));
+        Assert.Equal("0", body.RootElement.GetProperty("code").GetString());
     }
 
     [Fact]

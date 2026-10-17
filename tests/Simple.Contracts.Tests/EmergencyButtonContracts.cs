@@ -10,7 +10,8 @@ public sealed class EmergencyButtonContracts : OrderContractTest
     /// <summary>
     /// Pressing the button does not hang the executing order: it stays
     /// EXECUTING, held by the stop at speed 0, and the vehicle reads
-    /// CAN_NOT_RECOVER. Round 28 watched for about 14 minutes and saw no HANG.
+    /// CAN_NOT_RECOVER. Round 28 watched for about 14 minutes (520 samples) and
+    /// round 27 A for a short while; neither saw HANG.
     /// ADR 0010 said the opposite until the product owner corrected it to the
     /// lab's result on 2026-10-18.
     /// </summary>

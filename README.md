@@ -258,7 +258,7 @@ RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。�
 - **种子**：`src/Simple.FakeRiot/seed.json`，两张虚构的小地图和三台假车（`fake-vehicle-1` 在 1 号图 1 号站）。1 号图的路网是有向的，6 号站没有路通进去，5 号站是充电桩；两张图都有 1 号站，演示站号跨图不唯一。没有用 D8 的真实地图和车。
 - **会自己动**：订单排队 → 执行 → 车到站 → 约 1 秒后成功；行驶中车的站号读 0；执行中 `controlState` 一直是 `CONTROL_STATE_ERR`；急停约 1 秒锁上、解除后 4～5 秒才回 `OK`，读到 `OK` 后故障码还残留约 3.5 秒；暂停期间车被急停过的，解除后再继续，订单当即回到执行中、读 `MT_RUNNING`，车约 16 秒后才起步；在桩上充电时电量每 36 秒涨 1%，涨到 98% 停（`FakeRiot:ChargingStopsAtBattery`），之后仍报 `CHARGING`；电量 ≤10%（`FakeRiot:NoOrdersAtOrBelowBattery`）的车不派单。默认时长接近真 RIoT，都在 `FakeRiot:Timing` 下，契约测试用几十到几百毫秒。
 - **时间压缩**：`FakeRiot:Timing:Speedup` 是倍速，上面所有时长连同行驶时间都除以它。默认 1 是真实速度；设成 100，一张从 1 号站到 3 号站（20 米）的单从建单到成功不到 1 秒，不用真等十几秒的起步延迟。`Tick`（多久推进一次）和接口上的时间戳不压缩。
-- **负载看得见**：`FakeRiot:ReadDelay` 让每个读请求（`/api` 下的 GET）先等这么久再回答。真 RIoT 读请求的 p95 约 168 ms，上一代现场约每秒 10 次读，轮询过密会拖慢全厂（`research/riot-review.md` R39）。默认 0；运行中可以用控制面改。每个 `/api` 调用都按"方法 + 路由模板"计数，没鉴权被拒的也算，用 `GET /fake-riot/calls` 读。
+- **负载看得见**：`FakeRiot:ReadDelay` 让每个读请求（`/api` 下的 GET，和 `getRouteCostsBy`、`queryNearEnd`、`queryNearestStart` 三个只读的路线查询）先等这么久再回答，按假 RIoT 的时钟算。真 RIoT 读请求的 p95 约 168 ms，上一代现场约每秒 10 次读，轮询过密会拖慢全厂（`research/riot-review.md` R39）。默认 0；运行中可以用控制面改。每个 `/api` 调用都按"方法 + 路由模板"计数，没鉴权被拒的也算，用 `GET /fake-riot/calls` 读。
 - **没观测过的就不编**：真 RIoT 在某种情况下怎么回答没有记录时（例如对一张已成功的单发取消），假 RIoT 回业务码 `FAKE-UNOBSERVED`，说明这是知识的空白，任何代码都不能依赖它。只有产品负责人的说法、还没实测的，假 RIoT 照说法做，对应的契约标"未实测"（见下面的 #11 对照表）。
 - **控制面**（只有假 RIoT 有，代替车旁的人、网页前的人和别的产线）：
 
@@ -288,7 +288,9 @@ RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。�
   - 没被急停过的暂停，继续后不加起步延迟：约 16 秒只在"暂停 + 急停 + 解除"之后见过（BC-ORDER-020 第 3 条），没有不急停的对照；第 10 轮暂停后继续，约 9 秒已经到站，不支持每次都有 16 秒；
   - 暂停中松抱闸会怎样没观测过（第 27 轮 F 节只看了执行中的单），假 RIoT 让暂停的单保持暂停；
   - 挂起期间人又在车上让车走、这时发从挂起继续，真 RIoT 回成功、订单仍挂起（BC-ORDER-018 第 2 条），假 RIoT 没做：有订单（包括挂起的）的车不让人开；
-  - 删掉的站点会不会出现在 `removedStation` 列表里没观测过，假 RIoT 的这个列表一直是空的。
+  - 删掉的站点会不会出现在 `removedStation` 列表里没观测过，假 RIoT 的这个列表一直是空的；
+  - 被优先执行的单如果刚建、还不满排队时长，真 RIoT 是等它还是先跑后面较早的单，没观测过；假 RIoT 等它（队首不让人插队）；
+  - 执行中一直读 `CONTROL_STATE_ERR`（BC-VEH-005 第 8 条）只在生产 RIoT 上见过（第 44 轮，共 2 单）；第 38 轮在测试环境（地图 30），订单执行期间 36 次读数全是 `CONTROL_STATE_OK`，其中 8 次车在动。这一条可能只在生产 RIoT 上成立，假 RIoT 照生产的样子做。
 
 ### 契约测试
 
@@ -306,7 +308,7 @@ dotnet test --project tests/Simple.Contracts.Tests --filter-trait "Contract=BC-O
 | --- | --- | --- | --- |
 | 站号永不改变，新站点只递增、删掉的不再分配；站号跨图不唯一 | `StationContracts.ANewStationGetsANumberNoStationHadBefore`、`MapContracts.TwoMapsHaveAStationWithTheSameId` | 0015 | 前者未实测；后者实验室见过（BC-MAP-002） |
 | 订单只在刚创建、还没排队时失败，车在原地 | `FailedOrderContracts.AJustMadeOrderFailsWithTheVehicleWhereItIs`（假 RIoT 拒绝让执行中的单失败，由 `Simple.FakeRiot.Tests` 测） | 0010 | 未实测 |
-| 按急停按钮、服务端下的急停会不会让订单挂起 | `EmergencyButtonContracts.PressingTheButtonDoesNotHangTheExecutingOrder`、`EmergencyStopContracts.AnEmergencyStopKeepsTheExecutingOrderExecuting` | 0010 | 都不会，实验室见过：按按钮第 27、28 轮约 15 分钟订单一直执行中（Q-035），服务端下的急停见 BC-ORDER-015。ADR 0010 原先写"按急停按钮会进挂起"，产品负责人 2026-10-18 按实测改正 |
+| 按急停按钮、服务端下的急停会不会让订单挂起 | `EmergencyButtonContracts.PressingTheButtonDoesNotHangTheExecutingOrder`、`EmergencyStopContracts.AnEmergencyStopKeepsTheExecutingOrderExecuting` | 0010 | 都不会，实验室见过：按住按钮，第 28 轮约 14 分钟（520 个采样）、第 27 轮 A 节短监视，订单一直执行中（Q-035），服务端下的急停见 BC-ORDER-015。ADR 0010 原先写"按急停按钮会进挂起"，产品负责人 2026-10-18 按实测改正 |
 | 对挂起的单发取消，变成已取消 | `OrderCommandContracts.CancellingAHungOrderCancelsIt` | 0010 | 未实测 |
 | 一类急停软件解不开；一类触发同时触发二类，一类消除后二类还在；按钮按着时在 RIoT 里解除会立刻再触发 | `EmergencyButtonContracts.WhileTheButtonIsPressedAReleaseInRiotDoesNotReleaseTheStop`、`OnceTheButtonIsLetGoTheStopStaysUntilReleasedInRiot` | 0009 | 部分实测：第 27 轮 A 节见过硬件急停要物理松开后 `cancelEmergency` 才回 `OK`；"立刻再触发""一类带出二类"是产品负责人的说法 |
 | 三类急停解除后车接着走原来的单 | `EmergencyStopContracts.AfterTheStopIsReleasedTheVehicleGoesOnWithItsOrder` | 0009 | 未实测（BC-ORDER-020 第 5 条只是推断） |
