@@ -3,6 +3,9 @@ name: runner-smoke
 # Smoke test for the SIMPLE runner win11-01-simple on vm01 (the CI guest on the
 # factory server). It proves the runner picks up jobs, sees the .NET 10 SDK and
 # builds the solution. Issue #20.
+#
+# Interim (#25): it also runs the tests against SQL Server Express on vm01,
+# so every PR is tested there until F3 turns this into the proper CI workflow.
 on:
   pull_request:
   workflow_dispatch:
@@ -36,3 +39,46 @@ jobs:
       - name: Build
         shell: pwsh
         run: dotnet build simple.slnx
+
+      # Each test creates its own database Simple_test_<random> on .\SQLEXPRESS
+      # and drops it. The runner account (NETWORK SERVICE) uses Windows
+      # authentication; there is no password.
+      - name: Test
+        shell: pwsh
+        env:
+          SIMPLE_TEST_SQLSERVER: Server=.\SQLEXPRESS;Integrated Security=true;TrustServerCertificate=true
+        run: dotnet test --solution simple.slnx --no-build
+
+      # A database left behind means a test failed to clean up after itself.
+      # The step drops what it finds and still fails, so one leftover reports
+      # once instead of failing every later run. Queried with the SQL client
+      # that ships with PowerShell 7, so the runner needs no extra tool;
+      # failing to query fails the step.
+      - name: No test databases left behind
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $connection = [System.Data.SqlClient.SqlConnection]::new('Server=.\SQLEXPRESS;Integrated Security=true')
+          $connection.Open()
+          try {
+            $command = $connection.CreateCommand()
+            $command.CommandText = "SELECT name FROM sys.databases WHERE name LIKE 'Simple[_]test[_]%'"
+            $reader = $command.ExecuteReader()
+            $left = @(while ($reader.Read()) { $reader.GetString(0) })
+            $reader.Dispose()
+            foreach ($name in $left) {
+              $drop = $connection.CreateCommand()
+              $drop.CommandText = "DECLARE @sql nvarchar(max) = N'ALTER DATABASE ' + QUOTENAME(@name) + N' SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ' + QUOTENAME(@name); EXEC (@sql);"
+              [void]$drop.Parameters.AddWithValue('@name', $name)
+              [void]$drop.ExecuteNonQuery()
+            }
+          }
+          finally {
+            $connection.Dispose()
+          }
+          if ($left) {
+            Write-Output "::error::Test databases left behind (now dropped): $($left -join ', ')"
+            exit 1
+          }
+          Write-Output 'No Simple_test_* databases left behind.'
