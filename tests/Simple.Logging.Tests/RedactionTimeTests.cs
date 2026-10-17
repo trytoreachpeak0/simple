@@ -7,6 +7,20 @@ namespace Simple.Logging.Tests;
 [Collection(nameof(RedactionTimeTests))]
 public sealed class RedactionTimeTests
 {
+    /// <summary>
+    /// What these tests catch is a pattern that tries every start position
+    /// against the rest of the line: quadratic in the length, minutes for a
+    /// megabyte (#59: the first version did not finish this class in 5
+    /// minutes; a 1 MB a:a:...:password took over 4). Done in linear time a
+    /// megabyte takes well under a second (about 440 ms for the whole class,
+    /// Debug, on a laptop), but 1.1 s on the CI machine while other jobs ran
+    /// there (#73), so a one-second bound failed working code. Five seconds
+    /// leaves room for a loaded machine and is still far below any quadratic
+    /// version: the measured shapes need minutes at this length. Not a
+    /// benchmark; the tests still run alone (the collection below).
+    /// </summary>
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(5);
+
     // No pattern may try every start position against the rest of the line.
     [Theory]
     [InlineData("hex")]
@@ -20,7 +34,7 @@ public sealed class RedactionTimeTests
     [InlineData("colons-then-password")]
     [InlineData("colons-then-key")]
     [InlineData("配对码-spaces")]
-    public void AMegabyteLongValueIsRedactedWithinASecond(string shape)
+    public void AMegabyteLongValueIsRedactedInLinearTime(string shape)
     {
         var text = shape switch
         {
@@ -41,14 +55,14 @@ public sealed class RedactionTimeTests
         var redacted = Redaction.Redact(text);
         clock.Stop();
 
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(1), $"{text.Length} characters took {clock.Elapsed.TotalMilliseconds:F0} ms");
+        Assert.True(clock.Elapsed < Bound, $"{text.Length} characters took {clock.Elapsed.TotalMilliseconds:F0} ms");
         Assert.Equal(text, redacted);
     }
 
     // A long word with colons whose last part names a credential: each part is
     // checked on its own, not every prefix of the word again.
     [Fact]
-    public void AMegabyteLongColonWordEndingInACredentialIsRedactedWithinASecond()
+    public void AMegabyteLongColonWordEndingInACredentialIsRedactedInLinearTime()
     {
         var text = string.Concat(Enumerable.Repeat("a:", 512 * 1024)) + "password:Long-colon-secret";
 
@@ -56,12 +70,12 @@ public sealed class RedactionTimeTests
         var redacted = Redaction.Redact(text);
         clock.Stop();
 
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(1), $"{text.Length} characters took {clock.Elapsed.TotalMilliseconds:F0} ms");
+        Assert.True(clock.Elapsed < Bound, $"{text.Length} characters took {clock.Elapsed.TotalMilliseconds:F0} ms");
         Assert.EndsWith(":password:***", redacted, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AMegabyteOfCredentialsOnOneLineIsRedactedWithinASecond()
+    public void AMegabyteOfCredentialsOnOneLineIsRedactedInLinearTime()
     {
         var text = string.Concat(Enumerable.Repeat("Server=db01;Password=pw-secret;", 16_000))
             + string.Concat(Enumerable.Repeat("password=pw-secret x ", 12_000))
@@ -71,7 +85,7 @@ public sealed class RedactionTimeTests
         var redacted = Redaction.Redact(text);
         clock.Stop();
 
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(1), $"{text.Length} characters took {clock.Elapsed.TotalMilliseconds:F0} ms");
+        Assert.True(clock.Elapsed < Bound, $"{text.Length} characters took {clock.Elapsed.TotalMilliseconds:F0} ms");
         Assert.DoesNotContain("pw-secret", redacted, StringComparison.Ordinal);
     }
 }

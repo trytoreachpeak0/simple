@@ -783,8 +783,7 @@ public sealed partial class LocalSystem(
 
     private static List<string> ReadLines(string path)
     {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var reader = new StreamReader(stream);
+        using var reader = ProgramLog.OpenRead(path);
         var lines = new List<string>();
         while (reader.ReadLine() is { } line)
         {
