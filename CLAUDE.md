@@ -65,7 +65,9 @@ reviewed in pull requests like the code is.
 | `src/Simple.Server` | Server host: domain logic, dispatch, API, event record |
 | `src/Simple.Server.Console` | Server console; runs in the server process |
 | `src/Simple.Server.Riot` | Fleet-manager (RIoT) adapter; runs in the server process |
-| `src/Simple.OnboardTerminal` | Onboard terminal (WPF, `net10.0-windows`) |
+| `src/Simple.OnboardTerminal` | Onboard terminal: the WPF shell (`net10.0-windows`) |
+| `src/Simple.OnboardTerminal.Core` | Onboard terminal core without WPF: connection to the server, messages, onboard inputs |
+| `src/Simple.OnboardTerminal.Headless` | The onboard terminal without a window, for the local system, tests and CI; its test input listens on loopback only |
 | `src/Simple.MesGateway` | MES gateway, a small separate process |
 | `src/Simple.IoSimulator` | Simulator for the vehicle's IO module |
 | `src/Simple.Protocol` | Server ↔ onboard protocol contracts |
@@ -196,7 +198,7 @@ single-context layout). Do not start a parallel set of these by hand.
 - `./simple up` (in PowerShell 7; elsewhere `pwsh -File <clone>/simple.ps1 up`) builds each component's project once, copies the output to `artifacts/simple/<instance>/` and starts every component from there; `./simple down` stops them, `--reset` also drops the instance's database. Every command takes `--json`; the exit codes are fixed and listed in `simple --help`.
 - Each component is one entry in `src/Simple.Cli/Components.cs`: project, process count, ports, arguments, readiness. A ticket that adds a component adds its entry there, and `simple up` and `simple status` show it.
 - The instance defaults to the clone's folder name, so two worktrees never share one; its database is `Simple_<instance>`. Its state file and `sqlserver.txt` (the SQL Server its database is on) are in `%LOCALAPPDATA%\simple\instances\<instance>\`, or under `SIMPLE_HOME`. The command line stops only the processes it recorded, by process id and start time, never by process name, and stops them gracefully so the server records `server.stopped`.
-- The command line starts a local system only, on whichever machine runs it. It has no switch that points at anything real, removes `Simple__*`, `ConnectionStrings__*`, `ASPNETCORE_*` and `DOTNET_ENVIRONMENT` from the components' environment, and always runs them as Production. `simple remote` does not change this: it runs the same command line on the remote machine, which starts a local system there, on that machine's loopback and on its own named SQL Server instance (`.\SIMPLE_DEV`), and it has no switch that points at anything real either.
+- The command line starts a local system only, on whichever machine runs it. It has no switch that points at anything real, removes `Simple__*`, `ConnectionStrings__*`, `ASPNETCORE_*`, `Kestrel__*` and `DOTNET_ENVIRONMENT` from the components' environment, and always runs them as Production. `simple remote` does not change this: it runs the same command line on the remote machine, which starts a local system there, on that machine's loopback and on its own named SQL Server instance (`.\SIMPLE_DEV`), and it has no switch that points at anything real either.
 - SQL Server (`SIMPLE_SQLSERVER`, LocalDB by default): only LocalDB or a named instance on this machine, with Windows authentication. A port, the instance name `MSSQLSERVER`, a failover partner and a SQL login (User ID, Password) are refused. Before starting the server and before dropping a database, the command line asks the server who it is (`SERVERPROPERTY` `IsLocalDB`, `InstanceName`, `MachineName`) and goes on only for LocalDB or a named instance other than `MSSQLSERVER` on this machine.
 - `simple remote <command>` (`build`, `test`, `exec -- <command>`, `up`, `down`, `status`, `events`, `logs`, `forget`) runs on the machine named by `SIMPLE_REMOTE`, an alias in the user's SSH configuration; the repository names no machine. It sends exactly this clone's working tree as a snapshot commit (uncommitted changes and new files, `.gitignore` respected, nothing pushed) and prints that commit at the start and the end. Run full builds, full test runs and `simple up` through it; run targeted tests (`--filter-class` and the like) locally. It ends with the remote command's own exit code (a test run's 2 and 8 included); its own failures are 20 (did not run), 21 (snapshot adds large files) and 22 (instance or slot busy). Test results come back to `artifacts/remote/<instance>/`. Run `simple remote forget` before deleting a worktree.
 
@@ -243,10 +245,17 @@ single-context layout). Do not start a parallel set of these by hand.
   install packages) may point at a real fleet manager, a real vehicle or a
   production MES, or enable real work by default. Only placeholder values
   or loopback addresses of fakes appear in these defaults.
-- Until the server API has authentication, the server listens on
-  loopback only and refuses to start on any other address.
-  `Simple.Server.Tests` checks every `appsettings*.json` in the repository
-  for hosts that are neither loopback nor LocalDB.
+- Until the server API has authentication, the API listens on loopback
+  only, over plain HTTP, and the server refuses to start on any other API
+  address. The onboard terminal endpoint (`Simple:OnboardTerminals:Url`)
+  is the one exception (ADR 0025): it may listen on the address of one
+  named network interface, never a wildcard, serves only the terminal
+  protocol over TLS 1.2 with the certificate the terminals pin, and
+  answers nothing else. Until the per-terminal keys (the other half of
+  ADR 0025) are in place, this endpoint accepts any client, so the server
+  must not base any decision on onboard reports. `Simple.Server.Tests`
+  checks every `appsettings*.json` in the repository for hosts that are
+  neither loopback nor LocalDB.
 - `sites/<site>/` holds a site's starting business configuration: areas,
   maps, task types, the vehicle list and similar settings, with real
   values. It holds no endpoints the product connects to and no

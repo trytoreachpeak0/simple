@@ -10,7 +10,8 @@ namespace Simple.Cli.Tests;
 /// Runs the built command line as a process, the way a person or CI does, with
 /// a home directory of its own. Disposing kills whatever its instances left
 /// running (by the process ids in their state files, with their process
-/// trees), drops their databases and deletes the home directory.
+/// trees), drops their databases, deletes their server keys and the home
+/// directory.
 /// </summary>
 /// <param name="cancellationToken">Ends every command and query when the test is cancelled or times out.</param>
 public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDisposable
@@ -135,6 +136,11 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
                 }
             });
             await TryAsync(failures, () => SqlServerTarget.DropDatabaseAsync(SqlServer, instance, CancellationToken.None));
+            await TryAsync(failures, () =>
+            {
+                ServerKey.Delete(Components.ServerKeyName(instance));
+                return Task.CompletedTask;
+            });
             await TryAsync(failures, () =>
             {
                 var run = InstanceStore.RunDirectory(Repository, instance);
