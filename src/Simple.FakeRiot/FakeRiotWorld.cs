@@ -26,6 +26,11 @@ public sealed class FakeRiotWorld
 
     private const string TimeFormat = "yyyy-MM-dd HH:mm:ss";
 
+    /// <summary>Codes real RIoT listed while a software stop held the vehicle, and those still listed at the first OK (BC-ORDER-020 item 7).</summary>
+    private static readonly int[] StoppedFaultCodes = [11323, 211416, 212416, 11327, 11329];
+
+    private static readonly int[] ResidualFaultCodes = [211416, 212416];
+
     private readonly Lock gate = new();
     private readonly TimeProvider time;
     private readonly FakeRiotSettings settings;
@@ -38,6 +43,9 @@ public sealed class FakeRiotWorld
     private long nextOrderNumber = 2_110_000_000_000_000_000;
     private long nextMissionId = 21_000_001;
     private long promotions;
+    private int create00002Left;
+    private int churnPerRead;
+    private bool create00002MakesOrder;
 
     public FakeRiotWorld(Seed seed, IOptions<FakeRiotSettings> settings, TimeProvider time)
     {
@@ -54,6 +62,9 @@ public sealed class FakeRiotWorld
     }
 
     private FakeRiotTiming Timing => settings.Timing;
+
+    /// <summary>A duration of the fake's world in real time, compressed by <see cref="FakeRiotTiming.Speedup"/>.</summary>
+    private TimeSpan Real(TimeSpan duration) => duration / Timing.Speedup;
 
     // ---- Authentication (BC-AUTH-001, BC-AUTH-002) ----
 
@@ -106,12 +117,22 @@ public sealed class FakeRiotWorld
         Answer.Ok(maps.Values.Select(m => new Dictionary<string, object?> { ["id"] = m.Seed.Id, ["name"] = m.Seed.Name }).ToList());
 
     /// <summary>An unknown map is <c>code=0</c> with an empty list, not an error (BC-MAP-002).</summary>
-    public Answer Stations(int mapId) =>
-        Answer.Ok(maps.TryGetValue(mapId, out var map) ? map.Seed.Stations.Select(s => StationWire(map, s)).ToList() : []);
+    public Answer Stations(int mapId)
+    {
+        lock (gate)
+        {
+            return Answer.Ok(maps.TryGetValue(mapId, out var map) ? map.Stations.Select(s => StationWire(map, s)).ToList() : []);
+        }
+    }
 
     /// <summary>snake_case keys, which the generated client cannot read (BC-MAP-003).</summary>
-    public Answer Edges(int mapId) =>
-        Answer.Ok(maps.TryGetValue(mapId, out var map) ? map.Seed.Edges.Select(e => EdgeWire(map, e)).ToList() : []);
+    public Answer Edges(int mapId)
+    {
+        lock (gate)
+        {
+            return Answer.Ok(maps.TryGetValue(mapId, out var map) ? map.Edges.Select(e => EdgeWire(map, e)).ToList() : []);
+        }
+    }
 
     private static Dictionary<string, object?> StationWire(MapState map, SeedStation station) => new()
     {
@@ -119,8 +140,8 @@ public sealed class FakeRiotWorld
         ["name"] = station.Name,
         ["type"] = station.Type,
         ["desc"] = "",
-        ["edge_id"] = map.Seed.Edges.FirstOrDefault(e => e.To == station.Id)?.Id
-            ?? map.Seed.Edges.FirstOrDefault(e => e.From == station.Id)?.Id ?? 0,
+        ["edge_id"] = map.Edges.FirstOrDefault(e => e.To == station.Id)?.Id
+            ?? map.Edges.FirstOrDefault(e => e.From == station.Id)?.Id ?? 0,
         ["pos.x"] = station.X,
         ["pos.y"] = station.Y,
         ["pos.yaw"] = 0.0,
@@ -187,11 +208,11 @@ public sealed class FakeRiotWorld
                 ["currentMap"] = v.Map.Seed.Name,
                 ["currentPosition"] = v.Station,
                 ["battery"] = v.Battery,
-                ["batteryState"] = v.Charging ? "CHARGING" : "NO_CHARGE",
-                ["breakSwitchState"] = "MOVABLE",
+                ["batteryState"] = BatteryState(v),
+                ["breakSwitchState"] = BrakeSwitchState(v),
                 ["emergencyState"] = v.Emergency,
                 ["locationState"] = "LOCATION_STATE_RUNNING",
-                ["mode"] = "MODE_AUTO",
+                ["mode"] = v.Mode,
                 ["movementState"] = MovementState(v),
                 ["speed"] = Speed(v),
                 ["lockStatus"] = 0,
@@ -222,16 +243,18 @@ public sealed class FakeRiotWorld
                     ["name"] = v.Name,
                     ["vehicleId"] = v.VehicleId,
                     ["battery"] = v.Battery,
-                    ["batteryState"] = v.Charging ? "CHARGING" : "NO_CHARGE",
-                    ["breakSwitchState"] = "MOVABLE",
+                    ["batteryState"] = BatteryState(v),
+                    ["breakSwitchState"] = BrakeSwitchState(v),
                     // Every executing order shows CONTROL_STATE_ERR from start to
                     // finish, emergency stop or not (BC-VEH-005 item 8).
                     ["controlState"] = v.Current is not null || v.Emergency != EmergencyStates.Ok ? "CONTROL_STATE_ERR" : "CONTROL_STATE_OK",
                     ["emergencyState"] = v.Emergency,
-                    // Non-empty while stopped; real RIoT leaves some codes for 3 to 4 s after OK (BC-ORDER-020 item 7).
-                    ["faultCodesList"] = v.Emergency == EmergencyStates.Ok ? Array.Empty<int>() : [11323, 11327, 11329],
+                    // Non-empty while stopped; some codes stay listed for 3 to 4 s after OK (BC-ORDER-020 item 7).
+                    ["faultCodesList"] = v.Emergency != EmergencyStates.Ok ? StoppedFaultCodes
+                        : time.GetUtcNow() < v.FaultCodesClearAt ? ResidualFaultCodes
+                        : Array.Empty<int>(),
                     ["locationState"] = "LOCATION_STATE_RUNNING",
-                    ["mode"] = "MODE_AUTO",
+                    ["mode"] = v.Mode,
                     ["movementState"] = MovementState(v),
                     ["speed"] = Speed(v),
                     ["connected"] = true,
@@ -312,12 +335,12 @@ public sealed class FakeRiotWorld
             {
                 if (v.Emergency == EmergencyStates.Ok && v.EmergencyTarget is null)
                 {
-                    (v.EmergencyTarget, v.EmergencyChangeAt) = (EmergencyStates.CanRecover, now + Timing.EmergencyLock);
+                    (v.EmergencyTarget, v.EmergencyChangeAt) = (EmergencyStates.CanRecover, now + Real(Timing.EmergencyLock));
                 }
             }
             else if (v.Emergency == EmergencyStates.CanRecover || v.EmergencyTarget == EmergencyStates.CanRecover)
             {
-                (v.EmergencyTarget, v.EmergencyChangeAt) = (EmergencyStates.Ok, now + Timing.EmergencyRelease);
+                (v.EmergencyTarget, v.EmergencyChangeAt) = (EmergencyStates.Ok, now + Real(Timing.EmergencyRelease));
             }
 
             return Answer.Ok(new Dictionary<string, object?>
@@ -356,17 +379,20 @@ public sealed class FakeRiotWorld
     /// <summary>One unreachable candidate makes the whole query a NullPointerException (BC-ROUTE-002); so does an empty list (BC-ROUTE-001).</summary>
     public Answer Nearest(int mapId, int fixedStation, IReadOnlyList<int> candidates, bool fromFixed)
     {
-        if (!maps.TryGetValue(mapId, out var map) || candidates.Count == 0)
+        lock (gate)
         {
-            return Answer.InternalError();
-        }
+            if (!maps.TryGetValue(mapId, out var map) || candidates.Count == 0)
+            {
+                return Answer.InternalError();
+            }
 
-        var ranked = candidates
-            .Select(c => (Station: c, Cost: fromFixed ? map.Graph.CostBetween(fixedStation, c) : map.Graph.CostBetween(c, fixedStation)))
-            .ToList();
-        return ranked.Any(r => r.Cost is null)
-            ? Answer.InternalError()
-            : Answer.Ok(ranked.OrderBy(r => r.Cost).First().Station);
+            var ranked = candidates
+                .Select(c => (Station: c, Cost: fromFixed ? map.Graph.CostBetween(fixedStation, c) : map.Graph.CostBetween(c, fixedStation)))
+                .ToList();
+            return ranked.Any(r => r.Cost is null)
+                ? Answer.InternalError()
+                : Answer.Ok(ranked.OrderBy(r => r.Cost).First().Station);
+        }
     }
 
     // ---- Orders ----
@@ -406,6 +432,17 @@ public sealed class FakeRiotWorld
 
         lock (gate)
         {
+            // An injected 00002 (R6): the order is made or not, as the test asked.
+            var injected00002 = create00002Left > 0;
+            if (injected00002)
+            {
+                create00002Left--;
+                if (!create00002MakesOrder)
+                {
+                    return Answer.InternalError();
+                }
+            }
+
             // A repeated upperId is refused and the first order is not returned (BC-ORDER-004).
             if (orders.Any(o => o.UpperId == upperId))
             {
@@ -448,7 +485,7 @@ public sealed class FakeRiotWorld
             }
 
             orders.Add(order);
-            return Answer.Ok(OrderWire(order));
+            return injected00002 ? Answer.InternalError() : Answer.Ok(OrderWire(order));
         }
     }
 
@@ -478,6 +515,11 @@ public sealed class FakeRiotWorld
     {
         lock (gate)
         {
+            for (var i = 0; i < churnPerRead; i++)
+            {
+                OtherLinesOrder();
+            }
+
             var matching = orders.Where(o => states.Count == 0 || states.Contains(o.State)).OrderByDescending(o => o.Id).ToList();
             var page = Math.Max(pageNum, 1);
             var size = Math.Max(pageSize, 1);
@@ -520,11 +562,18 @@ public sealed class FakeRiotWorld
                 case ("CMD_ORDER_CONTINUE_FROM_HELD", OrderStates.Held):
                     // Accepted even while the vehicle is emergency stopped; the
                     // order is executing again but the stop holds the vehicle (BC-ORDER-020 item 4).
+                    // After a stop while held, the vehicle starts about 16 s later
+                    // (item 3); without a stop no such delay was seen (round 10).
                     order.State = OrderStates.Executing;
+                    order.StartDelayLeft = order.StoppedWhileHeld ? Timing.ContinueStartDelay : TimeSpan.Zero;
+                    order.StoppedWhileHeld = false;
                     order.Touch(time.GetUtcNow());
                     return Answer.OkWithoutResult();
                 case ("CMD_ORDER_CONTINUE_FROM_HELD", OrderStates.Executing):
                     return Answer.Fail("100020", "订单不是暂停状态");
+                case ("CMD_ORDER_CONTINUE_FROM_HANG" or "CMD_ORDER_JUMP_FROM_HANG", OrderStates.Hang) when vehicle!.BrakeReleased:
+                    // The brake still released: refused, the order stays hung (round 27 F, Q-035).
+                    return Answer.Fail("14013", "车辆状态异常");
                 case ("CMD_ORDER_CONTINUE_FROM_HANG" or "CMD_ORDER_JUMP_FROM_HANG", OrderStates.Hang) when vehicle!.Emergency == EmergencyStates.Ok:
                     order.State = OrderStates.Executing;
                     order.Touch(time.GetUtcNow());
@@ -559,6 +608,20 @@ public sealed class FakeRiotWorld
 
     // ---- What only the fake can do: things a person does at the vehicle ----
 
+    /// <summary>
+    /// The next <paramref name="times"/> creates answer <c>00002</c>; with
+    /// <paramref name="orderMade"/> the order is made all the same. Real RIoT's
+    /// 00002 is "result unknown" (R6): seen without an order (BC-ORDER-022),
+    /// and elsewhere with a side effect (BC-VEH-003).
+    /// </summary>
+    public void InjectCreate00002(bool orderMade, int times)
+    {
+        lock (gate)
+        {
+            (create00002Left, create00002MakesOrder) = (times, orderMade);
+        }
+    }
+
     /// <summary>Puts an executing or held order into HANG, as a cancel on the vehicle's own screen or a brake release would (BC-ORDER-015).</summary>
     public bool Hang(string orderId, int resultCode)
     {
@@ -577,6 +640,223 @@ public sealed class FakeRiotWorld
 
             order.Touch(time.GetUtcNow());
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Before every read of the order list, other lines make
+    /// <paramref name="ordersPerRead"/> orders, so the total changes while a
+    /// caller pages through it (cs#573). 0 stops it.
+    /// </summary>
+    public void SetOrderListChurn(int ordersPerRead)
+    {
+        lock (gate)
+        {
+            churnPerRead = ordersPerRead;
+        }
+    }
+
+    /// <summary>An order of another line, for a vehicle the fake does not have: it stays queued.</summary>
+    private void OtherLinesOrder()
+    {
+        var id = nextId++;
+        var name = $"other-line-{id.ToString(CultureInfo.InvariantCulture)}";
+        orders.Add(new OrderState(
+            id,
+            $"order-{(nextOrderNumber += 4096).ToString(CultureInfo.InvariantCulture)}",
+            name,
+            name,
+            "BROKERX-0000000000000000000000000000ffff",
+            [new Mission("move", 1, 1, 0, 0, 0, null) { Id = nextMissionId++ }],
+            time.GetUtcNow()));
+    }
+
+    /// <summary>
+    /// An order a person dispatched by hand on RIoT's web page: upperId is the
+    /// empty string, createdBy <c>admin</c> (Q-043, cs#617). It runs like any
+    /// other order. Null when the vehicle or station is unknown.
+    /// </summary>
+    public string? CreateWebOrder(string vehicleKey, int mapId, int station, string orderName)
+    {
+        lock (gate)
+        {
+            if (!vehicles.ContainsKey(vehicleKey) || !maps.TryGetValue(mapId, out var map) || map.Station(station) is null)
+            {
+                return null;
+            }
+
+            var order = new OrderState(
+                nextId++,
+                $"order-{(nextOrderNumber += 4096).ToString(CultureInfo.InvariantCulture)}",
+                upperId: "",
+                orderName,
+                vehicleKey,
+                [new Mission("move", mapId, station, 0, 0, 0, null) { Id = nextMissionId++ }],
+                time.GetUtcNow())
+            {
+                CreatedBy = "admin",
+            };
+            orders.Add(order);
+            return order.OrderId;
+        }
+    }
+
+    /// <summary>
+    /// Makes a queued order FAILED, as real RIoT is said to do only to an
+    /// order just made and not yet started, the vehicle where it was (the
+    /// product owner, ADR 0010; never seen in the lab, Q-024). False for any
+    /// other order.
+    /// </summary>
+    public bool Fail(string orderId)
+    {
+        lock (gate)
+        {
+            if (Find(orderId) is not { State: OrderStates.Queueing } order)
+            {
+                return false;
+            }
+
+            Finish(order, OrderStates.Failed);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// What a person does to the vehicle itself; only the values given change.
+    /// Releasing the brake hangs the executing order (BC-ORDER-015; round 27 F
+    /// saw it on an executing order only, so a held order stays held).
+    /// While the brake is released, the mode is not MODE_AUTO, the manual
+    /// charger is plugged in or the battery is at the no-order level or below,
+    /// RIoT gives the vehicle no order and the vehicle does not move (rounds
+    /// 29-F and 30; ADR 0022 and BC-VEH-007, the product owner's statements).
+    /// Pressing the emergency-stop button stops the vehicle (CAN_NOT_RECOVER);
+    /// the executing order stays EXECUTING, held by the stop (round 28: about
+    /// 14 minutes, 520 samples, never HANG; round 27 A, a short watch; Q-035). RIoT cannot release it while
+    /// the button is pressed; letting go leaves the software stop set,
+    /// CAN_RECOVER, until it is released in RIoT (round 27 A; the product
+    /// owner, ADR 0009).
+    /// </summary>
+    public VehicleChange SetVehicle(string key, int? battery, bool? brakeReleased, string? mode, bool? manualCharger, bool? emergencyButtonPressed)
+    {
+        lock (gate)
+        {
+            if (!vehicles.TryGetValue(key, out var v))
+            {
+                return VehicleChange.UnknownVehicle;
+            }
+
+            if (battery is < 0 or > 100 || mode is not (null or VehicleModes.Auto or VehicleModes.Manual))
+            {
+                return VehicleChange.Invalid;
+            }
+
+            var now = time.GetUtcNow();
+            v.Battery = battery ?? v.Battery;
+            v.Mode = mode ?? v.Mode;
+            v.ManualCharger = manualCharger ?? v.ManualCharger;
+            if (brakeReleased is { } released && released != v.BrakeReleased)
+            {
+                v.BrakeReleased = released;
+                if (released && v.Current is { State: OrderStates.Executing } order)
+                {
+                    order.State = OrderStates.Hang;
+                    order.Touch(now);
+                }
+            }
+
+            if (emergencyButtonPressed is { } pressed && pressed != v.ButtonPressed)
+            {
+                v.ButtonPressed = pressed;
+                v.EmergencyTarget = null;
+                v.Emergency = pressed ? EmergencyStates.CanNotRecover : EmergencyStates.CanRecover;
+            }
+
+            return VehicleChange.Done;
+        }
+    }
+
+    public bool HasVehicle(string key)
+    {
+        lock (gate)
+        {
+            return vehicles.ContainsKey(key);
+        }
+    }
+
+    /// <summary>
+    /// A person drives the vehicle to a station without an order: with the
+    /// handset in MODE_MANUAL, or from Matrix with the mode still MODE_AUTO
+    /// (ADR 0022). It moves like on an order, and RIoT has no order for it.
+    /// Refused while it has an order, is stopped, or has the manual charger
+    /// plugged in, or when there is no route.
+    /// </summary>
+    public string? Drive(string key, int station)
+    {
+        lock (gate)
+        {
+            if (!vehicles.TryGetValue(key, out var v))
+            {
+                return $"No vehicle '{key}'.";
+            }
+
+            if (v.Current is not null || v.Driving || v.Emergency != EmergencyStates.Ok || v.EmergencyTarget is not null || v.ManualCharger)
+            {
+                return "The vehicle cannot be driven now: it has an order, is moving, is emergency stopped or has the manual charger plugged in.";
+            }
+
+            if (v.Map.Graph.CostBetween(v.LastStation, station) is not { } cost)
+            {
+                return $"No route from station {v.LastStation} to {station} on the vehicle's map.";
+            }
+
+            v.Driving = true;
+            StartTravel(v, station, cost);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A person adds a station in RIoT's map editor. It gets the number after
+    /// the highest the map ever had: station numbers only go up, and a deleted
+    /// number is never given again (the product owner, ADR 0015). It has no
+    /// edges. Null for an unknown map.
+    /// </summary>
+    public int? AddStation(int mapId, string name, int type, double x, double y)
+    {
+        lock (gate)
+        {
+            if (!maps.TryGetValue(mapId, out var map))
+            {
+                return null;
+            }
+
+            var id = ++map.HighestStationId;
+            map.Stations.Add(new SeedStation(id, name, type, x, y));
+            map.RebuildGraph();
+            return id;
+        }
+    }
+
+    /// <summary>A person deletes a station and its edges in RIoT's map editor; refused while a vehicle stands on it or starts its routes there.</summary>
+    public StationChange DeleteStation(int mapId, int stationId)
+    {
+        lock (gate)
+        {
+            if (!maps.TryGetValue(mapId, out var map) || map.Station(stationId) is not { } station)
+            {
+                return StationChange.Unknown;
+            }
+
+            if (vehicles.Values.Any(v => v.Map == map && (v.Station == stationId || v.LastStation == stationId || v.TravelTo == stationId)))
+            {
+                return StationChange.InUse;
+            }
+
+            map.Stations.Remove(station);
+            map.Edges.RemoveAll(e => e.From == stationId || e.To == stationId);
+            map.DisconnectedChargers.Remove(stationId);
+            map.RebuildGraph();
+            return StationChange.Done;
         }
     }
 
@@ -618,20 +898,41 @@ public sealed class FakeRiotWorld
                 elapsed = TimeSpan.Zero;
             }
 
+            // Travel and the arrival-to-success wait are counted in the world's own time.
+            elapsed *= Timing.Speedup;
+
             foreach (var v in vehicles.Values)
             {
                 if (v.EmergencyTarget is { } target && now >= v.EmergencyChangeAt)
                 {
                     v.Emergency = target;
                     v.EmergencyTarget = null;
+                    if (target == EmergencyStates.Ok)
+                    {
+                        v.FaultCodesClearAt = now + Real(Timing.FaultCodeResidue);
+                    }
+                }
+
+                if (v.Current is { State: OrderStates.Held } held && v.Emergency != EmergencyStates.Ok)
+                {
+                    held.StoppedWhileHeld = true;
                 }
 
                 // An emergency stop holds the vehicle; it does not put the
                 // order into HANG (BC-ORDER-015 item 1).
-                if (v.Current is { State: OrderStates.Executing } order && v.Emergency == EmergencyStates.Ok)
+                if (v.Current is { State: OrderStates.Executing } order && v.Emergency == EmergencyStates.Ok && !Immobile(v))
                 {
                     Advance(v, order, elapsed, now);
                 }
+                else if (v.Driving && v.Emergency == EmergencyStates.Ok)
+                {
+                    Travel(v, elapsed);
+                }
+            }
+
+            foreach (var v in vehicles.Values)
+            {
+                Charge(v, elapsed);
             }
 
             foreach (var v in vehicles.Values.Where(v => v.Current is null))
@@ -648,17 +949,22 @@ public sealed class FakeRiotWorld
     /// </summary>
     private void StartNext(VehicleState v, DateTimeOffset now)
     {
-        if (!v.Online || v.Emergency != EmergencyStates.Ok || v.EmergencyTarget is not null)
+        if (!v.Online || v.Emergency != EmergencyStates.Ok || v.EmergencyTarget is not null || v.Driving || Immobile(v)
+            || v.Battery <= settings.NoOrdersAtOrBelowBattery)
         {
             return;
         }
 
+        // The head of the vehicle's queue goes first, promoted orders ahead
+        // (BC-ORDER-014). A head too new to start yet is waited for, not
+        // passed over by an older order behind it: the fake's choice; the lab
+        // never saw a promoted order that was newer than the queue time.
         var next = orders
-            .Where(o => o.State == OrderStates.Queueing && o.AppointVehicleKey == v.Key && now - o.CreatedAt >= Timing.QueueToStart)
+            .Where(o => o.State == OrderStates.Queueing && o.AppointVehicleKey == v.Key)
             .OrderByDescending(o => o.Promotion)
             .ThenBy(o => o.Id)
             .FirstOrDefault();
-        if (next is null)
+        if (next is null || now - next.CreatedAt < Real(Timing.QueueToStart))
         {
             return;
         }
@@ -686,6 +992,17 @@ public sealed class FakeRiotWorld
     private void Advance(VehicleState v, OrderState order, TimeSpan elapsed, DateTimeOffset now)
     {
         var budget = elapsed;
+        if (order.StartDelayLeft > TimeSpan.Zero)
+        {
+            var waited = budget < order.StartDelayLeft ? budget : order.StartDelayLeft;
+            order.StartDelayLeft -= waited;
+            budget -= waited;
+            if (order.StartDelayLeft > TimeSpan.Zero)
+            {
+                return;
+            }
+        }
+
         while (order.State == OrderStates.Executing)
         {
             if (order.ExecutingIndex >= order.Missions.Count)
@@ -712,24 +1029,15 @@ public sealed class FakeRiotWorld
                     }
 
                     mission.MissionState = 1;
-                    v.TravelFrom = v.LastStation;
-                    v.TravelNeeded = cost == 0
-                        ? TimeSpan.Zero
-                        : TimeSpan.FromSeconds(Math.Max(Timing.MinimumTravel.TotalSeconds, cost.Value / Timing.SpeedMillimetresPerSecond));
-                    v.Travelled = TimeSpan.Zero;
-                    // Off any station while it moves (BC-STATE-002).
-                    v.Station = cost == 0 ? mission.Destination : 0;
+                    StartTravel(v, mission.Destination, cost.Value);
                 }
 
-                v.Travelled += budget;
-                if (v.Travelled < v.TravelNeeded)
+                if (Travel(v, budget) is not { } left)
                 {
                     return;
                 }
 
-                budget = v.Travelled - v.TravelNeeded;
-                v.Station = v.LastStation = mission.Destination;
-                v.TravelNeeded = v.Travelled = TimeSpan.Zero;
+                budget = left;
                 CompleteMission(order, mission, 900);
             }
             else if (mission is { Type: "act", ActionId: ChargeActionId, ActionParam1: 1 })
@@ -759,6 +1067,65 @@ public sealed class FakeRiotWorld
         }
     }
 
+    /// <summary>
+    /// On a charger or the manual charger the battery rises, and stops at
+    /// <see cref="FakeRiotSettings.ChargingStopsAtBattery"/>: the battery
+    /// management may stop at 97 to 99 % (a guess, ADR 0020). batteryState
+    /// still reads CHARGING after that.
+    /// </summary>
+    private void Charge(VehicleState v, TimeSpan elapsed)
+    {
+        if (!(v.Charging || v.ManualCharger) || v.Battery >= settings.ChargingStopsAtBattery)
+        {
+            v.ChargedFor = TimeSpan.Zero;
+            return;
+        }
+
+        v.ChargedFor += elapsed;
+        while (v.ChargedFor >= Timing.ChargingTimePerPercent && v.Battery < settings.ChargingStopsAtBattery)
+        {
+            v.ChargedFor -= Timing.ChargingTimePerPercent;
+            v.Battery++;
+        }
+    }
+
+    /// <summary>Sets the vehicle off towards <paramref name="destination"/>; off any station while it moves (BC-STATE-002).</summary>
+    private void StartTravel(VehicleState v, int destination, double cost)
+    {
+        v.TravelFrom = v.LastStation;
+        v.TravelTo = destination;
+        v.TravelNeeded = cost == 0
+            ? TimeSpan.Zero
+            : TimeSpan.FromSeconds(Math.Max(Timing.MinimumTravel.TotalSeconds, cost / Timing.SpeedMillimetresPerSecond));
+        v.Travelled = TimeSpan.Zero;
+        v.StoppedAt = null;
+        v.Station = cost == 0 ? destination : 0;
+    }
+
+    /// <summary>Moves the vehicle on by <paramref name="budget"/>; on arrival, the time left over, otherwise null.</summary>
+    private static TimeSpan? Travel(VehicleState v, TimeSpan budget)
+    {
+        v.Travelled += budget;
+        if (v.Travelled < v.TravelNeeded)
+        {
+            return null;
+        }
+
+        var left = v.Travelled - v.TravelNeeded;
+        v.Station = v.LastStation = v.TravelTo;
+        v.TravelNeeded = v.Travelled = TimeSpan.Zero;
+        v.Driving = false;
+        return left;
+    }
+
+    /// <summary>The brake released, not in MODE_AUTO, or the manual charger plugged in: the vehicle does not move on an order.</summary>
+    private static bool Immobile(VehicleState v) => v.BrakeReleased || v.Mode != VehicleModes.Auto || v.ManualCharger;
+
+    private static string BatteryState(VehicleState v) => v.Charging || v.ManualCharger ? "CHARGING" : "NO_CHARGE";
+
+    /// <summary>Named the wrong way round on real RIoT: an applied brake reads MOVABLE (#11).</summary>
+    private static string BrakeSwitchState(VehicleState v) => v.BrakeReleased ? "UNMOVABLE" : "MOVABLE";
+
     private static void CompleteMission(OrderState order, Mission mission, int resultCode)
     {
         mission.MissionState = 2;
@@ -776,9 +1143,14 @@ public sealed class FakeRiotWorld
             m.MissionState = state == OrderStates.Cancelled ? 4 : m.MissionState;
         }
 
-        // Cancelled midway, the vehicle stays where it is: off a station if it was moving.
+        // Cancelled midway, the vehicle stops where it is: off a station, not back at the start (ADR 0021).
         foreach (var v in vehicles.Values.Where(v => ReferenceEquals(v.Current, order)))
         {
+            if (v.Station == 0 && v.TravelNeeded > TimeSpan.Zero)
+            {
+                v.StoppedAt = Position(v);
+            }
+
             v.Current = null;
             v.TravelNeeded = v.Travelled = TimeSpan.Zero;
         }
@@ -795,24 +1167,36 @@ public sealed class FakeRiotWorld
         _ => "PROCESSING_ORDER",
     };
 
-    /// <summary>A stopped vehicle with an executing order still reads MT_RUNNING, at speed 0 (R28).</summary>
+    /// <summary>
+    /// A stopped vehicle with an executing order still reads MT_RUNNING, at
+    /// speed 0 (R28); so does a vehicle a person drives with no order, with
+    /// procState IDLE (round 38).
+    /// </summary>
     private static string MovementState(VehicleState v) => v.Current switch
     {
+        null when v.Driving => "MT_RUNNING",
         { State: OrderStates.Held } => "MT_PAUSED",
-        { State: OrderStates.Executing } when v.TravelNeeded > TimeSpan.Zero => "MT_RUNNING",
+        // Waiting to start after a continue, too (BC-ORDER-020 item 3).
+        { State: OrderStates.Executing } o when v.TravelNeeded > TimeSpan.Zero || o.StartDelayLeft > TimeSpan.Zero => "MT_RUNNING",
         _ => "MT_FINISHED",
     };
 
     private double Speed(VehicleState v) =>
-        v.Current is { State: OrderStates.Executing } && v.TravelNeeded > TimeSpan.Zero && v.Emergency == EmergencyStates.Ok
+        (v.Driving || (v.Current is { State: OrderStates.Executing } order && order.StartDelayLeft <= TimeSpan.Zero && !Immobile(v)))
+        && v.TravelNeeded > TimeSpan.Zero && v.Emergency == EmergencyStates.Ok
             ? Timing.SpeedMillimetresPerSecond / 1000
             : 0;
 
     private static (double X, double Y) Position(VehicleState v)
     {
-        var at = v.Map.Station(v.Station != 0 ? v.Station : v.LastStation) ?? v.Map.Seed.Stations[0];
-        if (v.Station != 0 || v.TravelNeeded <= TimeSpan.Zero || v.Current?.CurrentMission is not { Type: "move" } move
-            || v.Map.Station(move.Destination) is not { } to || v.Map.Station(v.TravelFrom) is not { } from)
+        var at = v.Map.Station(v.Station != 0 ? v.Station : v.LastStation) ?? v.Map.Stations[0];
+        if (v.Station == 0 && v.StoppedAt is { } stopped)
+        {
+            return stopped;
+        }
+
+        if (v.Station != 0 || v.TravelNeeded <= TimeSpan.Zero
+            || v.Map.Station(v.TravelTo) is not { } to || v.Map.Station(v.TravelFrom) is not { } from)
         {
             return (at.X, at.Y);
         }
@@ -851,7 +1235,7 @@ public sealed class FakeRiotWorld
             // Jumps to 100 as soon as the order executes; useless as progress (R16).
             ["progress"] = o.State == OrderStates.Queueing ? 0 : 100,
             ["source"] = "FMS",
-            ["createdBy"] = "fake-riot",
+            ["createdBy"] = o.CreatedBy,
             ["failReason"] = "",
             ["createTime"] = Local(o.CreatedAt),
             ["updateTime"] = Local(o.UpdatedAt),
@@ -892,11 +1276,20 @@ public sealed class FakeRiotWorld
     {
         public SeedMap Seed { get; } = seed;
 
-        public RouteGraph Graph { get; } = new(seed);
+        public List<SeedStation> Stations { get; } = [.. seed.Stations];
+
+        public List<SeedEdge> Edges { get; } = [.. seed.Edges];
+
+        public RouteGraph Graph { get; private set; } = new(seed);
 
         public HashSet<int> DisconnectedChargers { get; } = [];
 
-        public SeedStation? Station(int id) => Seed.Stations.FirstOrDefault(s => s.Id == id);
+        /// <summary>The highest station number the map ever had: a new station gets the next (ADR 0015).</summary>
+        public int HighestStationId { get; set; } = seed.Stations.Count == 0 ? 0 : seed.Stations.Max(s => s.Id);
+
+        public SeedStation? Station(int id) => Stations.FirstOrDefault(s => s.Id == id);
+
+        public void RebuildGraph() => Graph = new RouteGraph(Seed with { Stations = [.. Stations], Edges = [.. Edges] });
     }
 
     private sealed class VehicleState(SeedVehicle seed, MapState map)
@@ -909,7 +1302,26 @@ public sealed class FakeRiotWorld
 
         public MapState Map { get; } = map;
 
-        public int Battery { get; } = seed.Battery;
+        public int Battery { get; set; } = seed.Battery;
+
+        public bool BrakeReleased { get; set; }
+
+        public string Mode { get; set; } = VehicleModes.Auto;
+
+        public bool ManualCharger { get; set; }
+
+        public bool ButtonPressed { get; set; }
+
+        /// <summary>World time charged towards the next percent.</summary>
+        public TimeSpan ChargedFor { get; set; }
+
+        /// <summary>Driven by a person, with no order (ADR 0022).</summary>
+        public bool Driving { get; set; }
+
+        public int TravelTo { get; set; }
+
+        /// <summary>Where it stopped off a station when its order was cancelled on the way.</summary>
+        public (double X, double Y)? StoppedAt { get; set; }
 
         /// <summary>The station it is on; 0 off a station (BC-STATE-002).</summary>
         public int Station { get; set; } = seed.Station;
@@ -933,6 +1345,9 @@ public sealed class FakeRiotWorld
 
         public DateTimeOffset EmergencyChangeAt { get; set; }
 
+        /// <summary>Until when the residual fault codes stay listed after the stop was released.</summary>
+        public DateTimeOffset FaultCodesClearAt { get; set; }
+
         /// <summary>Its executing, held or hung order.</summary>
         public OrderState? Current { get; set; }
     }
@@ -955,6 +1370,9 @@ public sealed class FakeRiotWorld
 
         public DateTimeOffset UpdatedAt { get; private set; } = createdAt;
 
+        /// <summary>Who made it: the call key's orders say <c>fake-riot</c>, a web-page order <c>admin</c>.</summary>
+        public string CreatedBy { get; init; } = "fake-riot";
+
         public int State { get; set; } = OrderStates.Queueing;
 
         public string? ExecuteVehicleKey { get; set; }
@@ -968,6 +1386,12 @@ public sealed class FakeRiotWorld
         public TimeSpan Finishing { get; set; }
 
         public long Promotion { get; set; }
+
+        /// <summary>The vehicle was emergency stopped while the order was held: a continue then starts late (BC-ORDER-020 item 3).</summary>
+        public bool StoppedWhileHeld { get; set; }
+
+        /// <summary>World time left before a continued order's vehicle starts (BC-ORDER-020 item 3).</summary>
+        public TimeSpan StartDelayLeft { get; set; }
 
         public Mission? CurrentMission => ExecutingIndex >= 0 && ExecutingIndex < Missions.Count ? Missions[ExecutingIndex] : null;
 
@@ -1010,6 +1434,26 @@ public static class OrderStates
     public const int Deleted = 6;
     public const int Held = 7;
     public const int Hang = 9;
+}
+
+public static class VehicleModes
+{
+    public const string Auto = "MODE_AUTO";
+    public const string Manual = "MODE_MANUAL";
+}
+
+public enum StationChange
+{
+    Done,
+    Unknown,
+    InUse,
+}
+
+public enum VehicleChange
+{
+    Done,
+    UnknownVehicle,
+    Invalid,
 }
 
 public static class EmergencyStates

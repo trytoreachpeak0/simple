@@ -58,6 +58,7 @@ public sealed partial class TerminalConnection : IDisposable
 
     private readonly TerminalSettings settings;
     private readonly OnboardInputs inputs;
+    private readonly IoModuleReader? io;
     private readonly TimeProvider time;
     private readonly ILogger logger;
     private readonly GrpcChannel channel;
@@ -67,7 +68,8 @@ public sealed partial class TerminalConnection : IDisposable
     private TerminalStatus status = new(TerminalState.Connecting, DisconnectedText, 0);
     private string? pinProblem;
 
-    public TerminalConnection(TerminalSettings settings, OnboardInputs inputs, TimeProvider time, ILoggerFactory loggers, string? version = null)
+    /// <param name="io">The IO module's reader, whose readings go into every report; without one, every report says the IO module cannot be read.</param>
+    public TerminalConnection(TerminalSettings settings, OnboardInputs inputs, TimeProvider time, ILoggerFactory loggers, string? version = null, IoModuleReader? io = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(inputs);
@@ -80,6 +82,12 @@ public sealed partial class TerminalConnection : IDisposable
             ?? typeof(TerminalConnection).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? "unknown";
         inputs.Added += () => wake.Writer.TryWrite(true);
+        this.io = io;
+        if (io is not null)
+        {
+            // A reading that changed goes out at once (ADR 0024).
+            io.Changed += () => wake.Writer.TryWrite(true);
+        }
 
         var handler = new SocketsHttpHandler
         {
@@ -242,9 +250,8 @@ public sealed partial class TerminalConnection : IDisposable
                 LastReceivedSeq = session.LastReceivedSeq,
                 TerminalVersion = Version,
                 VehicleId = settings.VehicleId,
-                // No IO module is read yet (the IO module ticket).
-                IoModuleReadable = false,
             };
+            AddReading(report);
             report.Inputs.Add(inputs.ForReport(seq));
             await stream.WriteAsync(report, abort);
 
@@ -265,6 +272,29 @@ public sealed partial class TerminalConnection : IDisposable
                 return;
             }
         }
+    }
+
+    private void AddReading(OnboardReport report)
+    {
+        if (io?.Read() is not { } reading)
+        {
+            return;
+        }
+
+        report.IoModuleReadable = reading.Readable;
+        if (reading.SinceRead is { } sinceRead)
+        {
+            report.IoReadAgeMs = (ulong)sinceRead.TotalMilliseconds;
+        }
+
+        report.IoPoints.Add(reading.Points.Select(p => new IoPoint
+        {
+            Kind = p.Kind,
+            Number = (uint)p.Number,
+            Value = p.Value,
+            Changes = p.Changes,
+            MsSinceChange = (ulong)p.SinceChange.TotalMilliseconds,
+        }));
     }
 
     private void Classify(RpcException e)

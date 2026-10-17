@@ -15,11 +15,13 @@ SIMPLE 按工厂 MES 的需求，用多仓位的自动搬运车，把产品批�
 | `src/Simple.Server.Console` | 服务端控制台界面，随服务端进程运行 |
 | `src/Simple.Server.Riot` | 车队调度平台 RIoT 的适配 |
 | `src/Simple.OnboardTerminal` | 车载终端（WPF 界面外壳） |
-| `src/Simple.OnboardTerminal.Core` | 车载终端的核心，不依赖 WPF：连接服务端、收发消息、车旁操作 |
+| `src/Simple.OnboardTerminal.Core` | 车载终端的核心，不依赖 WPF：连接服务端、收发消息、车旁操作、读 IO 模块 |
 | `src/Simple.OnboardTerminal.Headless` | 无界面的车载终端，本机整套系统、测试和 CI 用它 |
 | `src/Simple.MesGateway` | MES 网关，独立的小进程 |
 | `src/Simple.FakeRiot` | 假 RIoT：只在回环地址上监听，按真实 RIoT 的样子回答 SIMPLE 用到的那部分接口，给本机整套系统、测试和 CI 用；它必须先通过 `Simple.Contracts.Tests` |
-| `src/Simple.IoSimulator` | 车上 IO 模块的模拟器 |
+| `src/Simple.IoSimulator` | 车上 IO 模块的模拟器（WPF 界面外壳，界面还没做） |
+| `src/Simple.IoSimulator.Core` | IO 模拟器的核心，不依赖 WPF：料柜物理模型、IO 模块的 Modbus TCP 服务端（FluentModbus）、通信故障、自动应答 |
+| `src/Simple.IoSimulator.Headless` | 无界面的 IO 模拟器，本机整套系统、测试和 CI 用它；Modbus 和控制接口都只听回环地址 |
 | `src/Simple.Protocol` | 服务端与车载终端之间的协议契约 |
 | `src/Simple.Logging` | 各程序共用的程序日志：写本机文件、限大小、脱敏、记下没接住的异常 |
 | `src/Simple.Cli` | `simple` 命令行：在本机一条命令起停整套系统、查看状态、事件和日志 |
@@ -89,22 +91,29 @@ dotnet test --solution simple.slnx
 
 从别的 shell 调用写成 `pwsh -File <clone>/simple.ps1 up`。每个命令都接受 `--json`：标准输出上只有一个 JSON 对象 `{exitCode, error, result}`，进度提示写在标准错误上。退出码是固定的，`./simple --help` 列出全表：0 成功；1 意外错误；`down` 之后仍有进程在跑；或进程停后程序目录里仍有文件被占用（`up`、`down`，state 文件保留，再跑一次即可）；2 参数或设置不对；3 编译失败；4 有部件没就绪（已起的会被停掉）；5 实例没在运行（`logs`：没有这份日志，或还没有程序日志）；6 实例不健康、只起了一半，或是从另一个 clone 起的；7 另一条 simple 命令正在操作这个实例；8 有进程超时没停下、被强杀；9 连不上 SQL Server，或删库、删服务端钥匙失败。
 
-目前系统里有四种部件，按这个顺序起：假 RIoT、MES 网关（背后接假 MES）、服务端（启动参数里带上假 RIoT 和网关的地址）、无界面车载终端（`--terminals N` 个，默认 0）。`simple status` 除了列出每个进程，还有一行写服务端最近从网关看到了什么（网关通不通、最近一轮是第几轮、几点读的、多少行），一行写服务端连不连得上 RIoT，以及服务端看到的每台车载终端。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪，以及起之前要准备什么；以后加 IO 模拟器，也是往这里加一项。部件按登记的顺序一个一个起，前一个全部就绪才起下一个，因为后面的部件可能要用前面的：服务端第一次去网关取数时网关已经在了，车载终端要先从服务端的状态接口读到证书指纹。
+目前系统里有五种部件，按这个顺序起：假 RIoT、MES 网关（背后接假 MES）、服务端（启动参数里带上假 RIoT 和网关的地址）、IO 模拟器（每个车载终端配一个）、无界面车载终端（`--terminals N` 个，默认 0）。`simple status` 除了列出每个进程，还有一行写服务端最近从网关看到了什么（网关通不通、最近一轮是第几轮、几点读的、多少行），一行写服务端连不连得上 RIoT，以及服务端看到的每台车载终端。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪，以及起之前要准备什么；以后加部件，也是往这里加一项。部件按登记的顺序一个一个起，前一个全部就绪才起下一个，因为后面的部件可能要用前面的：服务端第一次去网关取数时网关已经在了，车载终端要先从服务端的状态接口读到证书指纹。
 
 - **实例**：不写 `--instance` 时，实例名取 clone 所在文件夹的名字（例如 `29-simple-cli`），所以两个 worktree 各起一套互不干扰。库名是 `Simple_<实例名>`；端口按实例名在 20000～29999 之间选一段，被占用就往后挪，同一个实例每次拿到的端口一般不变。
 - **起**：`up` 先 `dotnet build` 各部件的项目，再把编译输出复制到 `artifacts/simple/<实例名>/` 下运行，所以系统起着的时候照样可以重新编译、跑测试，不会碰到文件被占用。部件是独立的进程，命令行返回后它们继续运行；每个进程都被告知自己的程序日志目录（`--Simple:Logs:Directory`，见"程序日志"一节），打到控制台上的输出另外写进一个文件。重复执行 `up` 不会起第二套。
 - **停**：`down` 只停本实例的状态文件里记下的进程（按进程号和进程启动时间核对，绝不按进程名），用 Ctrl+Break 让它们正常退出，服务端因此会在事件记录里留下 `server.stopped`；30 秒还没退出才强杀，并以退出码 8 报告。
 - **库**：默认用本机 LocalDB `(localdb)\MSSQLLocalDB`。要用本机别的命名实例（CI 用 `.\SQLEXPRESS`），把不带库名的连接串放进 `SIMPLE_SQLSERVER`。命令行拒绝别的机器上的 SQL Server、本机的默认实例（`.`、`localhost`、`MSSQLSERVER`）、带端口的写法（带端口时 SqlClient 不看实例名，本机 1433 上通常是默认实例）、故障转移伙伴，以及带 SQL 登录用户名或密码的连接串（连接串会记在状态文件里，所以本机只用 Windows 集成认证）；起服务端和删库之前，还会连上去问服务器自己是谁（`SERVERPROPERTY` 的 `IsLocalDB`、`InstanceName`、`MachineName`），只接受 LocalDB，或本机上名字不是 `MSSQLSERVER` 的命名实例，这样别名和端口转发也绕不过去。`down --reset` 只删 `Simple_<实例名>` 这一个库，删在 `up` 当时用的那个 SQL Server 上。
 - **只起本机的假系统**：命令行没有任何指向真实系统的开关。起部件时会去掉环境里以 `Simple__`、`ConnectionStrings__`、`ASPNETCORE_`、`Kestrel__` 开头的变量和 `DOTNET_ENVIRONMENT`，免得外面设好的真实地址、连接串、监听地址或运行环境被带进本机系统；部件总是以 Production 运行。
+- **管理员密码**：服务端的接口要登录（见"只运行服务端"一节的"登录"）。第一次 `up` 给这个实例随机生成一个管理员密码，存在 clone 之外的 `%LOCALAPPDATA%\simple\instances\<实例名>\admin-password.txt`；每次起服务端之前，`up` 先用服务端命令 `set-admin-password` 把它设进库里。`status`、`events`、判服务端就绪、给车载终端写配置时，命令行都用它经控制台入口登录，用完退出。`down --reset` 删库时一起删掉它，下次 `up` 再生成新的。自己调接口时也用这个密码登录（账号名 `admin`）。
 - **文件放在哪**：状态文件和日志在 `%LOCALAPPDATA%\simple\instances\<实例名>\`（可用环境变量 `SIMPLE_HOME` 换位置）。每个进程的程序日志在 `logs\<进程名>\`，由程序自己限制大小，跨多次 `up` 保留，`simple logs <进程名>` 显示它（还没有程序日志或日志是空的，例如进程在日志起来之前就拒绝启动了，命令以退出码 5 说明这一点，并提示改用 `--output`）；控制台输出在 `logs\<进程名>.log`，`down` 之后保留，下次 `up` 时覆盖，`simple logs <进程名> --output` 显示它（`simple logs build --output` 是最近一次编译的输出）。每个车载终端的本机配置在同一目录的 `processes\terminal-<n>\terminal.json`，`up` 时按服务端的状态重新写。
 - **车载终端**：`terminal-1`、`terminal-2`…分别自报车辆 `vehicle-1`、`vehicle-2`…，连本实例服务端的终端端点。`./simple status` 末尾按服务端看到的样子列出每台车载终端：连着没有、上报新不新鲜、最新鲜的那份上报最多是几秒前写的、版本、屏上文字。每个终端在测试模式下开一个只听回环地址的测试输入（地址就是 `status` 里该进程的 URL），用来代替车旁的人：
   - `POST /test/keyboard`，正文 `{"text": "LOT123\r"}`：像扫码枪那样敲键盘，每个回车结束一次扫码；
   - `POST /test/press`，正文 `{"button": "<按钮名>"}`：按屏上的一个按钮；
   - `GET /test/status`：连接状态和屏上文字；`GET /test/ready`：连着时 200。
   - 终端没连上服务端时，扫码和按键都返回 409 并被丢掉，和车上真屏一样。
+- **IO 模拟器**：`io-simulator-1`、`io-simulator-2`…和车载终端一一配对，`terminal-n` 经 Modbus TCP 读 `io-simulator-n`（`up` 把模拟器的 Modbus 地址写进终端的 `terminal.json`，字段 `ioModule`）。模拟的是车上那块 C2000 IO 模块加 8 仓料柜：只认 Unit ID 255，16 路输出（线圈地址 100 起）、16 路输入（离散量地址 200 起）；第 n 仓的开锁是输出 n，锁反馈是输入 n（锁上为 1），光幕是输入 n+8（有货为 0）。开锁输出按脉冲模式 500 ms 后自己回到 0，门随即弹开，100 ms 后锁反馈变开；关门 100 ms 后锁反馈变锁上；放货、取货 50 ms 后光幕翻转。车载终端每 200 ms 读一次全部 32 个点，把原始值、本次启动以来变了几次、距上次变化多久、能不能读到模块填进上报；`./simple status` 在每台终端下面多一行，列出它报的输入和输出。模拟器的控制接口就是 `status` 里该进程的 URL，只听回环地址，用来代替仓前的人和故障：
+  - `GET /api/v1/state`：16 路输出、16 路输入的原始值（从通道 1 起），每仓的门、货和被固定的传感器，当前通信故障，自动应答的进度；
+  - `POST /api/v1/slots/{n}/load`、`/unload`、`/close`：放货、取货、关门；门关着时放货取货返回 409 `door-not-open`。没有开门、开锁的接口：门只有车载终端写开锁输出才会开；
+  - `PUT /api/v1/slots/{n}/lock-feedback`、`/light-curtain`，正文 `{"value": 0}`、`{"value": 1}` 或 `{"value": null}`：把锁反馈或光幕固定成某个读数，不管门和货实际怎样，`null` 取消；
+  - `PUT /api/v1/modbus-fault`，正文 `{"mode": "no-response"}`、`{"mode": "disconnect"}`、`{"mode": "delay", "delayMs": 300}` 或 `{"mode": "none"}`：通信故障，分别是连着但不回应、断开并拒绝新连接、每个请求晚回、恢复；
+  - `POST /api/v1/auto-responder`，正文例如 `{"action": "load", "doors": 3, "actSeconds": 4, "closeSeconds": 4, "withinSeconds": 300}`：接下来开的 3 扇门，每扇开后 4 秒放一件货（`unload` 则取一件），再过 4 秒关门。门在动作前被人关了、往有货的仓放、从空仓取、到期没处理完，都算失败并停下；`POST /api/v1/auto-responder/wait?timeoutSeconds=60` 一直等到做完才返回 200，失败、被取消或等到超时都返回 409，并带上原因，脚本和场景据此判成败。`GET` 看进度，`DELETE` 停下。
 - **服务端钥匙**：本实例服务端的证书钥匙放在当前 Windows 用户的密钥存储里，名字是 `Simple-Server-<实例名>`。`down` 不动它，下次 `up` 指纹不变；`down --reset` 连库一起删掉它。`up` 把钥匙放在哪个存储记在实例目录的 `serverkey.txt` 里，`down --reset` 只按这份记录去删；没有记录时两种存储都查，删掉存在的那一把；删不掉就以退出码 9 报错并保留记录，下次还能再删。
 
-`Simple.Cli.Tests` 里的冒烟测试经编译好的命令行真起真停随机名字的实例：两套只有服务端的实例互不干扰；一套带 3 个车载终端的实例里，终端上报新鲜、经测试输入扫的码进了事件记录、被杀掉的终端 10 秒内记成上报过期、`down` 后不留进程。`dotnet test` 时随其他测试一起跑，CI 上也跑。
+`Simple.Cli.Tests` 里的冒烟测试经编译好的命令行真起真停随机名字的实例：两套只有服务端的实例互不干扰；一套带 3 个车载终端的实例里，终端上报新鲜、经测试输入扫的码进了事件记录、被杀掉的终端 10 秒内记成上报过期、`down` 后不留进程；一套带 2 个车载终端的实例里，服务端看到的每台终端的 16 路输入与它配对的模拟器一致，经控制接口固定一个光幕 2 秒内传到服务端、变化次数加 1，让模拟器不回应后 10 秒内终端报读不到 IO 模块、服务端记下 `onboard.io-unreadable`。`dotnet test` 时随其他测试一起跑，CI 上也跑。
 
 ## 把重活送到远端机器上跑
 
@@ -142,7 +151,7 @@ dotnet test --solution simple.slnx
 
 服务端、MES 网关、车载终端（WPF 外壳和无界面版）、IO 模拟器、假 RIoT 都用 Serilog 写程序日志（ADR 0034），接在 `Microsoft.Extensions.Logging` 后面，代码里照常用 `ILogger`。程序日志是程序自己的调试记录，不是事件记录：统计和"谁按了什么"仍然只查事件记录（ADR 0019）。
 
-- **写在哪**：本机的 `<目录>\<程序>.log`，满了另起 `<程序>_001.log`、`<程序>_002.log`……，超过保留个数就删最旧的。目录默认是 `%ProgramData%\Simple\<程序>\logs`（程序是 `Server`、`MesGateway`、`OnboardTerminal`、`IoSimulator`），每个文件默认 10 MB、保留 10 个，所以一个程序最多约占 100 MB。三项都能改：`Simple:Logs:Directory`、`Simple:Logs:FileSizeLimitBytes`、`Simple:Logs:RetainedFileCount`。服务端和 MES 网关和其他设置一样读（命令行、环境变量、`Simple:SettingsFile`）；车载终端和 IO 模拟器只从命令行读，例如 `--Simple:Logs:Directory=D:\logs`。一个文件写到上限时，正在写的那一条仍然完整写完。同一台机器上同一个程序跑两份时（例如上面"再起一套"服务端），给它们不同的目录，否则两份日志会交错在同一组文件里；`simple up` 已经给每个进程单独一个目录。
+- **写在哪**：本机的 `<目录>\<程序>.log`，满了另起 `<程序>_001.log`、`<程序>_002.log`……，超过保留个数就删最旧的。目录默认是 `%ProgramData%\Simple\<程序>\logs`（程序是 `Server`、`MesGateway`、`OnboardTerminal`、`IoSimulator`），每个文件默认 10 MB、保留 10 个，所以一个程序最多约占 100 MB。三项都能改：`Simple:Logs:Directory`、`Simple:Logs:FileSizeLimitBytes`、`Simple:Logs:RetainedFileCount`。服务端和 MES 网关和其他设置一样读（命令行、环境变量、`Simple:SettingsFile`）；车载终端和 IO 模拟器的界面版只从命令行读，例如 `--Simple:Logs:Directory=D:\logs`；无界面的 IO 模拟器和假 RIoT 一样读（命令行、环境变量、`appsettings.json`）。一个文件写到上限时，正在写的那一条仍然完整写完。同一台机器上同一个程序跑两份时（例如上面"再起一套"服务端），给它们不同的目录，否则两份日志会交错在同一组文件里；`simple up` 已经给每个进程单独一个目录。
 - **每次启动的第一行**：`<程序> started (version …, process …)`，即使程序别的什么都没说，也能从日志里看出它起过几次、是哪个版本。
 - **凭据不进日志**：脱敏在日志这一层统一做，控制台输出和文件都经过它。属性名表明是凭据的值（名字里含 `Password`、`Token`、`Secret`、`ApiKey`、`PairingCode` 等，或以 `Key` 结尾，例如 `SigningKey`；`ServerKeyName` 这种中间带 Key 的不算）整个换成 `***`。文字里的凭据只去掉值、保留名字：连接串的 `Password=`/`Pwd=`（带引号 `"a""b"`、ODBC 大括号 `{a;b}` 的整体去掉）、`--Simple:...:Password=x` 和 `--Simple:...:Password x`、查询串的 `api_key=`、JSON 的 `"password": "…"`、对象里的 `Password = …`、网址里的 `user:密码@`（密码里有没转义的 `@` 也一样）、`Authorization:` 后面的凭据（不论 Bearer、Basic、Token、ApiKey 哪种方案）、`Cookie:`/`Set-Cookie:` 的整个值、JWT、PEM 私钥（缺了 END 行的从 BEGIN 去到结尾）、GitHub 令牌、"配对码 123456"。异常的消息和内层异常也一样。值在连接串里取到下一个 `;`（可以含空格），在别处取到空格或 `&`、`,`、`;`、`)` 这类分隔符为止，所以 `password=x&user=y` 只去掉 `x`。配对码只在写明是配对码时去掉，不按"像不像 6 位数"去猜：批次号、机台号、站点号常常就是一串数字，要在日志里照常看得到；单独的 `Basic`、`Bearer` 后面跟的是普通单词时也不去掉。宁可多去掉一点：被去掉一个无害的值，这行日志照样能用；漏一个凭据就不行。
 - **不拖慢写日志的线程**：脱敏在写日志的那个线程上做（WPF 外壳里就是界面线程），所以每条规则都只从词首起匹配，耗时随文字长度线性增长，不会因为一个长值卡上几分钟。常见的 1 MB 长串在 1 秒左右做完；最费时的形状（例如 1 MB 的 `a=a=a=…`，每处都要查一次名字）在 1.5 秒左右。每条规则各有 1 秒的时限，所以一条日志最坏要等"规则条数 × 1 秒"；超时的那条日志，正文整段换成 `*** (not shown: redacting it took too long)`，宁可看不到也不漏。脱敏本身出了别的错时，正文换成 `*** (not shown: the log line could not be redacted)`，这一行照样写出、不和下一行粘在一起。
@@ -157,13 +166,17 @@ dotnet run --project src/Simple.Server
 
 默认接口只监听 `http://127.0.0.1:5180`，车载终端端点监听 `https://127.0.0.1:5181`，连本机 LocalDB，库名是 `Simple_<实例名>`（默认实例名 `dev`，即 `Simple_dev`）；第一次启动时自动建库并执行迁移。
 
-| 接口 | 用途 |
-| --- | --- |
-| `GET /health/live` | 进程活着 |
-| `GET /health/ready` | 能连上自己的数据库 |
-| `GET /api/v1/status` | 版本、启动时间、实例名、库名；车载终端端点的地址和证书指纹；每台车载终端的版本、连着没有、最新鲜的上报最多是几秒前写的、是否已过期、最近下发的屏上文字；RIoT 一栏（连不连得上：`not-configured`、`connecting`、`connected` 或 `unreachable`，地址、最近一次问和最近一次连上的时刻、出错原因、地图数）；MES 网关一栏（见下一节） |
-| `GET /api/v1/events` | 事件记录，按提交顺序（顺着游标一直往后读不会漏事件）；参数 `after`（游标，即上一页的 `nextCursor`）、`since`、`until`、`limit`（1～1000，默认 100） |
-| `GET /openapi/v1.json` | 接口描述 |
+除了"进程活着"的健康检查和登录接口，每个接口都要先登录（ADR 0045），"谁能用"一列见下面的"登录"。
+
+| 接口 | 谁能用 | 用途 |
+| --- | --- | --- |
+| `GET /health/live` | 不用登录 | 进程活着 |
+| `GET /health/ready` | 看 | 能连上自己的数据库 |
+| `GET /api/v1/status` | 看 | 版本、启动时间、实例名、库名；车载终端端点的地址和证书指纹；每台车载终端的版本、连着没有、最新鲜的上报最多是几秒前写的、是否已过期、最近下发的屏上文字；RIoT 一栏（连不连得上：`not-configured`、`connecting`、`connected` 或 `unreachable`，地址、最近一次问和最近一次连上的时刻、出错原因、地图数）；MES 网关一栏（见下一节） |
+| `GET /api/v1/events` | 看 | 事件记录，按提交顺序（顺着游标一直往后读不会漏事件）；参数 `after`（游标，即上一页的 `nextCursor`）、`since`、`until`、`limit`（1～1000，默认 100） |
+| `GET /openapi/v1.json` | 看 | 接口描述 |
+| `POST /api/v1/login`、`POST /api/v1/logout`、`GET /api/v1/session`、`PUT /api/v1/session/password` | 见"登录" | 登录、退出、我是谁、改自己的密码 |
+| `GET`、`POST /api/v1/accounts`，`DELETE /api/v1/accounts/{name}`，`PUT /api/v1/accounts/{name}/password`，`PUT /api/v1/accounts/{name}/paused` | 管账号 | 账号列表（每个账号最后一次来的时间、此刻在几台电脑上登录着）、建账号、删账号、给别的账号设密码、值守账号的"暂停值守" |
 
 在同一台机器上再起一套，换实例名和端口：
 
@@ -173,7 +186,59 @@ dotnet run --project src/Simple.Server -- --Simple:Instance=wt25 --urls=http://1
 
 服务端默认连 `http://127.0.0.1:5200` 上的假 RIoT（`Simple:Riot:Url`、`Simple:Riot:CallApiKey`，仓库里的密钥是假 RIoT 认的占位串）。每 10 秒读一次 RIoT 的地图列表，看连不连得上；连不上时按逐步拉长、最长 30 秒的间隔一直重试（ADR 0008），不会因为 RIoT 掉线而退出。`Simple:Riot:Url` 留空时不连 RIoT，状态里写 `not-configured`。这里只读，不建单、不发命令。
 
-仓库里的配置只指向回环地址和 LocalDB。真实的连接串和地址放在仓库外：用 `--Simple:SettingsFile=<路径>` 指定一个 JSON 配置文件，或用环境变量（例如 `ConnectionStrings__Simple`、`Simple__Instance`）。连接串里不写库名，库名由实例名决定。配置不合法时服务端拒绝启动，退出码为 2，并逐项说明是哪一项不对；接口还没有鉴权，所以接口的监听地址（`urls`）不是回环地址、或不是 `http://` 时也拒绝启动。
+仓库里的配置只指向回环地址和 LocalDB。真实的连接串和地址放在仓库外：用 `--Simple:SettingsFile=<路径>` 指定一个 JSON 配置文件，或用环境变量（例如 `ConnectionStrings__Simple`、`Simple__Instance`）。连接串里不写库名，库名由实例名决定。配置不合法时服务端拒绝启动，退出码为 2，并逐项说明是哪一项不对。接口本身（`urls`）只听回环、只走明文：不是回环地址、或不是 `http://` 时也拒绝启动；别的电脑经下面"控制台的 HTTPS 地址"打开控制台。
+
+### 登录
+
+做法见 ADR 0045，要点如下。
+
+- **管理员密码只有一个设法**：在服务端那台机器上运行服务端命令，密码从标准输入读（不写在命令行上，命令行别人看得到），用和服务端相同的设置（实例名、连接串、`Simple:SettingsFile`）：
+
+  ```
+  dotnet run --project src/Simple.Server -- set-admin-password
+  ```
+
+  在控制台窗口里直接运行时，输入的密码不显示在屏幕上。第一次运行时建管理员账号 `admin`，以后运行是重设它的密码；先执行迁移，再设密码，管理员在所有电脑上的登录随之作废（正在运行的服务端最多 10 秒后发现）。网页和接口上没有这个功能。管理员记得旧密码时，用 `PUT /api/v1/session/password` 改自己的密码。
+- **登录**：`POST /api/v1/login`，内容 `{"name": "...", "password": "...", "entry": "console" 或 "mcp"}`。成功时回账号、角色、项目和入口，并设一个登录 Cookie `__Host-simple`（`Secure`、`HttpOnly`、`SameSite=Strict`，7 天有效）；账号名或密码不对一律回 401，不说是哪一样不对。Cookie 里只有一把加密的随机钥匙，谁登录着、从哪台电脑、经哪个入口、什么时候来过，都记在服务端库里的登录记录上，每个请求按服务端内存里那一份核对，库短暂连不上也不把人踢出去。库里的登录记录只存这把钥匙的 SHA-256，拿到库的副本也拼不出一个能用的登录。
+- **同一台电脑再登录**：浏览器还登录着时再登录（例如班组长没退出、工程师来登录），旧的那次登录作废，换成新的一次；新的登录失败时，旧的照旧。
+- **登录接口收什么**：请求体最多 4 KB（改自己密码的接口也一样）；账号名不像账号名的（空、超过 100 个字符、带换行之类的控制字符）不去查库，直接按"不对"回 401。程序日志只写存在的账号名，不存在的一律写成"unknown account"，免得有人往账号框里敲进密码或伪造日志行。
+- **多久失效**：每天第一次使用时，Cookie 续成新的 7 天；7 天没用过的登录作废。退出（`POST /api/v1/logout`）删掉这一次登录，复制走的 Cookie 也不能再用；改密码、删账号让这个账号在所有电脑上的登录立刻作废，正好赶在改密码那一刻用旧密码登录的也一样（账号上记着凭据版本，改密码就加一，旧版本的登录一律不认）。退出时库正好连不上，这次登录在内存里立刻作废，库里那一行等下一次写库时再删；在那之前服务端若重启，这次登录会从库里读回来、重新有效。服务端重启不掉登录：加密 Cookie 的钥匙存在库里（`DataProtectionKeys` 表），每把钥匙再用本机级 DPAPI 加密，所以库搬到别的机器上恢复后，所有人要重新登录一次。本机级的意思是：factory01 上任何能运行程序的 Windows 账号都解得开这些钥匙，用它们能解开截获的 Cookie；能在生产服务器上运行程序的人本来就什么都能做，这一层防的是库被拷走。
+- **改东西的请求要带请求头** `X-Simple-Request: 1`（POST、PUT、PATCH、DELETE，登录也算），没带回 400。服务端不开跨域访问（CORS），别的网站的网页发不出带这个头的请求，借已登录的浏览器偷偷发请求就做不到。服务端也不发 HSTS（ADR 0046）。
+- **防猜密码**：同一台电脑（按来源 IP）每分钟最多 5 次登录或改自己密码的尝试，多了回 429 并在 `Retry-After` 里说多少秒后再试；不锁账号。登录成功也算一次（框架的限速器按请求数），一次登录管 7 天，正常使用碰不到。上限可以改：`Simple:Login:AttemptsPerWindow`、`Simple:Login:AttemptWindow`；`simple up` 起的本机系统把它调大，因为命令行每次查状态都从回环登录。
+- **谁能用**：每个接口在代码里标明一个"谁能用"（`src/Simple.Server/Accounts/Access.cs`），没标的接口谁都用不了，并有测试逐个检查。免登录的只有登录接口和"进程活着"；"车载终端"这一级只能标在车载终端协议上，标在别的接口上服务端起不来。gRPC 对不认识的服务和方法不另设兜底接口，那类请求和其他找不到的路径一样处理：在回环上的接口地址，改东西的请求没带 `X-Simple-Request` 先回 400，带了而没登录回 401；在车载终端端点上一律 404。
+
+  | 谁能用 | 班组长 | 工程师 | 管理员 | 值守账号 | 经 MCP 的登录 |
+  | --- | --- | --- | --- | --- | --- |
+  | 看 | 能（只看本项目，按业务核对） | 能 | 能 | 能 | 能 |
+  | 看全部项目 | | | 能 | 能 | 管理员、值守能 |
+  | 班组长的动作 | 能 | 能 | 能 | | |
+  | 工程师的动作 | | 能 | 能 | | |
+  | 改参数配置 | | | 能 | | 管理员能（事件记录保存天数除外） |
+  | 管账号 | | | 能 | | |
+  | 改自己的密码 | 能 | 能 | 能 | | |
+
+  "暂停值守"开着时，值守账号的每个请求（包括登录）都回 403，问题类型 `watch-paused`。
+- **账号**：班组长、工程师账号必须写所属项目，值守账号不写；值守账号整个系统只有一个；管理员账号只能由服务端命令建，不能经接口建、删或设密码。服务端里还没有项目表，项目先按名字存，以后有了项目再改成引用（ADR 0015、0017）。密码规则只有一条：至少 8 个字符；另有一个上限 128 个字符，不是规则而是登录接口的请求体只收 4 KB，设得更长就永远登录不上。只存哈希（PBKDF2-HMAC-SHA512，22 万次），旧的弱哈希在下次登录时自动升级；升级只在密码没被同时改掉时写回，否则这次登录按旧密码处理、回 401。
+- **记在哪**：建账号、删账号、设密码、开关暂停值守进事件记录，写账号、入口和来源 IP，不写密码。登录、退出、登录失败只进程序日志（写来源 IP），不进事件记录。
+
+### 控制台的 HTTPS 地址与车辆一览页的明文地址
+
+做法见 ADR 0046。两个地址默认都不配，开发、测试和 CI 只用回环上的接口。
+
+- **控制台的 HTTPS 地址**：`Simple:Console:Url`，例如 `https://172.19.205.222:5443`。只能是 `https://`，要写明一块网卡的 IP 地址（证书里要写这个 IP，所以不收 `localhost` 和机器名），不收 `0.0.0.0`、`[::]`、`*`。这里提供全部接口和登录（以后还有控制台页面），不提供车载终端协议；TLS 1.2；不发 HSTS。
+- **控制台的证书**：服务端第一次带着 `Simple:Console:Url` 启动时自己生成一张，记事件 `console.certificate-created`，程序日志里写一条警告提醒去装。证书写明自己不是证书机构、只能证明这台服务器：`basicConstraints` 关键且 `CA:false`，`keyUsage` 只有 `digitalSignature`，扩展用途只有 serverAuth，`subjectAltName` 写配置的 IP 和本机的 DNS 主机名（`Dns.GetHostName()`，不是最多 15 个字符的大写 NetBIOS 名）；有效期 20 年。证书本身存在库里（`ConsoleCertificates` 表），生成后固定不变；钥匙和车载终端的钥匙一样是 Windows 密钥存储里一把有名字的 ECDSA P-256 钥匙，默认名字 `Simple-Console-<实例名>`（`Simple:Console:KeyName`），放在 `Simple:OnboardTerminals:ServerKeyStore` 指的存储里。证书和钥匙都要备份（归部署那张票）。
+- **装到用控制台的电脑上**：在服务端机器上导出证书文件，拷到那台电脑上双击 → "安装证书" → "当前用户" → "将所有的证书都放入下列存储" → "受信任的根证书颁发机构" → 完成 → 安全警告点"是"：
+
+  ```
+  dotnet run --project src/Simple.Server -- export-console-certificate C:\temp\simple-console.cer
+  ```
+
+  命令输出证书的 SHA-256，可以和状态接口里的对一下。
+- **换 IP、换机器名、钥匙丢了**：服务端发现库里的证书不写着现在的 IP 或机器名，或者钥匙不在、不是这张证书的，**只关控制台，服务端照常运行，车载终端、派车照常**（产品负责人 2026-10-18 定）。实现上，控制台的地址照样占着端口（Kestrel 在读库之前就定好了监听地址），但每条连接一到就断开；状态接口的 `consoleEndpoint` 里 `serving` 为 `false`，`problem` 写原因和怎么办，程序日志记一条错误。确实要换的，运行 `discard-console-certificate` 作废旧证书（记事件 `console.certificate-discarded`），重启后生成新的，那几台电脑各重装一次。服务端不会自己悄悄换证书，因为换了就要每台电脑重装。
+- **作废证书不换钥匙**：`discard-console-certificate` 只删库里的证书，钥匙留着、下次生成证书时接着用。钥匙可能泄露时，在重启之前用服务端运行的那个 Windows 账号删掉它（`Simple:Console:KeyName`，默认 `Simple-Console-<实例名>`），服务端会建一把新的。`discard-console-certificate` 的输出里给出删这把钥匙的那一行 PowerShell 命令，钥匙名和存储都按服务端的设置填好，例如本机级存储是 `[System.Security.Cryptography.CngKey]::Open('Simple-Console-<实例名>', [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider, [System.Security.Cryptography.CngKeyOpenOptions]::MachineKey).Delete()`。两条证书命令都不碰钥匙，谁运行都一样。
+- **到期提醒**：状态接口的 `consoleEndpoint.certificate` 写证书的 SHA-256、写给了哪些 IP 和名字、到期时刻、还剩几天；还剩 90 天以内时 `expiresSoon` 为 `true`。控制台页面和值守 AI 还没做，做的时候从这里读。
+- **车辆一览页的明文地址**：`Simple:Overview:Url`，例如 `http://172.19.205.222:5080`。只能是 `http://`，要写明一块网卡的 IP 地址（或 `localhost`），不收所有网卡一起听的写法。这里只提供车辆一览页和它的数据，不收登录，别的请求一律 404；登录 Cookie 是 `Secure` 的，浏览器不会在这个地址上发它。车辆一览页本身还没做，所以现在这个地址上什么都没有。
+- **各回各的**：哪个地址提供什么按请求进来的那条连接分，不按主机名或端口：回环上的接口和控制台的 HTTPS 地址提供除车载终端协议以外的一切；车载终端端点只提供车载终端协议；一览页的明文地址只提供标了"一览页"的接口。
 
 ### 车载终端端点
 
@@ -256,25 +321,41 @@ RIoT 是首个厂区的车队调度系统，SIMPLE 只通过它让车移动。�
 一个只在回环地址上监听的小服务（默认 `http://127.0.0.1:5200`，监听地址不是回环时拒绝启动），按 riot-sdk 0.3.1 实际发出的请求和读取方式回答：登录、建单（含带充电动作的）、按 upperId 或 orderId 查单、订单列表、取消、暂停、从暂停继续、从挂起继续、优先执行、急停与解除、上下线、路线代价与就近站点、车辆状态、地图、站点和边表。`./simple up` 把它作为第一个部件起来，服务端默认连它。
 
 - **种子**：`src/Simple.FakeRiot/seed.json`，两张虚构的小地图和三台假车（`fake-vehicle-1` 在 1 号图 1 号站）。1 号图的路网是有向的，6 号站没有路通进去，5 号站是充电桩；两张图都有 1 号站，演示站号跨图不唯一。没有用 D8 的真实地图和车。
-- **会自己动**：订单排队 → 执行 → 车到站 → 约 1 秒后成功；行驶中车的站号读 0；执行中 `controlState` 一直是 `CONTROL_STATE_ERR`；急停约 1 秒锁上、解除后 4～5 秒才回 `OK`。时长在 `FakeRiot:Timing` 下，契约测试用几十到几百毫秒。
-- **没观测过的就不编**：真 RIoT 在某种情况下怎么回答没有记录时（例如对一张已成功的单发取消），假 RIoT 回业务码 `FAKE-UNOBSERVED`，说明这是知识的空白，任何代码都不能依赖它。
-- **控制面**（只有假 RIoT 有，代替车旁的人）：
+- **会自己动**：订单排队 → 执行 → 车到站 → 约 1 秒后成功；行驶中车的站号读 0；执行中 `controlState` 一直是 `CONTROL_STATE_ERR`；急停约 1 秒锁上、解除后 4～5 秒才回 `OK`，读到 `OK` 后故障码还残留约 3.5 秒；暂停期间车被急停过的，解除后再继续，订单当即回到执行中、读 `MT_RUNNING`，车约 16 秒后才起步；在桩上充电时电量每 36 秒涨 1%，涨到 98% 停（`FakeRiot:ChargingStopsAtBattery`），之后仍报 `CHARGING`；电量 ≤10%（`FakeRiot:NoOrdersAtOrBelowBattery`）的车不派单。默认时长接近真 RIoT，都在 `FakeRiot:Timing` 下，契约测试用几十到几百毫秒。
+- **时间压缩**：`FakeRiot:Timing:Speedup` 是倍速，上面所有时长连同行驶时间都除以它。默认 1 是真实速度；设成 100，一张从 1 号站到 3 号站（20 米）的单从建单到成功不到 1 秒，不用真等十几秒的起步延迟。`Tick`（多久推进一次）和接口上的时间戳不压缩。
+- **负载看得见**：`FakeRiot:ReadDelay` 让每个读请求（`/api` 下的 GET，和 `getRouteCostsBy`、`queryNearEnd`、`queryNearestStart` 三个只读的路线查询）先等这么久再回答，按假 RIoT 的时钟算。真 RIoT 读请求的 p95 约 168 ms，上一代现场约每秒 10 次读，轮询过密会拖慢全厂（`research/riot-review.md` R39）。默认 0；运行中可以用控制面改。每个 `/api` 调用都按"方法 + 路由模板"计数，没鉴权被拒的也算，用 `GET /fake-riot/calls` 读。
+- **没观测过的就不编**：真 RIoT 在某种情况下怎么回答没有记录时（例如对一张已成功的单发取消），假 RIoT 回业务码 `FAKE-UNOBSERVED`，说明这是知识的空白，任何代码都不能依赖它。只有产品负责人的说法、还没实测的，假 RIoT 照说法做，对应的契约标"未实测"（见下面的 #11 对照表）。
+- **控制面**（只有假 RIoT 有，代替车旁的人、网页前的人和别的产线）：
 
   | 接口 | 作用 |
   | --- | --- |
-  | `POST /fake-riot/orders/{orderId}/hang?resultCode=` | 把执行中或暂停的单打成挂起（9），就像有人在车载屏上取消或松了抱闸 |
+  | `POST /fake-riot/orders/{orderId}/hang?resultCode=` | 把执行中或暂停的单打成挂起（9），就像有人在车载屏上取消 |
+  | `POST /fake-riot/orders/{orderId}/fail` | 让排队中的单变成失败（4）。假 RIoT 自己从不让单失败；按产品负责人的说法，真 RIoT 也只会让刚创建、还没排队的单失败（ADR 0010）。假 RIoT 没有"还没排队"这一态，用排队中的单代替，执行中的单回 404 |
+  | `POST /fake-riot/orders/web` | 正文 `{"vehicleKey", "mapId", "station", "orderName"}`：像有人在 RIoT 网页上手动派单，`upperId` 是空串（Q-043、`cs#617`），回 `{"orderId"}` |
+  | `POST /fake-riot/faults/create-00002` | 正文 `{"orderMade": true, "times": 1}`：接下来几次建单回 `00002`；`orderMade` 为 `true` 时单其实建成了，为 `false` 时没建。真 RIoT 的 `00002` 两种都可能，要按"结果未知"对待（R6） |
+  | `PUT /fake-riot/order-list/churn` | 正文 `{"ordersPerRead": 1}`：每读一次订单列表之前，别的产线先建这么多单，翻页途中总数会变（`cs#573`）；0 停止 |
+  | `PUT /fake-riot/vehicles/{deviceKey}` | 正文里给哪项改哪项：`battery`（0～100）、`brakeReleased`（松抱闸：执行中的单挂起，`breakSwitchState` 读 `UNMOVABLE`；抱闸还松着时从挂起继续回 `14013` 车辆状态异常）、`mode`（`MODE_AUTO` 或 `MODE_MANUAL`）、`manualCharger`（插手动充电器：`batteryState` 读 `CHARGING`）、`emergencyButtonPressed`（按下车上的急停按钮：`CAN_NOT_RECOVER`、执行中的单保持执行中、车停住，在 RIoT 里解除无效；松开后变 `CAN_RECOVER`，要在 RIoT 里解除）。松抱闸、不是 `MODE_AUTO`、插着手动充电器时，车不接新单、手上的单也不走 |
+  | `POST /fake-riot/vehicles/{deviceKey}/drive` | 正文 `{"station": 3}`：人不经订单把车开过去，像用手控器（先把 `mode` 切成 `MODE_MANUAL`）或在 Matrix 上操作（`mode` 仍是 `MODE_AUTO`）；车在动、读 `MT_RUNNING`、`procState` 是 `IDLE`，RIoT 里没有订单；这时建的单排着，车到站后才执行（第 38 轮）。车有订单（包括挂起的）时不让开 |
   | `PUT /fake-riot/maps/{mapId}/chargers/{stationId}` | 正文 `{"connected": false}`：拔掉充电器，之后去这个桩的充电单挂起、结果码 `407802` |
+  | `POST /fake-riot/maps/{mapId}/stations`、`DELETE /fake-riot/maps/{mapId}/stations/{stationId}` | 像在 RIoT 的地图编辑里新建、删除站点。新站点的站号是这张图有过的最大站号加一，删掉的站号不再分配（ADR 0015）；车站着、出发或要去的站点删不掉（409） |
+  | `GET /fake-riot/calls`、`DELETE /fake-riot/calls` | 读、清零调用计数 |
+  | `PUT /fake-riot/read-delay` | 正文 `{"milliseconds": 168}`：运行中改读延迟 |
 
 - **已知和真 RIoT 不一样的地方**，后续票用到哪一条再补，补之前先加契约：
-  - 不自动给没指定车的单派车（BC-ORDER-008；SDK 也不许不指定车）；
-  - 充电单不展开进出点；充电失败直接挂起，不先重试两三轮（第 24 轮）；
-  - 从暂停继续后不模拟约 16 秒的起步延迟（BC-ORDER-020）；
-  - 急停解除后故障码当即清空，真 RIoT 会残留 3～4 秒（BC-ORDER-020 第 7 条）；
-  - 电量 ≤10% 的车照样接单（BC-VEH-007），充电中的车照样派单（BC-ORDER-023、Q-044 里还有矛盾没解释）；
+  - 不自动给没指定车的单派车（BC-ORDER-008）：SDK 也不许不指定车，SIMPLE 不会发这种单；
+  - 充电单不展开进出点：进出点是现场地图的配置，种子里没有；充电失败直接挂起，不先重试两三轮：第 24 轮只看到"重试了几次"，次数和间隔没记下来；
+  - 充电中的车照样派单：产品负责人说充电中不接单，可同一次现场读数里车恰恰是在充电中被派了单（BC-ORDER-023、Q-044），矛盾没解释之前不照哪一边改；
   - upperId 超过 52 个字符一律回 `00002`：真实上限在 52 到 68 之间，没测出来（BC-ORDER-022），假 RIoT 取最严的一头；
-  - `00002` 总是"没建单"，没有"已经建了单却回 `00002`"那种情况，而真 RIoT 的 `00002` 要按"结果未知"对待；
-  - 从不出现失败（4）和状态 8；订单列表翻页途中总数不变（上一代 `cs#573`）；不模拟读延迟；
-  - 造不出网页手派、upperId 为空串的单（Q-043、`cs#617`）。
+  - 从不出现状态 8：它的含义没查明（U1），实验室一次都没见过，假 RIoT 编不出它会怎样出现；
+  - 列表里网页手派单的 `upperId` 是什么形状没观测过（Q-043 第 2 问），假 RIoT 和按 orderId 查一样给空串；
+  - 从挂起继续后有没有起步延迟没观测过，假 RIoT 不加；
+  - 充电速度没量过（假 RIoT 用每 1% 36 秒）；行驶不耗电；
+  - 没被急停过的暂停，继续后不加起步延迟：约 16 秒只在"暂停 + 急停 + 解除"之后见过（BC-ORDER-020 第 3 条），没有不急停的对照；第 10 轮暂停后继续，约 9 秒已经到站，不支持每次都有 16 秒；
+  - 暂停中松抱闸会怎样没观测过（第 27 轮 F 节只看了执行中的单），假 RIoT 让暂停的单保持暂停；
+  - 挂起期间人又在车上让车走、这时发从挂起继续，真 RIoT 回成功、订单仍挂起（BC-ORDER-018 第 2 条），假 RIoT 没做：有订单（包括挂起的）的车不让人开；
+  - 删掉的站点会不会出现在 `removedStation` 列表里没观测过，假 RIoT 的这个列表一直是空的；
+  - 被优先执行的单如果刚建、还不满排队时长，真 RIoT 是等它还是先跑后面较早的单，没观测过；假 RIoT 等它（队首不让人插队）；
+  - 执行中一直读 `CONTROL_STATE_ERR`（BC-VEH-005 第 8 条）只在生产 RIoT 上见过（第 44 轮，共 2 单）；第 38 轮在测试环境（地图 30），订单执行期间 36 次读数全是 `CONTROL_STATE_OK`，其中 8 次车在动。这一条可能只在生产 RIoT 上成立，假 RIoT 照生产的样子做。
 
 ### 契约测试
 
@@ -285,6 +366,31 @@ dotnet test --project tests/Simple.Contracts.Tests --filter-trait "Contract=BC-O
 ```
 
 产品负责人说过、但还没在真 RIoT 上测过的行为（例如"对挂起的单发取消，单子变成已取消"，ADR 0010），另外标 `[NotVerifiedOnRealRiot("…")]`（trait `RealRiot=NotVerified`）。假 RIoT 照这些说法做，好让建在上面的代码能测；它们是否成立另由 #11 在真 RIoT 上核对，测出来不成立要回头改 ADR 和假 RIoT。
+
+#11 里的每一条都有契约，出处里写 `#11` 和依赖它的 ADR，`--filter-trait "Contract=#11"` 一次挑出来；`ContractCatalogueTests` 检查每条契约都写了出处、每条 `#11` 的契约都写了 ADR。对照如下（"未实测"即标了 `[NotVerifiedOnRealRiot]`）：
+
+| #11 的条目 | 契约 | ADR | 实测情况 |
+| --- | --- | --- | --- |
+| 站号永不改变，新站点只递增、删掉的不再分配；站号跨图不唯一 | `StationContracts.ANewStationGetsANumberNoStationHadBefore`、`MapContracts.TwoMapsHaveAStationWithTheSameId` | 0015 | 前者未实测；后者实验室见过（BC-MAP-002） |
+| 订单只在刚创建、还没排队时失败，车在原地 | `FailedOrderContracts.AJustMadeOrderFailsWithTheVehicleWhereItIs`（假 RIoT 拒绝让执行中的单失败，由 `Simple.FakeRiot.Tests` 测） | 0010 | 未实测 |
+| 按急停按钮、服务端下的急停会不会让订单挂起 | `EmergencyButtonContracts.PressingTheButtonDoesNotHangTheExecutingOrder`、`EmergencyStopContracts.AnEmergencyStopKeepsTheExecutingOrderExecuting` | 0010 | 都不会，实验室见过：按住按钮，第 28 轮约 14 分钟（520 个采样）、第 27 轮 A 节短监视，订单一直执行中（Q-035），服务端下的急停见 BC-ORDER-015。ADR 0010 原先写"按急停按钮会进挂起"，产品负责人 2026-10-18 按实测改正 |
+| 对挂起的单发取消，变成已取消 | `OrderCommandContracts.CancellingAHungOrderCancelsIt` | 0010 | 未实测 |
+| 一类急停软件解不开；一类触发同时触发二类，一类消除后二类还在；按钮按着时在 RIoT 里解除会立刻再触发 | `EmergencyButtonContracts.WhileTheButtonIsPressedAReleaseInRiotDoesNotReleaseTheStop`、`OnceTheButtonIsLetGoTheStopStaysUntilReleasedInRiot` | 0009 | 部分实测：第 27 轮 A 节见过硬件急停要物理松开后 `cancelEmergency` 才回 `OK`；"立刻再触发""一类带出二类"是产品负责人的说法 |
+| 三类急停解除后车接着走原来的单 | `EmergencyStopContracts.AfterTheStopIsReleasedTheVehicleGoesOnWithItsOrder` | 0009 | 未实测（BC-ORDER-020 第 5 条只是推断） |
+| 下线后不开始排队的单，已开始的照常做完，暂停、挂起的仍能恢复 | `IntegrationLevelContracts` 三条 | 0011 | 未实测（第 13 轮只看到开头） |
+| `MODE_MANUAL` 时人能直接开车 | `ManualUseContracts.InManualModeAPersonDrivesTheVehicleWithoutAnOrder` | 0022 | 未实测 |
+| 取消行驶中的单车会猛停 | `StationContracts.CancellingAMovingOrderStopsTheVehicleWhereItIs` | 0021 | 未实测；假 RIoT 只表现"停在原地"，猛不猛表现不出来 |
+| 插着手动充电器车动不了 | `ManualUseContracts.WithTheManualChargerPluggedInTheVehicleReadsChargingAndDoesNotMove` | 0022 | 未实测；读 `CHARGING` 第 42 轮见过 |
+| 判断站点上或开往站点的车只能遍历车辆和订单 | `StationContracts.EveryVehicleOnTheListHasACardThatSaysWhereItStands`（只读，真 RIoT 上也跑）、`TheOrderListShowsWhereAnExecutingVehicleIsHeading` | 0020 | 未实测 |
+| 电池可能 97%～99% 停充、报不出 100%；充满后还报不报 `CHARGING` | `ChargingContracts.ChargingStopsShortOfAHundredPercentAndTheVehicleStillReadsCharging` | 0020 | 未实测（推测）；假 RIoT 取仍报 `CHARGING` |
+| 在 Matrix 上让车走时 `mode` 仍是 `MODE_AUTO`、车在动没订单 | `ManualUseContracts.DrivenFromMatrixTheVehicleMovesWithoutAnOrderInAutoMode`、`AnOrderMadeWhileAPersonDrivesTheVehicleWaitsUntilItArrives` | 0022 | `mode` 未实测（推测，1 个样本）；`MT_RUNNING`、`procState` `IDLE`、途中建的单到站后才执行，第 38 轮单机去站点见过（把实验室的"单机"当成 ADR 里的 Matrix，是推断） |
+| 充电单 = move + `act(78,1,0)`，开始充电即成功；下一单队首自动插 `act(78,2,0)`；充不上电 `407802` 挂起 | `ChargingContracts` 前三条 | 0020 | 实验室见过（第 24、25 轮） |
+| 松抱闸：`mode` 仍 `MODE_AUTO`、`breakSwitchState` 读 `UNMOVABLE`；松着时新建的单一直排队 | `ManualUseContracts.AReleasedBrakeReadsUnmovableAndTheModeStaysAuto`、`AnOrderMadeWhileTheBrakeIsReleasedStaysQueued`、`ReleasingTheBrakeHangsTheExecutingOrder`、`ContinuingWhileTheBrakeIsStillReleasedIsRefusedWith14013` | 0022 | 实验室见过（第 21、27-F、29-F、30 轮，BC-ORDER-015） |
+| 在桩上充电、插手动充电器时都报 `CHARGING` | `ChargingContracts.AChargeOrderSucceedsOnceTheVehicleCharges`、`ManualUseContracts.WithTheManualChargerPluggedInTheVehicleReadsChargingAndDoesNotMove` | 0020、0022 | 实验室见过（第 24、25、42 轮） |
+| 手动用车（松抱闸、`MODE_MANUAL`、手动充电器）时取消排队、暂停、挂起的单能不能生效 | `ManualUseContracts.AQueuedOrderCanBeCancelledDuringManualUse`、`AHeldOrderCanBeCancelledDuringManualUse`、`AHungOrderCanBeCancelledDuringManualUse`，各三种手动用车 | 0022 | 未实测；假 RIoT 取都能生效 |
+| 恢复以后排队、暂停、挂起的单会不会自己开始 | `ManualUseContracts.AQueuedOrderStartsByItselfOnceManualUseEnds`、`AHeldOrderStaysHeldOnceManualUseEnds`、`AHungOrderDoesNotGoOnByItselfOnceManualUseEnds`，各三种手动用车 | 0022 | 未实测；假 RIoT 取排队的自己开始、暂停和挂起的要发继续（合上抱闸后从挂起继续回 0，第 27 轮 F 见过） |
+| 车离开桩时读哪个字段 | `ChargingContracts.TheChargerIsFreeOnceTheVehicleHasLeftIt` | 0020 | 未实测；假 RIoT 一离站 `currentStation` 就读 0 |
+| C2000 脉冲开锁、关机断电、开锁输出常 1 时能否锁上（#16 第六场） | 不是 RIoT 的行为，不在这里 | 0024、0012 | 归车上 IO 模块与 IO 模拟器，等台架或真车窗口核对 |
 
 **默认、CI 上永远只对假 RIoT 跑**：每条测试在测试进程里起一个新的假 RIoT，不开端口。
 

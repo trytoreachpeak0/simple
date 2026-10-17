@@ -98,7 +98,15 @@ public sealed class OrderCommandContracts : OrderContractTest
         await ThroughoutAsync(_ => ReadAsync(next), o => o.OrderState == OrderStates.Queueing, "排队");
     }
 
-    /// <summary>A queued order put first with priority execution starts before the vehicle's earlier queued orders.</summary>
+    /// <summary>
+    /// A queued order put first with priority execution starts before the
+    /// vehicle's earlier queued orders. The order of execution is read from
+    /// where it ends, not from a moment in between: once both have succeeded,
+    /// the vehicle stands at the destination of the order that ran last, the
+    /// earlier one. Reading "the earlier one is still queued" while the
+    /// promoted one executes failed on a busy CI machine (PR #74, run
+    /// 39050505846), as the two may both be done by then.
+    /// </summary>
     [Fact]
     [Contract("BC-ORDER-014")]
     public async Task PriorityExecutionPutsAQueuedOrderFirst()
@@ -110,13 +118,17 @@ public sealed class OrderCommandContracts : OrderContractTest
         var first = NewUpperId("priority-first");
         var second = NewUpperId("priority-second");
         await CreateMoveAsync(first, Facts.SecondReachableStation);
+        // A busy machine between the two creates: the earlier order may start
+        // as soon as the vehicle is free, before the promoted one is.
+        await Task.Delay(200, Cancel);
         var promoted = await CreateMoveAsync(second, Facts.VehicleStation);
 
         await Riot.Order.PriorityExecAsync(promoted.OrderId, Cancel);
         await Riot.Tasks.CancelOrderAsync(order.OrderId, cancellationToken: Cancel);
 
-        await UntilStateAsync(second, OrderStates.Executing);
-        Assert.Equal(OrderStates.Queueing, (await ReadAsync(first)).OrderState);
+        await UntilStateAsync(second, OrderStates.Success);
+        await UntilStateAsync(first, OrderStates.Success);
+        Assert.Equal(Facts.SecondReachableStation, (await CardAsync()).CurrentPosition);
     }
 
     /// <summary>
@@ -124,7 +136,7 @@ public sealed class OrderCommandContracts : OrderContractTest
     /// (ADR 0010); the lab has no record of it (research/riot-review.md U3).
     /// </summary>
     [Fact]
-    [Contract("ADR 0010")]
+    [Contract("ADR 0010", "#11")]
     [NotVerifiedOnRealRiot("对挂起的单发取消，单子变成已取消（产品负责人，ADR 0010）")]
     public async Task CancellingAHungOrderCancelsIt()
     {

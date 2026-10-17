@@ -30,17 +30,39 @@ public sealed class OrderLifecycleContracts : OrderContractTest
         Assert.Equal(Facts.ReachableStation, idle.CurrentPosition);
     }
 
-    /// <summary>Every executing order shows CONTROL_STATE_ERR, with no emergency stop: it is not a fault signal.</summary>
+    /// <summary>
+    /// Every executing order shows CONTROL_STATE_ERR, with no emergency stop:
+    /// it is not a fault signal. Seen on the production RIoT only (round 44,
+    /// two orders); in round 38 on the test RIoT (map 30) all 36 readings
+    /// while the order executed were CONTROL_STATE_OK, 8 of them with the
+    /// vehicle moving. It may hold on the production RIoT only.
+    /// </summary>
     [Fact]
     [Contract("BC-VEH-005")]
     public async Task AnExecutingOrderShowsControlStateErrWithoutAnyEmergencyStop()
     {
         Target.RequireWrites();
-        await ExecutingAsync("control-err");
+        var (upperId, _) = await ExecutingAsync("control-err");
+        var whileExecuting = new List<RIoT.Sdk.Core.VehicleExecutionFacts>();
 
-        var facts = await VehicleAsync();
+        // The vehicle first, then the order: an order still executing after the
+        // vehicle was read was executing when it was read (3 only goes on to 5).
+        await UntilAsync(
+            async _ =>
+            {
+                var facts = await VehicleAsync();
+                var state = (await ReadAsync(upperId)).OrderState;
+                if (state == OrderStates.Executing)
+                {
+                    whileExecuting.Add(facts);
+                }
 
-        Assert.Equal("CONTROL_STATE_ERR", facts.ControlState);
-        Assert.Equal("OK", facts.EmergencyState);
+                return state;
+            },
+            state => state == OrderStates.Success,
+            $"订单 {upperId} 成功");
+
+        Assert.NotEmpty(whileExecuting);
+        Assert.All(whileExecuting, facts => Assert.Equal(("CONTROL_STATE_ERR", "OK"), (facts.ControlState, facts.EmergencyState)));
     }
 }

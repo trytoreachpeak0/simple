@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- The IO simulator without a window, for the local system, tests and CI:
+       the core's Modbus face plus an HTTP control API, both on loopback only. -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\Simple.IoSimulator.Core\Simple.IoSimulator.Core.csproj" />
+    <ProjectReference Include="..\Simple.Logging\Simple.Logging.csproj" />
+  </ItemGroup>
+
+</Project>

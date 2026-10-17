@@ -75,6 +75,34 @@ public sealed class InstanceStore(string home)
 
     public void ForgetServerKeyStore(string instance) => File.Delete(ServerKeyStorePath(instance));
 
+    /// <summary>
+    /// The instance's administrator password (ADR 0045): made at random by
+    /// the first up, set in the server by every up, kept outside the clone
+    /// until down --reset drops the database it belongs to.
+    /// </summary>
+    public string AdminPasswordPath(string instance) => Path.Combine(InstanceDirectory(instance), "admin-password.txt");
+
+    public string? ReadAdminPassword(string instance)
+    {
+        var path = AdminPasswordPath(instance);
+        return File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+    }
+
+    public string ReadOrCreateAdminPassword(string instance)
+    {
+        if (ReadAdminPassword(instance) is { Length: > 0 } existing)
+        {
+            return existing;
+        }
+
+        Directory.CreateDirectory(InstanceDirectory(instance));
+        var password = System.Buffers.Text.Base64Url.EncodeToString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
+        File.WriteAllText(AdminPasswordPath(instance), password);
+        return password;
+    }
+
+    public void ForgetAdminPassword(string instance) => File.Delete(AdminPasswordPath(instance));
+
     public string LogDirectory(string instance) => Path.Combine(InstanceDirectory(instance), "logs");
 
     /// <summary>What a process wrote to its console (stdout and stderr), or the last build's output; written anew at each up.</summary>

@@ -63,14 +63,39 @@ public static class Components
             Arguments: context =>
             [
                 $"--urls={context.Url()}",
-                $"--Simple:Instance={context.Instance}",
-                $"--ConnectionStrings:Simple={context.SqlServer}",
+                .. ServerDatabaseArguments(context),
                 $"--Simple:OnboardTerminals:Url=https://127.0.0.1:{context.Ports[1].ToString(CultureInfo.InvariantCulture)}",
                 $"--Simple:OnboardTerminals:ServerKeyName={ServerKeyName(context.Instance)}",
                 $"--Simple:OnboardTerminals:ServerKeyStore={context.KeyStore}",
                 $"--Simple:MesGateway:Url={context.UrlOf("mes-gateway")}",
                 $"--Simple:Riot:Url={context.UrlOf("fake-riot")}",
                 $"--Simple:Riot:CallApiKey={FakeRiotCallApiKey}",
+                // The command line logs in for every readiness check and every
+                // status, all from loopback: one computer, as the per-computer
+                // limit on password attempts sees it (ADR 0045).
+                $"--Simple:Login:AttemptsPerWindow={LocalLoginAttemptsPerWindow.ToString(CultureInfo.InvariantCulture)}",
+            ],
+            // Logs in as the instance's administrator (ADR 0045), then asks.
+            IsReady: (context, http, cancellationToken) =>
+                ServerApi.ReadyAsync(http, context.Url(), context.AdminPassword, cancellationToken),
+            ApiPort: 0,
+            // The server command that sets the administrator's password, the
+            // only way there is (ADR 0045); up runs it before every start.
+            SetAdminPassword: context => ["set-admin-password", .. ServerDatabaseArguments(context)]),
+        // One simulated IO module per onboard terminal, started before the
+        // terminals: terminal-n reads io-simulator-n over Modbus TCP, and
+        // tests and AI sessions play the person at its slots, and its faults,
+        // through its control API.
+        new(
+            Name: "io-simulator",
+            Project: "src/Simple.IoSimulator.Headless/Simple.IoSimulator.Headless.csproj",
+            Count: options => options.Terminals,
+            // The control API, and the Modbus TCP face the terminal reads.
+            PortsPerProcess: 2,
+            Arguments: context =>
+            [
+                $"--urls={context.Url()}",
+                $"--IoSimulator:Modbus=127.0.0.1:{context.Ports[IoSimulatorModbusPort].ToString(CultureInfo.InvariantCulture)}",
                 context.LogDirectoryArgument,
             ],
             IsReady: (context, http, cancellationToken) =>
@@ -94,8 +119,17 @@ public static class Components
             Prepare: OnboardTerminalSettings.WriteAsync),
     ];
 
+    /// <summary>Password attempts per minute the local system's server allows one computer: the command line's own logins, all from loopback.</summary>
+    public const int LocalLoginAttemptsPerWindow = 10_000;
+
+    /// <summary>Which of an io-simulator's ports is its Modbus TCP face.</summary>
+    public const int IoSimulatorModbusPort = 1;
+
     /// <summary>The component that answers the server API (status, events).</summary>
     public static Component Server { get; } = All.Single(c => c.Name == "server");
+
+    /// <summary>The simulated IO modules, one for each terminal.</summary>
+    public static Component IoSimulator { get; } = All.Single(c => c.Name == "io-simulator");
 
     /// <summary>
     /// The persisted key behind the certificate the instance's terminals pin,
@@ -104,6 +138,14 @@ public static class Components
     /// down --reset deletes it.
     /// </summary>
     public static string ServerKeyName(string instance) => $"Simple-Server-{instance}";
+
+    /// <summary>Which database the server uses, and where it logs: the server and its server commands alike.</summary>
+    private static IEnumerable<string> ServerDatabaseArguments(ComponentContext context) =>
+    [
+        $"--Simple:Instance={context.Instance}",
+        $"--ConnectionStrings:Simple={context.SqlServer}",
+        context.LogDirectoryArgument,
+    ];
 
     /// <summary>The processes of a component: <c>name</c> for one, <c>name-1</c>, <c>name-2</c>… for several.</summary>
     public static IEnumerable<string> ProcessNames(Component component, int count)
@@ -127,6 +169,11 @@ public static class Components
 /// is ready: writes what the process reads, for example settings that come
 /// from another component.
 /// </param>
+/// <param name="SetAdminPassword">
+/// The command line of a run of its own executable, to the end, before each
+/// of its processes starts, with the instance's administrator password on
+/// standard input; null for components without one.
+/// </param>
 public sealed record Component(
     string Name,
     string Project,
@@ -135,7 +182,8 @@ public sealed record Component(
     Func<ComponentContext, IReadOnlyList<string>> Arguments,
     Func<ComponentContext, HttpClient, CancellationToken, Task<bool>> IsReady,
     int? ApiPort,
-    Func<ComponentContext, HttpClient, CancellationToken, Task>? Prepare = null);
+    Func<ComponentContext, HttpClient, CancellationToken, Task>? Prepare = null,
+    Func<ComponentContext, IReadOnlyList<string>>? SetAdminPassword = null);
 
 /// <summary>What <c>up</c> was asked for.</summary>
 /// <param name="BreakAway">Start the components outside the caller's job (<see cref="Processes.ChildProcess.Start"/>); only simple remote up asks for it.</param>
@@ -149,6 +197,7 @@ public sealed record UpOptions(int Terminals, bool BreakAway = false, ServerKeyS
 /// <param name="Directory">This process's own directory for files it reads or writes, outside the clone; kept after down.</param>
 /// <param name="LogDirectory">This process's program log directory (<see cref="Instances.InstanceStore.ProgramLogDirectory"/>).</param>
 /// <param name="KeyStore">Where the server keeps its key.</param>
+/// <param name="AdminPassword">The instance's administrator password (InstanceStore.AdminPasswordPath), for whatever logs in to the server.</param>
 public sealed record ComponentContext(
     string Instance,
     string SqlServer,
@@ -157,7 +206,8 @@ public sealed record ComponentContext(
     IReadOnlyDictionary<string, IReadOnlyList<int>> PortsOf,
     string Directory,
     string LogDirectory,
-    ServerKeyStore KeyStore = ServerKeyStore.User)
+    ServerKeyStore KeyStore = ServerKeyStore.User,
+    string? AdminPassword = null)
 {
     /// <summary>Where the process writes its program log (ADR 0034); every component is given it.</summary>
     public string LogDirectoryArgument => $"--Simple:Logs:Directory={LogDirectory}";

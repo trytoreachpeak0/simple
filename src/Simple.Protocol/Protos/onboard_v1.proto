@@ -38,9 +38,11 @@ message OnboardReport {
   string terminal_version = 3;
   // The vehicle this terminal is configured for (ADR 0007).
   string vehicle_id = 4;
-  // Whether the terminal can read its IO module.
+  // Whether the terminal's latest attempt to read its IO module succeeded.
   bool io_module_readable = 5;
-  // The raw value of every IO point (filled in by the IO module ticket).
+  // Every IO point as last read: all of the module's inputs and outputs once
+  // the terminal has read it, none before. While the module cannot be read
+  // they keep the values last read; io_read_age_ms says how old those are.
   repeated IoPoint io_points = 6;
   // Onboard inputs not yet acknowledged: a report carries an input until a
   // DesiredState arrives whose last_received_seq reaches the report that
@@ -49,10 +51,33 @@ message OnboardReport {
   // Unlock requests executed or refused during this run of the terminal
   // (filled in by the unlock ticket).
   repeated UnlockExecution unlock_executions = 8;
+  // On the terminal's own clock, how long before writing this report the
+  // terminal last read its IO module successfully; absent when it has not
+  // since it started. A reading's age on the server's clock is this report's
+  // bound plus this (ADR 0009, 0024).
+  optional uint64 io_read_age_ms = 9;
 }
 
-// One IO point's raw value. Its fields come with the IO module.
+// One IO point's raw value, as the IO module reads it. Which slot it belongs
+// to is the server's IO point map (ADR 0024); the terminal does not know.
 message IoPoint {
+  IoPointKind kind = 1;
+  // The module's channel, from 1: DI1-DI16 for inputs, DO1-DO16 for outputs.
+  uint32 number = 2;
+  // The raw value: true for 1.
+  bool value = 3;
+  // How often the value changed since the terminal started; the first read
+  // is not a change.
+  uint64 changes = 4;
+  // On the terminal's own clock, how long before writing this report the
+  // terminal read the value changed, or, if it never did, first read it.
+  uint64 ms_since_change = 5;
+}
+
+enum IoPointKind {
+  IO_POINT_KIND_UNSPECIFIED = 0;
+  IO_POINT_KIND_INPUT = 1;
+  IO_POINT_KIND_OUTPUT = 2;
 }
 
 // One unlock request the terminal executed or refused. Its fields come with
