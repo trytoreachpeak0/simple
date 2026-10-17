@@ -51,7 +51,7 @@ public sealed class AdminPasswordCommandTests
         var exit = await AdminPasswordCommand.RunAsync(server.Services, new StringReader("short\n"), output, Cancel);
 
         Assert.Equal(2, exit);
-        Assert.Contains("at least 8 characters", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains("at least 8 and at most 128 characters", output.ToString(), StringComparison.Ordinal);
         Assert.Equal(HttpStatusCode.OK, (await server.LogInAsync("admin", ServerInstance.AdminPassword)).Response.StatusCode);
     }
 

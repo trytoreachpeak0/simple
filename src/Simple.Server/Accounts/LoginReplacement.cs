@@ -17,7 +17,7 @@ namespace Simple.Server.Accounts;
 /// </summary>
 public static class LoginReplacement
 {
-    private const string ReplacedKey = "Simple.ReplacedLoginKey";
+    private const string ReplacedKeys = "Simple.ReplacedLoginKeys";
 
     /// <summary>Marks the endpoint whose requests lose their login cookie before authentication: the login endpoint.</summary>
     public static TBuilder ReplacesLogin<TBuilder>(this TBuilder builder)
@@ -37,33 +37,38 @@ public static class LoginReplacement
             return next(context);
         }
 
+        // ASP.NET Core reads cookie names without regard to case, so every
+        // spelling of the login cookie goes, and each login it carried ends.
         var kept = new List<string>();
+        var replaced = new List<string>();
         foreach (var header in context.Request.Headers.Cookie)
         {
             foreach (var pair in (header ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 var separator = pair.IndexOf('=', StringComparison.Ordinal);
                 var name = separator < 0 ? pair : pair[..separator];
-                if (!name.StartsWith(LoginSetup.CookieName, StringComparison.Ordinal))
+                if (!name.StartsWith(LoginSetup.CookieName, StringComparison.OrdinalIgnoreCase))
                 {
                     kept.Add(pair);
                 }
-                else if (name == LoginSetup.CookieName && KeyOf(context, pair[(separator + 1)..]) is { } key)
+                else if (separator > 0 && KeyOf(context, pair[(separator + 1)..]) is { } key)
                 {
-                    context.Items[ReplacedKey] = key;
+                    replaced.Add(key);
                 }
             }
         }
+
+        context.Items[ReplacedKeys] = replaced;
 
         context.Request.Headers.Cookie = kept.Count == 0 ? default : string.Join("; ", kept);
         return next(context);
     }
 
-    /// <summary>The key of the login the request carried, if it carried one; for the login endpoint to end.</summary>
-    public static string? ReplacedLoginKey(HttpContext context)
+    /// <summary>The keys of the logins the request carried; for the login endpoint to end.</summary>
+    public static IReadOnlyList<string> ReplacedLoginKeys(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        return context.Items.TryGetValue(ReplacedKey, out var key) ? key as string : null;
+        return context.Items.TryGetValue(ReplacedKeys, out var keys) && keys is List<string> list ? list : [];
     }
 
     private static string? KeyOf(HttpContext context, string cookie)

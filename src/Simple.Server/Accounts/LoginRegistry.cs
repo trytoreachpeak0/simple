@@ -165,12 +165,30 @@ public sealed partial class LoginRegistry(IServiceScopeFactory scopes, TimeProvi
     /// <summary>
     /// An account was created, or changed in the database: takes its new
     /// state. Its logins end when <paramref name="endLogins"/> (a new
-    /// password, ADR 0045); the caller has deleted their rows already.
+    /// password, ADR 0045); the caller has deleted their rows already. A state
+    /// read before the account's latest new password (a lower credential
+    /// version) is ignored: a login that read the account just before the
+    /// password changed must not bring the old version back.
     /// </summary>
     public void Put(Account account, bool endLogins)
     {
         ArgumentNullException.ThrowIfNull(account);
+        lock (puts)
+        {
+            PutLocked(account, endLogins);
+        }
+    }
+
+    private readonly Lock puts = new();
+
+    private void PutLocked(Account account, bool endLogins)
+    {
         var previous = accounts.GetValueOrDefault(account.Id);
+        if (previous is not null && account.CredentialVersion < previous.CredentialVersion)
+        {
+            return;
+        }
+
         var state = AccountState.From(account, Interlocked.Increment(ref version));
         if (previous?.LastSeenAt is { } seen && (state.LastSeenAt is null || seen > state.LastSeenAt))
         {

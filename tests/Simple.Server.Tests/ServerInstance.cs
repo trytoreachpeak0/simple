@@ -32,12 +32,14 @@ namespace Simple.Server.Tests;
 /// <param name="time">Replaces the server's clock, for example with a FakeTimeProvider.</param>
 /// <param name="riot">Configure a fleet manager, the <see cref="StubRiot"/>; false leaves <c>Simple:Riot:Url</c> empty.</param>
 /// <param name="extraSettings">Settings that override the test defaults, for example a lower login rate limit.</param>
+/// <param name="services">Replaces the server's services, for example the password hasher with a <see cref="GatedPasswordHasher"/>.</param>
 public sealed class ServerInstance(
     string? instance = null,
     bool kestrel = false,
     TimeProvider? time = null,
     bool riot = true,
-    IReadOnlyDictionary<string, string?>? extraSettings = null) : IAsyncDisposable
+    IReadOnlyDictionary<string, string?>? extraSettings = null,
+    Action<IServiceCollection>? services = null) : IAsyncDisposable
 {
     /// <summary>
     /// The SQL Server instance the test databases are created on, without a
@@ -188,7 +190,7 @@ public sealed class ServerInstance(
             settings["urls"] = "http://127.0.0.1:0";
         }
 
-        var created = new Factory(settings, time, MesGateway, Riot);
+        var created = new Factory(settings, time, MesGateway, Riot, services);
         try
         {
             if (kestrel)
@@ -268,7 +270,9 @@ public sealed class ServerInstance(
     private List<Uri> Addresses() =>
         Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Select(a => new Uri(a)).ToList();
 
-    private sealed class Factory(Dictionary<string, string?> settings, TimeProvider? time, StubMesGateway mesGateway, StubRiot riot) : WebApplicationFactory<Program>
+    private sealed class Factory(
+        Dictionary<string, string?> settings, TimeProvider? time, StubMesGateway mesGateway, StubRiot riot, Action<IServiceCollection>? services)
+        : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -281,6 +285,11 @@ public sealed class ServerInstance(
                 .ConfigureTestServices(services => services
                     .AddHttpClient(RiotConnectionProbe.HttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(riot.CreateHandler));
+            if (services is not null)
+            {
+                builder.ConfigureTestServices(services);
+            }
+
             if (time is not null)
             {
                 builder.ConfigureTestServices(services => services.Replace(ServiceDescriptor.Singleton(time)));

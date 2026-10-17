@@ -93,15 +93,27 @@ public static class LoginEndpoints
         // An account the server command created or gave a new password while
         // the server runs reaches the registry with the next flush; the login
         // need not wait for it.
-        if (registry.Account(account.Id)?.CredentialVersion != account.CredentialVersion)
+        if (registry.Account(account.Id) is not { } known || known.CredentialVersion < account.CredentialVersion)
         {
             registry.Put(account, endLogins: false);
         }
 
+        // A stronger hash of the same password, written only while the password
+        // is still the one checked: a new password set meanwhile wins, and this
+        // login fails like any login with an old password.
         if (verdict == PasswordVerificationResult.SuccessRehashNeeded)
         {
-            account.PasswordHash = hasher.HashPassword(account, request.Password!);
-            await db.SaveChangesAsync(cancellationToken);
+            var stronger = hasher.HashPassword(account, request.Password!);
+            var written = await db.Accounts
+                .Where(a => a.Id == account.Id && a.CredentialVersion == account.CredentialVersion)
+                .ExecuteUpdateAsync(set => set.SetProperty(a => a.PasswordHash, stronger), cancellationToken);
+            if (written == 0)
+            {
+                LoginLog.Failed(logger, account.Name, request.Entry!, remote);
+                return TypedResults.Problem(
+                    statusCode: StatusCodes.Status401Unauthorized,
+                    title: "The account name or the password is wrong.");
+            }
         }
 
         await http.SignInAsync(
@@ -110,7 +122,7 @@ public static class LoginEndpoints
             new AuthenticationProperties { IsPersistent = true });
         LoginLog.LoggedIn(logger, account.Name, request.Entry!, remote);
         // The computer's previous login, if it was still logged in, is replaced.
-        if (LoginReplacement.ReplacedLoginKey(http) is { } previous)
+        foreach (var previous in LoginReplacement.ReplacedLoginKeys(http))
         {
             await registry.EndAsync(previous, cancellationToken);
         }
@@ -174,11 +186,22 @@ public static class Passwords
 {
     public const int MinimumLength = 8;
 
+    /// <summary>
+    /// Not a rule of ADR 0045 but a bound of the login endpoint: its body is
+    /// at most 4 KB (LoginSetup.PasswordRequestSizeLimit), and a password set
+    /// longer than fits could never log in. 128 characters fit even when every
+    /// one is sent escaped as a surrogate pair.
+    /// </summary>
+    public const int MaximumLength = 128;
+
     /// <summary>Why a password is refused, or null when it is accepted.</summary>
-    public static string? Check(string? password) =>
-        password is null || password.EnumerateRunes().Count() < MinimumLength
-            ? $"A password has at least {MinimumLength} characters."
+    public static string? Check(string? password)
+    {
+        var length = password?.EnumerateRunes().Count() ?? 0;
+        return length < MinimumLength || length > MaximumLength
+            ? $"A password has at least {MinimumLength} and at most {MaximumLength} characters."
             : null;
+    }
 }
 
 public static class Actors

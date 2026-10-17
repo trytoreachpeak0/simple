@@ -66,6 +66,40 @@ public sealed class LoginReviewTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ALoginRequestWithTheCookieNameSpelledInOtherCaseReplacesThatLoginToo()
+    {
+        var first = await server.LogInAsync("admin", ServerInstance.AdminPassword);
+        using var otherCase = server.CreateClient();
+        otherCase.DefaultRequestHeaders.Add("Cookie", $"__host-simple={first.Cookie}");
+        otherCase.DefaultRequestHeaders.Add(RequestHeader.Name, "1");
+
+        var second = await otherCase.PostAsJsonAsync(
+            new Uri("/api/v1/login", UriKind.Relative), new { name = "p1-engineer", password = Password, entry = "console" }, Cancel);
+        using var replaced = server.WithCookie(TestLogin.CookieOf(second)!);
+        var session = await replaced.GetFromJsonAsync<JsonElement>(new Uri("/api/v1/session", UriKind.Relative), Cancel);
+        using var oldCopy = server.WithCookie(first.Cookie!);
+
+        Assert.Equal("p1-engineer", session.GetProperty("name").GetString());
+        Assert.Equal(HttpStatusCode.Unauthorized, (await oldCopy.GetAsync(new Uri("/api/v1/status", UriKind.Relative), Cancel)).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(Passwords.MaximumLength, true)]
+    [InlineData(Passwords.MaximumLength + 1, false)]
+    public async Task APasswordNoLongerThanTheLoginEndpointTakesCanBeSetAndUsed(int length, bool accepted)
+    {
+        var password = new string('密', length);
+
+        var set = await admin.PutAsJsonAsync(new Uri("/api/v1/accounts/p1-engineer/password", UriKind.Relative), new { password }, Cancel);
+
+        Assert.Equal(accepted ? HttpStatusCode.NoContent : HttpStatusCode.BadRequest, set.StatusCode);
+        if (accepted)
+        {
+            Assert.Equal(HttpStatusCode.OK, (await server.LogInAsync("p1-engineer", password)).Response.StatusCode);
+        }
+    }
+
+    [Fact]
     public async Task AFailedLoginOnAComputerThatIsLoggedInLeavesItsLoginAlone()
     {
         var first = await server.LogInAsync("admin", ServerInstance.AdminPassword);
