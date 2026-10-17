@@ -13,6 +13,24 @@ public static class Components
 {
     public static IReadOnlyList<Component> All { get; } =
     [
+        // Started before the server, which is told its address. up starts every
+        // process and then waits for all of them, so this order does not
+        // guarantee the gateway is ready at the server's first fetch; it
+        // usually is, as the server first migrates its database. If it is
+        // not, the server records mes.unreachable and then mes.recovered.
+        new(
+            Name: "mes-gateway",
+            Project: "src/Simple.MesGateway/Simple.MesGateway.csproj",
+            Count: _ => 1,
+            PortsPerProcess: 1,
+            Arguments: context =>
+            [
+                $"--urls={context.Url()}",
+                "--Simple:Mes:Source=Fake",
+            ],
+            IsReady: (context, http, cancellationToken) =>
+                Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),
+            ApiPort: 0),
         new(
             Name: "server",
             Project: "src/Simple.Server/Simple.Server.csproj",
@@ -23,6 +41,7 @@ public static class Components
                 $"--urls={context.Url()}",
                 $"--Simple:Instance={context.Instance}",
                 $"--ConnectionStrings:Simple={context.SqlServer}",
+                $"--Simple:MesGateway:Url={context.UrlOf("mes-gateway")}",
             ],
             IsReady: (context, http, cancellationToken) =>
                 Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),
@@ -30,7 +49,7 @@ public static class Components
     ];
 
     /// <summary>The component that answers the server API (status, events).</summary>
-    public static Component Server => All[0];
+    public static Component Server { get; } = All.Single(c => c.Name == "server");
 
     /// <summary>The processes of a component: <c>name</c> for one, <c>name-1</c>, <c>name-2</c>… for several.</summary>
     public static IEnumerable<string> ProcessNames(Component component, int count)
@@ -73,6 +92,10 @@ public sealed record ComponentContext(
     IReadOnlyDictionary<string, IReadOnlyList<int>> PortsOf)
 {
     public Uri Url(int port = 0) => new($"http://127.0.0.1:{Ports[port].ToString(CultureInfo.InvariantCulture)}");
+
+    /// <summary>The loopback address of another process's port, for a component that connects to it.</summary>
+    public Uri UrlOf(string process, int port = 0) =>
+        new($"http://127.0.0.1:{PortsOf[process][port].ToString(CultureInfo.InvariantCulture)}");
 }
 
 public static class Readiness

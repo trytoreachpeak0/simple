@@ -54,7 +54,7 @@ dotnet test --solution simple.slnx
 
 从别的 shell 调用写成 `pwsh -File <clone>/simple.ps1 up`。每个命令都接受 `--json`：标准输出上只有一个 JSON 对象 `{exitCode, error, result}`，进度提示写在标准错误上。退出码是固定的，`./simple --help` 列出全表：0 成功；1 意外错误（或 `down` 之后仍有进程在跑）；2 参数或设置不对；3 编译失败；4 有部件没就绪（已起的会被停掉）；5 实例没在运行；6 实例不健康、只起了一半，或是从另一个 clone 起的；7 另一条 simple 命令正在操作这个实例；8 有进程超时没停下、被强杀；9 连不上 SQL Server 或删库失败。
 
-目前系统里只有服务端。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪；以后加车载终端、IO 模拟器、假 RIoT、MES 网关，都是往这里加一项。
+目前系统里有两个部件：MES 网关（背后接假 MES，先起）和服务端（启动参数里带上网关的地址）。`simple status` 除了列出每个进程，还有一行写服务端最近从网关看到了什么：网关通不通、最近一轮是第几轮、几点读的、多少行。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪；以后加车载终端、IO 模拟器、假 RIoT，都是往这里加一项。
 
 - **实例**：不写 `--instance` 时，实例名取 clone 所在文件夹的名字（例如 `29-simple-cli`），所以两个 worktree 各起一套互不干扰。库名是 `Simple_<实例名>`；端口按实例名在 20000～29999 之间选一段，被占用就往后挪，同一个实例每次拿到的端口一般不变。
 - **起**：`up` 先 `dotnet build` 各部件的项目，再把编译输出复制到 `artifacts/simple/<实例名>/` 下运行，所以系统起着的时候照样可以重新编译、跑测试，不会碰到文件被占用。部件是独立的进程，命令行返回后它们继续运行；每个进程的输出写进自己的日志文件。重复执行 `up` 不会起第二套。
@@ -77,7 +77,7 @@ dotnet run --project src/Simple.Server
 | --- | --- |
 | `GET /health/live` | 进程活着 |
 | `GET /health/ready` | 能连上自己的数据库 |
-| `GET /api/v1/status` | 版本、启动时间、实例名、库名，以及车载终端、RIoT、MES 网关三栏（目前为空） |
+| `GET /api/v1/status` | 版本、启动时间、实例名、库名，以及车载终端、RIoT、MES 网关三栏（车载终端和 RIoT 目前为空；MES 网关一栏见下一节） |
 | `GET /api/v1/events` | 事件记录，按提交顺序（顺着游标一直往后读不会漏事件）；参数 `after`（游标，即上一页的 `nextCursor`）、`since`、`until`、`limit`（1～1000，默认 100） |
 | `GET /openapi/v1.json` | 接口描述 |
 
@@ -97,3 +97,43 @@ dotnet run --project src/Simple.Server -- --Simple:Instance=wt25 --urls=http://1
 dotnet tool restore
 dotnet ef migrations add <迁移名> --project src/Simple.Server --output-dir Persistence/Migrations
 ```
+
+## MES 网关与假 MES
+
+MES 网关（`src/Simple.MesGateway`）是一个单独的小进程，是整个系统里唯一和 MES 打交道的地方。它按轮读 MES，每一轮的结果整份留在内存里；服务端每隔一段时间来取一次这整份快照。连线方向只有一个：服务端连网关，网关不需要知道服务端在哪。
+
+目前网关只有一个来源：假 MES（`Simple:Mes:Source=Fake`，也是唯一允许的值）。读真 Oracle 是以后单独的票，要先拿到客户批准的查询。假 MES 从 `Fake/seed-rows.json` 读起始行，那是一个虚构的小厂区（区域号 `S1-1` 这类，任务类型 `SAMPLE_*`），不是 D8 的真实数据。每一行就是上一代主查询的 7 列：`TASK_TYPE, SUBLOT, AREA, EQP, STEP, DATES, PACKAGE`。
+
+单独运行：
+
+```
+dotnet run --project src/Simple.MesGateway
+```
+
+默认只监听 `http://127.0.0.1:5190`，每 5 秒一轮。
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /health/ready` | 第一轮读完就绪（读成功或失败都算） |
+| `GET /api/v1/snapshot` | 最近一轮：轮次（启动以来第几次读，失败的也算）、读取时刻、成败、失败原因、全部行。失败的一轮 `rows` 是 `null`，不是空数组，免得"没读到"被当成"MES 里没有需求" |
+| `GET /fake-mes/` | 假 MES 现在的行，以及还剩几次失败、几次格式错误没用掉 |
+| `POST /fake-mes/rows` | 加一行，正文就是快照里一行的样子，例如 `{"taskType":"SAMPLE_TO_OVEN","sublot":"SMP0500.01","area":"S1-5",...}`；不检查重复，MES 本来就可能给出重复行 |
+| `DELETE /fake-mes/rows?taskType=…&sublot=…` | 删掉这个业务键（`TASK_TYPE` 加 `SUBLOT`，大小写和空格都算数）的所有行 |
+| `POST /fake-mes/failures` | `{"count":5,"message":"ORA-03113 …"}`：接下来 5 次读取失败，失败原因是这段文字 |
+| `POST /fake-mes/malformed` | `{"count":1}`：接下来 1 次读取多返回一行缺了 `PACKAGE` 的值，整轮按"格式不对"算失败 |
+| `POST /fake-mes/reset` | 回到种子里的行，清掉没用完的失败和格式错误 |
+
+改动从下一轮起生效。网关只检查结果的结构（恰好这 7 列、每行 7 个值、值是文字、日期或空），不检查值本身对不对（例如区域号的写法），那是服务端以后的业务规则。
+
+**读失败时**：网关一直重试，不放弃。间隔从 1 秒起逐步拉长，带随机抖动，最长 30 秒（ADR 0008），用的是 Polly，不是手写的循环。每次重试都是新的一轮，所以重试期间快照一直显示"失败"和失败原因。
+
+**服务端这一边**：服务端默认每 2 秒取一次快照（`Simple:MesGateway:Url`、`Simple:MesGateway:PollInterval`）。网关连不上时同样按逐步拉长、最长 30 秒的间隔重试。状态接口的 `mesGateway` 一栏写网关能不能连上、最近一轮（轮次、读取时刻、成败）、行数和全部行；网关连不上时，最近一轮照旧显示，并带着它的读取时刻。
+
+"MES 可用"是指网关能连上、它最近一轮读成功了，而且轮次还在往前走：网关进程还在、但读取卡住时，轮次停在原地。服务端按自己的钟记下最后一次看到轮次变化的时刻，超过 `Simple:MesGateway:StaleAfter`（默认 90 秒，高于网关重试上限 30 秒和上一代查询超时 30 秒，免得慢但正常的 MES 被误判）没有新轮次，就算不可用。服务端只在这个状态变化时记事件：
+
+- `mes.unreachable`：MES 变得不可用。`data.cause` 是 `gateway`（网关停了或连不上，即术语表里的"MES 网关故障"）或 `read`（网关在，但读不到 MES、读到的格式不对或轮次停住，即"MES 故障"）。不可用期间原因变了，再记一条。
+- `mes.recovered`：又可用了，带上第一轮好数据的轮次、行数和从何时起不可用。
+
+服务端刚启动、第一次就取到好数据时不记事件；第一次就不可用（网关没起来或第一轮就失败）要记一条 `mes.unreachable`。网关刚重启、还没读完第一轮时，服务端当作"没有新消息"，不改变状态。
+
+和服务端一样，网关的接口没有鉴权，监听地址不是回环地址时拒绝启动（退出码 2，并说明是哪一项）；真实端点只能从仓库外读入（`--Simple:SettingsFile=<路径>` 或环境变量）。`Simple.Server.Tests` 的守卫测试会检查网关的 `appsettings*.json` 里有没有非回环地址。
