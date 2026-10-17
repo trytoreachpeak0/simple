@@ -27,6 +27,18 @@ public sealed partial class ProgramLogTests
     }
 
     [Fact]
+    public void EachRunOfAProgramBeginsItsLogWithALineSayingItStarted()
+    {
+        using var log = new TestLog();
+
+        var text = log.Text();
+
+        Assert.Matches(
+            $@"^\d{{4}}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{{3}} [+-]\d\d:\d\d \[INF\] Simple\.Logging\.ProgramLog: test started \(version .+, process {Environment.ProcessId}\)\r?\n$",
+            text);
+    }
+
+    [Fact]
     public void WithoutSettingsAProgramLogsUnderProgramDataInFilesOf10MegabytesKeepingTen()
     {
         var settings = ProgramLog.ReadSettings(new ConfigurationBuilder().Build(), "Server");

@@ -2,10 +2,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Simple.Logging;
 using Simple.OnboardTerminal.Core;
 using Simple.OnboardTerminal.Headless;
 
-// The log goes to a file when the command line starts the terminal; screen
+// Console output goes to a file when the command line starts the terminal; screen
 // texts are Chinese.
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
@@ -27,6 +28,15 @@ catch (Exception e) when (e is IOException or UnauthorizedAccessException or Sys
 }
 
 var problems = settings.Problems().ToList();
+try
+{
+    _ = ProgramLog.ReadSettings(arguments, "OnboardTerminal");
+}
+catch (InvalidDataException e)
+{
+    problems.Add(e.Message);
+}
+
 Uri? testInput = null;
 if (arguments["test-input"] is { Length: > 0 } testInputText && !TestInput.TryParse(testInputText, out testInput))
 {
@@ -50,11 +60,11 @@ var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
     ContentRootPath = AppContext.BaseDirectory,
     DisableDefaults = true,
 });
-builder.Logging.AddSimpleConsole(console =>
-{
-    console.SingleLine = true;
-    console.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
-});
+// The program log (ADR 0034): a size-limited file under --Simple:Logs:Directory
+// (default %ProgramData%\Simple\OnboardTerminal\logs) and the console, both
+// redacted; unhandled exceptions are recorded too. Read from the command line
+// like the rest of the terminal's settings.
+builder.Logging.AddProgramLog("OnboardTerminal", arguments, console: true);
 builder.Logging.SetMinimumLevel(LogLevel.Information);
 builder.Logging.AddFilter("Grpc", LogLevel.Warning);
 builder.Logging.AddFilter("Microsoft", LogLevel.Warning);

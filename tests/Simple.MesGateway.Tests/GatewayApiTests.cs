@@ -17,8 +17,14 @@ namespace Simple.MesGateway.Tests;
 /// <summary>The gateway in process, on its shipped settings with short waits, driven through its control API.</summary>
 public sealed class GatewayApiTests : IAsyncLifetime
 {
-    private readonly Factory factory = new();
+    private readonly string logDirectory = Path.Combine(Path.GetTempPath(), "simple-gateway-tests", Guid.NewGuid().ToString("N"));
+    private readonly Factory factory;
     private HttpClient client = null!;
+
+    public GatewayApiTests()
+    {
+        factory = new Factory(logDirectory);
+    }
 
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
@@ -32,6 +38,10 @@ public sealed class GatewayApiTests : IAsyncLifetime
     {
         client.Dispose();
         await factory.DisposeAsync();
+        if (Directory.Exists(logDirectory))
+        {
+            Directory.Delete(logDirectory, recursive: true);
+        }
     }
 
     [Fact]
@@ -85,6 +95,25 @@ public sealed class GatewayApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AFailedRoundIsInTheProgramLogWithoutTheCredentialItCarried()
+    {
+        await NextSnapshotAsync(s => s.Succeeded);
+
+        await client.PostAsJsonAsync(
+            new Uri("/fake-mes/failures", UriKind.Relative),
+            new FailRequest(1, "ORA-01017: invalid username/password for Data Source=mes01;User Id=simple;Password=Gateway-secret"),
+            Cancel);
+        await NextSnapshotAsync(s => !s.Succeeded);
+        await factory.DisposeAsync();
+
+        var file = Assert.Single(Simple.Logging.ProgramLog.Files(logDirectory));
+        Assert.Equal("MesGateway.log", Path.GetFileName(file));
+        var text = await File.ReadAllTextAsync(file, Cancel);
+        Assert.DoesNotContain("Gateway-secret", text, StringComparison.Ordinal);
+        Assert.Contains("failed (read), retrying with backoff: ORA-01017: invalid username/password for Data Source=mes01;User Id=simple;Password=***", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AMalformedReadIsAFormatFailure()
     {
         await NextSnapshotAsync(s => s.Succeeded);
@@ -123,7 +152,7 @@ public sealed class GatewayApiTests : IAsyncLifetime
     [Fact]
     public async Task WithAnotherSourceThereIsNoFakeAndNoControlApi()
     {
-        await using var other = new OtherSourceFactory();
+        await using var other = new OtherSourceFactory(logDirectory + "-other");
         using var otherClient = other.CreateClient();
 
         var control = await otherClient.GetAsync(new Uri("/fake-mes/", UriKind.Relative), Cancel);
@@ -166,12 +195,13 @@ public sealed class GatewayApiTests : IAsyncLifetime
     /// The gateway with a source other than the fake, as a real one will be.
     /// The validator still knows only the fake, so it is taken out here.
     /// </summary>
-    private sealed class OtherSourceFactory : WebApplicationFactory<Program>
+    private sealed class OtherSourceFactory(string logDirectory) : WebApplicationFactory<Program>
     {
         public static readonly MesRow Row = new("OTHER", "O1", "S9-9", "E", "ST", "2026-01-01T00:00:00", "P");
 
         protected override void ConfigureWebHost(IWebHostBuilder builder) =>
             builder
+                .UseSetting("Simple:Logs:Directory", logDirectory)
                 .UseSetting("Simple:Mes:Source", "Other")
                 .UseSetting("Simple:Mes:RoundInterval", "00:00:00.1")
                 .ConfigureTestServices(services =>
@@ -187,11 +217,12 @@ public sealed class GatewayApiTests : IAsyncLifetime
         }
     }
 
-    private sealed class Factory : WebApplicationFactory<Program>
+    private sealed class Factory(string logDirectory) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder) =>
             builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
+                ["Simple:Logs:Directory"] = logDirectory,
                 ["Simple:Mes:RoundInterval"] = "00:00:00.1",
                 ["Simple:Mes:RetryDelay"] = "00:00:00.05",
                 ["Simple:Mes:RetryMaxDelay"] = "00:00:00.2",

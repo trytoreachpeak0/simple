@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Simple.Logging;
 using Simple.Server.Configuration;
 using Simple.Server.Events;
 using Simple.Server.Mes;
@@ -27,6 +28,19 @@ if (!string.IsNullOrEmpty(settingsFile))
     builder.Configuration.AddJsonFile(path, optional: false, reloadOnChange: false);
     builder.Configuration.AddEnvironmentVariables();
     builder.Configuration.AddCommandLine(args);
+}
+
+// The program log (ADR 0034): a size-limited file under Simple:Logs:Directory
+// (default %ProgramData%\Simple\Server\logs) and the console, both redacted;
+// unhandled exceptions are recorded too.
+try
+{
+    builder.Logging.AddProgramLog("Server", builder.Configuration, console: true);
+}
+catch (InvalidDataException e)
+{
+    await Console.Error.WriteLineAsync($"The server refuses to start: {e.Message}");
+    return 2;
 }
 
 builder.Services.AddSingleton(TimeProvider.System);

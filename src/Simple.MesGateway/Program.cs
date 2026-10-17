@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
+using Simple.Logging;
 using Simple.MesGateway.Configuration;
 using Simple.MesGateway.Fake;
 using Simple.MesGateway.Rounds;
@@ -24,6 +25,19 @@ if (!string.IsNullOrEmpty(settingsFile))
     builder.Configuration.AddJsonFile(path, optional: false, reloadOnChange: false);
     builder.Configuration.AddEnvironmentVariables();
     builder.Configuration.AddCommandLine(args);
+}
+
+// The program log (ADR 0034): a size-limited file under Simple:Logs:Directory
+// (default %ProgramData%\Simple\MesGateway\logs) and the console, both redacted;
+// unhandled exceptions are recorded too.
+try
+{
+    builder.Logging.AddProgramLog("MesGateway", builder.Configuration, console: true);
+}
+catch (InvalidDataException e)
+{
+    await Console.Error.WriteLineAsync($"The MES gateway refuses to start: {e.Message}");
+    return 2;
 }
 
 var configured = new GatewaySettings();

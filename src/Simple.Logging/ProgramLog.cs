@@ -54,9 +54,11 @@ public static class ProgramLog
     /// <paramref name="configuration"/> when the first logger is made, so
     /// sources added to it until then count.
     /// </summary>
+    /// <exception cref="InvalidDataException">The settings as they are now are invalid (<see cref="ReadSettings"/>).</exception>
     public static ILoggingBuilder AddProgramLog(this ILoggingBuilder logging, string program, IConfiguration configuration, bool console)
     {
         ArgumentNullException.ThrowIfNull(logging);
+        _ = ReadSettings(configuration, program);
         logging.ClearProviders();
         logging.Services.AddSingleton<ILoggerProvider>(_ => CreateProvider(program, ReadSettings(configuration, program), console));
         return logging;
@@ -82,7 +84,7 @@ public static class ProgramLog
             configuration.WriteTo.Console(formatter);
         }
 
-        return new ProgramLogProvider(new SerilogLoggerProvider(configuration.CreateLogger(), dispose: true));
+        return new ProgramLogProvider(program, new SerilogLoggerProvider(configuration.CreateLogger(), dispose: true));
     }
 
     /// <summary>

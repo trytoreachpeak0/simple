@@ -46,6 +46,9 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
 
     public StubMesGateway MesGateway { get; } = new();
 
+    /// <summary>The server's program log directory (Simple:Logs:Directory), under the temp folder; deleted on dispose.</summary>
+    public string LogDirectory => Path.Combine(Path.GetTempPath(), "simple-server-tests", Instance);
+
     public ServerSettings Database => new() { Instance = Instance, ConnectionString = SqlServer };
 
     public IServiceProvider Services =>
@@ -66,6 +69,7 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
         {
             [ServerSettings.InstanceKey] = Instance,
             [ServerSettings.ConnectionStringKey] = SqlServer,
+            ["Simple:Logs:Directory"] = LogDirectory,
             // Nothing listens there; the stub answers in its place.
             [$"{MesGatewaySettings.Section}:Url"] = "http://127.0.0.1:9",
             [$"{MesGatewaySettings.Section}:PollInterval"] = "00:00:00.1",
@@ -144,6 +148,11 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
                 if (OperatingSystem.IsWindows())
                 {
                     ServerCertificate.Delete(Database.ServerKeyName, TestKeyStore.IsMachine);
+                }
+
+                if (Directory.Exists(LogDirectory))
+                {
+                    Directory.Delete(LogDirectory, recursive: true);
                 }
             }
         }
