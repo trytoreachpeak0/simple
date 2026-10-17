@@ -189,7 +189,19 @@ public sealed class RemoteDisconnectTests
         {
             Assert.False(running.IsCompleted, "The run ended before the command started its child.");
             var file = Directory.Exists(runs) ? Directory.EnumerateFiles(runs, "pids.txt", SearchOption.AllDirectories).FirstOrDefault() : null;
-            if (file is not null && File.ReadAllText(file).Trim() is { Length: > 0 } text && text.Contains(' ', StringComparison.Ordinal))
+            string written;
+            try
+            {
+                written = file is null ? string.Empty : File.ReadAllText(file);
+            }
+            catch (IOException)
+            {
+                // Set-Content is still writing it; the next round reads it whole.
+                continue;
+            }
+
+            // Set-Content ends the line: without its newline the file may be half written.
+            if (written.EndsWith('\n') && written.Trim() is { Length: > 0 } text && text.Contains(' ', StringComparison.Ordinal))
             {
                 return text.Split(' ').Select(int.Parse).ToArray();
             }
