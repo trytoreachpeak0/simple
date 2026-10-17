@@ -52,6 +52,7 @@ public sealed class TestInputTests
                 {
                     Assert.Fail($"The terminal exited: {await errors}");
                 }
+
                 try
                 {
                     using var status = await http.GetAsync(new Uri($"http://127.0.0.1:{input}/test/status"), Cancel);
