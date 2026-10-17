@@ -28,6 +28,9 @@ public sealed class GatewayApiTests : IAsyncLifetime
 
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
+    /// <summary>A count of reads no test outlives: every read fails until the test says otherwise.</summary>
+    private const int Persistent = 1_000_000;
+
     public ValueTask InitializeAsync()
     {
         client = factory.CreateClient();
@@ -87,14 +90,16 @@ public sealed class GatewayApiTests : IAsyncLifetime
     [Fact]
     public async Task FailedReadsShowInTheSnapshotUntilTheSourceRecovers()
     {
-        await NextSnapshotAsync(s => s.Succeeded);
+        var before = await NextSnapshotAsync(s => s.Succeeded);
 
-        var told = await client.PostAsJsonAsync(new Uri("/fake-mes/failures", UriKind.Relative), new FailRequest(3, "ORA-03135: connection lost contact"), Cancel);
-        Assert.Equal(HttpStatusCode.OK, told.StatusCode);
+        await TellAsync("/fake-mes/failures", new FailRequest(Persistent, "ORA-03135: connection lost contact"), state => state.FailuresPending > 0);
 
         var failed = await NextSnapshotAsync(s => !s.Succeeded);
+        Assert.True(failed.Round > before.Round, $"The failure is from round {failed.Round}, not after round {before.Round}.");
         Assert.Equal(new MesReadFailure(MesReadFailure.Read, "ORA-03135: connection lost contact"), failed.Failure);
         Assert.Null(failed.Rows);
+
+        await TellAsync("/fake-mes/failures", new FailRequest(0, null), state => state.FailuresPending == 0);
         var recovered = await NextSnapshotAsync(s => s.Succeeded && s.Round > failed.Round);
         Assert.NotEmpty(recovered.Rows!);
     }
@@ -104,10 +109,10 @@ public sealed class GatewayApiTests : IAsyncLifetime
     {
         await NextSnapshotAsync(s => s.Succeeded);
 
-        await client.PostAsJsonAsync(
-            new Uri("/fake-mes/failures", UriKind.Relative),
-            new FailRequest(1, "ORA-01017: invalid username/password for Data Source=mes01;User Id=simple;Password=Gateway-secret"),
-            Cancel);
+        await TellAsync(
+            "/fake-mes/failures",
+            new FailRequest(Persistent, "ORA-01017: invalid username/password for Data Source=mes01;User Id=simple;Password=Gateway-secret"),
+            state => state.FailuresPending > 0);
         await NextSnapshotAsync(s => !s.Succeeded);
         await factory.DisposeAsync();
 
@@ -125,11 +130,12 @@ public sealed class GatewayApiTests : IAsyncLifetime
     [Fact]
     public async Task AMalformedReadIsAFormatFailure()
     {
-        await NextSnapshotAsync(s => s.Succeeded);
+        var before = await NextSnapshotAsync(s => s.Succeeded);
 
-        await client.PostAsJsonAsync(new Uri("/fake-mes/malformed", UriKind.Relative), new MalformedRequest(1), Cancel);
+        await TellAsync("/fake-mes/malformed", new MalformedRequest(Persistent), state => state.MalformedPending > 0);
 
         var failed = await NextSnapshotAsync(s => !s.Succeeded);
+        Assert.True(failed.Round > before.Round, $"The failure is from round {failed.Round}, not after round {before.Round}.");
         Assert.Equal(MesReadFailure.Format, failed.Failure!.Kind);
         Assert.Matches("^Row [0-9]+ has 6 values for 7 columns\\.$", failed.Failure.Message);
     }
@@ -181,6 +187,20 @@ public sealed class GatewayApiTests : IAsyncLifetime
         while (!snapshot.Succeeded);
 
         Assert.Equal(OtherSourceFactory.Row, Assert.Single(snapshot.Rows!));
+    }
+
+    /// <summary>
+    /// Tells the fake MES what to do and checks that it took. A failure told
+    /// for one read shows in the snapshot only until the retry 50 ms or so
+    /// later succeeds, which a slow poll misses (#68); the tests therefore
+    /// make every read fail (<see cref="Persistent"/>) and end it themselves.
+    /// </summary>
+    private async Task TellAsync(string path, object request, Func<FakeMesState, bool> took)
+    {
+        using var response = await client.PostAsJsonAsync(new Uri(path, UriKind.Relative), request, Cancel);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var state = await response.Content.ReadFromJsonAsync<FakeMesState>(Cancel);
+        Assert.True(state is not null && took(state), $"The fake MES did not take {path}: {await response.Content.ReadAsStringAsync(Cancel)}");
     }
 
     /// <summary>Reads the snapshot until it satisfies the condition, within 10 s (rounds here are 100 ms apart).</summary>
