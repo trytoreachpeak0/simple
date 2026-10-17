@@ -105,7 +105,7 @@ public sealed class LogsTests : IDisposable
     [Fact]
     public void EveryComponentIsToldItsOwnProgramLogDirectory()
     {
-        var ports = new Dictionary<string, IReadOnlyList<int>> { ["mes-gateway"] = [20002] };
+        var ports = new Dictionary<string, IReadOnlyList<int>> { ["mes-gateway"] = [20002], ["fake-riot"] = [20003] };
         foreach (var component in Components.All)
         {
             var directory = store.ProgramLogDirectory(Instance, component.Name);
