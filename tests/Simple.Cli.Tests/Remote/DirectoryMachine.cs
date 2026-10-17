@@ -29,6 +29,9 @@ public sealed class DirectoryMachine(string root) : IRemoteMachine
 
     public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>();
 
+    /// <summary>None unless a test sets one: this machine's stores are shared with every other test run here.</summary>
+    public RemoteSweep? Sweep { get; init; }
+
     /// <summary>How often the client side writes a heartbeat line.</summary>
     public TimeSpan Heartbeat { get; init; } = TimeSpan.FromMilliseconds(500);
 

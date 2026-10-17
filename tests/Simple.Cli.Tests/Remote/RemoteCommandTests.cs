@@ -274,6 +274,8 @@ public sealed class RemoteCommandTests
 
         public IReadOnlyDictionary<string, string> Environment { get; } = new Dictionary<string, string>();
 
+        public RemoteSweep? Sweep => null;
+
         public Task<int> RunAsync(string script, Action<string> onOutput, Action<string> onError, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("the machine broke");
 

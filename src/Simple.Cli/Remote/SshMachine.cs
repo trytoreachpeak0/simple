@@ -71,6 +71,13 @@ public sealed partial class SshMachine : IRemoteMachine
         ["SIMPLE_TEST_SQLSERVER"] = SqlServer,
     };
 
+    /// <summary>
+    /// The tests run there make their databases on <see cref="SqlServer"/>
+    /// and keep their keys in the machine's store (RemoteRun.RunEnvironment).
+    /// Both are simple remote's alone on that machine.
+    /// </summary>
+    public RemoteSweep? Sweep { get; } = RemoteSweep.ForTests(SqlServer, ServerKeyStore.Machine);
+
     /// <summary>Why <paramref name="alias"/> cannot be used, or null. An alias starting with '-' would be read as an option.</summary>
     public static string? Refusal(string? alias) =>
         alias is not null && Alias().IsMatch(alias)

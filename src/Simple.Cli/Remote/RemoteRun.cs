@@ -26,6 +26,13 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
     /// <summary>How many runs of an instance the remote machine keeps.</summary>
     public const int KeepRuns = 20;
 
+    /// <summary>
+    /// How long the remote machine keeps an agent no run has started: every
+    /// version of the command line installs its own (<see cref="AgentFile"/>).
+    /// A clone still on a removed version copies it again.
+    /// </summary>
+    public static readonly TimeSpan KeepAgents = TimeSpan.FromDays(7);
+
     private const string BaseRef = "refs/remotes/origin/main";
 
     /// <summary>
@@ -298,6 +305,8 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         WaitSeconds = (int)Wait.TotalSeconds,
         AliveSeconds = Alive.TotalSeconds,
         KeepRuns,
+        KeepAgentDays = KeepAgents.TotalDays,
+        machine.Sweep,
     };
 
     private Dictionary<string, string> RunEnvironment()

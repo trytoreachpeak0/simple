@@ -40,7 +40,9 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 
 function Get-SdkVersion([string] $Text) {
-    if ($Text -notmatch '^\d+\.\d+\.\d+$') { return $null }
+    # ASCII digits only (\d also matches other scripts' digits, which [version]
+    # then fails on), and \z, not $, which also matches before a final newline.
+    if ($Text -notmatch '\A[0-9]+\.[0-9]+\.[0-9]+\z') { return $null }
     [version] $Text
 }
 
