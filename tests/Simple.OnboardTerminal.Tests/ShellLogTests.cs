@@ -21,7 +21,8 @@ public sealed class ShellLogTests
             {
             }
 
-            var text = File.ReadAllText(Assert.Single(ProgramLog.Files(directory)));
+            Assert.Single(ProgramLog.Files(directory));
+            var text = ProgramLog.ReadText(directory);
             Assert.Contains(
                 "[WRN] Simple.OnboardTerminal.ShellLog: Logging with the default limits: Simple:Logs:FileSizeLimitBytes 'ten' is not a whole number above 0.",
                 text,
@@ -79,7 +80,7 @@ public sealed class ShellLogTests
             Assert.False(handledBeforeUs, "the shell's handler must leave the exception unhandled");
             var file = Assert.Single(ProgramLog.Files(directory));
             Assert.Equal("OnboardTerminal.log", Path.GetFileName(file));
-            var text = File.ReadAllText(file);
+            var text = ProgramLog.ReadText(directory);
             Assert.Contains("[FTL] Simple.Logging.UnhandledExceptions: Nothing in the UI thread caught this exception", text, StringComparison.Ordinal);
             Assert.Contains("System.InvalidOperationException: Door-button-crash", text, StringComparison.Ordinal);
         }

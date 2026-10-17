@@ -36,7 +36,7 @@ internal sealed class TestLog : IDisposable
     public string Text()
     {
         Close();
-        return string.Concat(ProgramLog.Files(Directory).Select(File.ReadAllText));
+        return ProgramLog.ReadText(Directory);
     }
 
     public void Close()

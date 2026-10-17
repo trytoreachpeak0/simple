@@ -38,6 +38,27 @@ public sealed partial class ProgramLogTests
             text);
     }
 
+    /// <summary>
+    /// Another process can hold a log file a moment after it was written (on
+    /// the CI machine, after the program had exited, #68): the log is read the
+    /// way simple logs reads it, not refused.
+    /// </summary>
+    [Fact]
+    public void ALogFileAnotherProcessStillHoldsCanBeRead()
+    {
+        using var log = new TestLog();
+        Line(log.Logger, 1);
+        log.Close();
+        var file = Assert.Single(ProgramLog.Files(log.Directory));
+
+        // As a virus scan or an indexer holds it: open, for writing too, sharing reads and writes.
+        using (new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+        {
+            Assert.Throws<IOException>(() => File.ReadAllText(file));
+            Assert.Contains("line 0001", ProgramLog.ReadText(log.Directory), StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public void WithoutSettingsAProgramLogsUnderProgramDataInFilesOf10MegabytesKeepingTen()
     {
@@ -71,7 +92,7 @@ public sealed partial class ProgramLogTests
             Assert.Equal(new ProgramLogSettings(directory, 4096, 2), ProgramLog.ReadSettings(configuration, "Server"));
             var file = Assert.Single(ProgramLog.Files(directory));
             Assert.Equal("Server.log", Path.GetFileName(file));
-            Assert.Contains("[INF] Simple.Server: line 0007", File.ReadAllText(file), StringComparison.Ordinal);
+            Assert.Contains("[INF] Simple.Server: line 0007", ProgramLog.ReadText(directory), StringComparison.Ordinal);
         }
         finally
         {
