@@ -665,7 +665,8 @@ public sealed partial class LocalSystem(
         {
             var alive = IsAlive(process);
             var ready = alive && await IsReadyAsync(state, process, cancellationToken);
-            processes.Add(new ProcessReport(process.Name, process.Component, process.Pid, alive, ready, ApiUri(process), process.Log));
+            processes.Add(new ProcessReport(
+                process.Name, process.Component, process.Pid, alive, ready, ApiUri(process), store.ProgramLogDirectory(state.Instance, process.Name), process.Log));
             if (alive && process.Component == Components.Server.Name)
             {
                 try
@@ -743,7 +744,9 @@ public enum StopOutcome
 
 public sealed record StopReport(string Name, int Pid, StopOutcome Outcome);
 
-public sealed record ProcessReport(string Name, string Component, int Pid, bool Alive, bool Ready, Uri Url, string Log);
+/// <param name="ProgramLog">The process's program log directory (ADR 0034), shown by <c>simple logs &lt;name&gt;</c>.</param>
+/// <param name="Output">What it wrote to its console, shown by <c>simple logs &lt;name&gt; --output</c>.</param>
+public sealed record ProcessReport(string Name, string Component, int Pid, bool Alive, bool Ready, Uri Url, string ProgramLog, string Output);
 
 /// <param name="Server">The server's own <c>/api/v1/status</c>, or null when it does not answer.</param>
 public sealed record InstanceReport(
@@ -761,7 +764,7 @@ public sealed record InstanceReport(
     public IReadOnlyList<string> Lines() =>
     [
         $"Instance {Instance} from {Repository}, database {Database} on {SqlServer}",
-        .. Processes.Select(p => $"  {p.Name,-12} {(p.Ready ? "ready" : p.Alive ? "not ready" : "gone"),-10} pid {p.Pid,-7} {p.Url}  log {p.Log}"),
+        .. Processes.Select(p => $"  {p.Name,-12} {(p.Ready ? "ready" : p.Alive ? "not ready" : "gone"),-10} pid {p.Pid,-7} {p.Url}  log {p.ProgramLog}  output {p.Output}"),
         .. MesLine(),
         .. RiotLine(),
         .. TerminalLines(),

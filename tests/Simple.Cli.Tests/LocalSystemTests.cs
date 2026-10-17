@@ -10,6 +10,23 @@ public sealed class LocalSystemTests : IDisposable
 
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
+    /// <summary>"log" is the program log directory (ADR 0034), "output" the console output; status had the latter as "log" (#80).</summary>
+    [Fact]
+    public async Task StatusNamesEachProcesssProgramLogAndItsConsoleOutputApart()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var output = store.LogPath(instance, "mes-gateway");
+        // This process's pid with another start time: recorded, but gone.
+        var gone = new ProcessRecord("mes-gateway", "mes-gateway", 1, Environment.ProcessId, DateTimeOffset.UnixEpoch, "Simple.MesGateway.exe", [20002], output);
+        store.Write(new InstanceState(instance, @"F:\simple\repo", CliRunner.SqlServer, DateTimeOffset.UtcNow, [20002], [gone]));
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null);
+
+        var outcome = await system.StatusAsync(instance, Cancel);
+
+        var line = Assert.Single(outcome.Lines, l => l.TrimStart().StartsWith("mes-gateway ", StringComparison.Ordinal));
+        Assert.EndsWith($"log {store.ProgramLogDirectory(instance, "mes-gateway")}  output {output}", line, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task DownRefusesAnInstanceStartedFromAnotherClone()
     {
