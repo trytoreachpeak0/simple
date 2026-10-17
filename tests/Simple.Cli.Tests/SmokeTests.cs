@@ -83,13 +83,13 @@ public sealed class SmokeTests
         // --reset drops a's database and no other.
         Assert.True(await cli.DatabaseExistsAsync(a));
         var reset = await cli.RunJsonAsync("down", "--reset", "--instance", a);
-        Assert.Equal(ExitCodes.Success, reset.ExitCode);
+        Assert.True(reset.ExitCode == ExitCodes.Success, $"down --reset exited with {reset.ExitCode}: {reset.Output}{Environment.NewLine}{reset.Error}");
         Assert.True(reset.Output.GetProperty("result").GetProperty("databaseDropped").GetBoolean());
         Assert.False(await cli.DatabaseExistsAsync(a));
         Assert.True(await cli.DatabaseExistsAsync(b));
 
         var downB = await cli.RunJsonAsync("down", "--reset", "--instance", b);
-        Assert.Equal(ExitCodes.Success, downB.ExitCode);
+        Assert.True(downB.ExitCode == ExitCodes.Success, $"down --reset exited with {downB.ExitCode}: {downB.Output}{Environment.NewLine}{downB.Error}");
         Assert.False(await cli.DatabaseExistsAsync(b));
     }
 

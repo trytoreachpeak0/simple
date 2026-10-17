@@ -44,7 +44,13 @@ public sealed class TestInputTests
         var errors = process.StandardError.ReadToEndAsync(Cancel);
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            // Waits up to 30 s for the test input to answer. On Windows a
+            // connection to a loopback port nobody listens on yet is refused
+            // only after about 2 s (the connection is tried again), so a
+            // request timeout of 2 s ended the wait whenever the terminal took
+            // longer than that to start (#60): each request now gets 10 s, and
+            // one that times out counts as not answering yet.
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
             var deadline = DateTime.UtcNow.AddSeconds(30);
             while (true)
             {
@@ -64,6 +70,10 @@ public sealed class TestInputTests
                 catch (HttpRequestException)
                 {
                     // Not listening yet.
+                }
+                catch (TaskCanceledException) when (!Cancel.IsCancellationRequested)
+                {
+                    // Listening, not answering yet.
                 }
 
                 Assert.True(DateTime.UtcNow < deadline, "The test input did not answer within 30 s.");

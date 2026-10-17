@@ -87,7 +87,7 @@ public sealed class TerminalSmokeTests
         Assert.True(ServerKey.Exists(Components.ServerKeyName(instance), TestKeyStore.Store));
         Assert.False(ServerKey.Exists(Components.ServerKeyName(instance), TestKeyStore.Other));
         var reset = await cli.RunJsonAsync("down", "--reset", "--instance", instance);
-        Assert.Equal(ExitCodes.Success, reset.ExitCode);
+        Assert.True(reset.ExitCode == ExitCodes.Success, $"down --reset exited with {reset.ExitCode}: {reset.Output}{Environment.NewLine}{reset.Error}");
         Assert.True(reset.Output.GetProperty("result").GetProperty("serverKeyDeleted").GetBoolean());
         Assert.False(ServerKey.Exists(Components.ServerKeyName(instance), TestKeyStore.Store));
     }

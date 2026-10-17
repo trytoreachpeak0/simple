@@ -96,7 +96,13 @@ public sealed partial class LocalSystem(
             }
 
             progress.WriteLine($"Instance {instance} was not stopped with simple down last time; its processes are gone. Starting afresh.");
-            store.Delete(existing);
+            if (await ForgetAsync(existing, cancellationToken) is { } stillHeld)
+            {
+                return Outcome.Fail(
+                    ExitCodes.Unexpected,
+                    $"{stillHeld.Message} The state file {store.StatePath(instance)} is kept: run simple up again once they are released.",
+                    new { Instance = instance, Held = stillHeld.Files });
+            }
         }
 
         if (await VerifySqlServerAsync(sqlServer, cancellationToken) is { } refused)
@@ -200,8 +206,8 @@ public sealed partial class LocalSystem(
                     || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
                 {
                     var stopped = await StopAllAsync(state, cancellationToken);
-                    store.Delete(state);
-                    return Outcome.Fail(ExitCodes.NotReady, $"{name} could not be started: {e.Message}", stopped);
+                    var stillHeld = await ForgetAsync(state, cancellationToken);
+                    return Outcome.Fail(ExitCodes.NotReady, $"{name} could not be started: {e.Message}{Kept(stillHeld, instance)}", stopped);
                 }
 
                 processes.Add(new ProcessRecord(name, component.Name, context.Index, started.Pid, started.StartedAt, executable, context.Ports, log));
@@ -212,11 +218,11 @@ public sealed partial class LocalSystem(
             if (failure is not null)
             {
                 var stopped = await StopAllAsync(state, cancellationToken);
-                store.Delete(state);
+                var stillHeld = await ForgetAsync(state, cancellationToken);
                 var tail = Tail(failure.Value.Process.Log, 20);
                 return Outcome.Fail(
                     ExitCodes.NotReady,
-                    $"{failure.Value.Process.Name} {failure.Value.Reason}. Its log: {failure.Value.Process.Log}",
+                    $"{failure.Value.Process.Name} {failure.Value.Reason}. Its log: {failure.Value.Process.Log}{Kept(stillHeld, instance)}",
                     new { failure.Value.Process.Name, failure.Value.Reason, failure.Value.Process.Log, LogTail = tail, Stopped = stopped },
                     ["Last lines of the log:", .. tail]);
             }
@@ -255,7 +261,13 @@ public sealed partial class LocalSystem(
                     new { Instance = instance, Stopped = stopped });
             }
 
-            store.Delete(state);
+            if (await ForgetAsync(state, cancellationToken) is { } stillHeld)
+            {
+                return Outcome.Fail(
+                    ExitCodes.Unexpected,
+                    $"{stillHeld.Message} The state file {store.StatePath(instance)} is kept: run simple down again once they are released.",
+                    new { Instance = instance, Stopped = stopped, Held = stillHeld.Files });
+            }
         }
 
         sqlServer = state?.SqlServer ?? store.ReadSqlServer(instance) ?? sqlServer;
@@ -425,6 +437,23 @@ public sealed partial class LocalSystem(
     private static Outcome NotRunning(string instance) =>
         Outcome.Fail(ExitCodes.NotRunning, $"Instance {instance} is not running. Run simple up.");
 
+    /// <summary>Forgets a stopped instance (<see cref="InstanceStore.DeleteAsync"/>); null when done, otherwise what is still held.</summary>
+    private async Task<FilesHeldException?> ForgetAsync(InstanceState state, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await store.DeleteAsync(state, cancellationToken);
+            return null;
+        }
+        catch (FilesHeldException e)
+        {
+            return e;
+        }
+    }
+
+    private string Kept(FilesHeldException? held, string instance) =>
+        held is null ? string.Empty : $" {held.Message} The state file {store.StatePath(instance)} is kept: simple down deletes them once they are released.";
+
     private static bool IsAlive(ProcessRecord process)
     {
         using var found = ChildProcess.Find(process.Pid, process.ProcessStartedAt);
@@ -490,9 +519,13 @@ public sealed partial class LocalSystem(
         var targetPath = lines[^1];
         var source = Path.GetDirectoryName(targetPath)!;
         var bin = InstanceStore.BinDirectory(Repository, instance, component.Name);
-        if (Directory.Exists(bin))
+        try
         {
-            Directory.Delete(bin, recursive: true);
+            await DirectoryTree.DeleteAsync(bin, store.DeleteWait, cancellationToken);
+        }
+        catch (FilesHeldException e)
+        {
+            return (null, Outcome.Fail(ExitCodes.Unexpected, $"The previous copy of {component.Name} could not be replaced: {e.Message}", new { component.Project, Held = e.Files }));
         }
 
         CopyDirectory(source, bin);

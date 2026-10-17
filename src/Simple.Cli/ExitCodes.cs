@@ -28,7 +28,8 @@ public static class ExitCodes
         """
         Exit codes:
           0  success
-          1  unexpected error, or a process still running after down stopped it
+          1  unexpected error, a process still running after down stopped it, or a file
+             the instance ran from still held after its processes stopped (up, down)
           2  invalid arguments or settings
           3  the build failed (up)
           4  a component did not become ready (up); what this instance started is stopped again

@@ -156,6 +156,86 @@ public sealed class LocalSystemTests : IDisposable
         Assert.Equal(ServerKeyStore.Machine, store.ReadServerKeyStore(instance));
     }
 
+    [Fact]
+    public async Task DownWaitsForAFileInTheRunDirectoryThatIsReleasedSoon()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var repository = Path.Combine(store.Home, "clone");
+        store.Write(new InstanceState(instance, repository, CliRunner.SqlServer, DateTimeOffset.UtcNow, [], []));
+        using var held = HeldImage.In(InstanceStore.BinDirectory(repository, instance, "server"));
+        var system = new LocalSystem(repository, store, TextWriter.Null);
+
+        // Released after a second, as by a process still exiting or a scanner (#60).
+        var release = Task.Delay(TimeSpan.FromSeconds(1), Cancel).ContinueWith(_ => held.Dispose(), TaskScheduler.Default);
+        var outcome = await system.DownAsync(instance, CliRunner.SqlServer, reset: false, Cancel);
+        await release;
+
+        Assert.True(outcome.ExitCode == ExitCodes.Success, $"down exited with {outcome.ExitCode}: {outcome.Error}");
+        Assert.False(Directory.Exists(InstanceStore.RunDirectory(repository, instance)));
+        Assert.Null(store.Read(instance));
+    }
+
+    [Fact]
+    public async Task AFileStillHeldFailsDownNamesItsHolderAndKeepsTheState()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var repository = Path.Combine(store.Home, "clone");
+        var heldStore = new InstanceStore(store.Home) { DeleteWait = TimeSpan.FromSeconds(1) };
+        heldStore.Write(new InstanceState(instance, repository, CliRunner.SqlServer, DateTimeOffset.UtcNow, [], []));
+        using var held = HeldImage.In(InstanceStore.BinDirectory(repository, instance, "server"));
+        var system = new LocalSystem(repository, heldStore, TextWriter.Null);
+
+        var outcome = await system.DownAsync(instance, CliRunner.SqlServer, reset: false, Cancel);
+
+        Assert.Equal(ExitCodes.Unexpected, outcome.ExitCode);
+        Assert.Contains(held.Path, outcome.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"pid {Environment.ProcessId}", outcome.Error, StringComparison.Ordinal);
+        Assert.NotNull(heldStore.Read(instance));
+
+        // Once it is released, down again finishes the job.
+        held.Dispose();
+        var again = await system.DownAsync(instance, CliRunner.SqlServer, reset: false, Cancel);
+        Assert.True(again.ExitCode == ExitCodes.Success, $"down exited with {again.ExitCode}: {again.Error}");
+        Assert.False(Directory.Exists(InstanceStore.RunDirectory(repository, instance)));
+        Assert.Null(heldStore.Read(instance));
+    }
+
+    /// <summary>
+    /// A DLL in a directory, loaded into this process the way a running
+    /// component holds its own: deleting it fails with access denied until
+    /// it is released, as down met on CI (#60).
+    /// </summary>
+    private sealed class HeldImage : IDisposable
+    {
+        private nint handle;
+
+        private HeldImage(string path, nint handle)
+        {
+            Path = path;
+            this.handle = handle;
+        }
+
+        public string Path { get; }
+
+        public static HeldImage In(string directory)
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(System.IO.Path.Combine(directory, "A.deps.json"), "{}");
+            var path = System.IO.Path.Combine(directory, "Held.dll");
+            File.Copy(System.IO.Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "System.IO.Compression.Native.dll"), path);
+            return new HeldImage(path, System.Runtime.InteropServices.NativeLibrary.Load(path));
+        }
+
+        public void Dispose()
+        {
+            var loaded = Interlocked.Exchange(ref handle, 0);
+            if (loaded != 0)
+            {
+                System.Runtime.InteropServices.NativeLibrary.Free(loaded);
+            }
+        }
+    }
+
     private static async Task<int> ExecuteOnMasterAsync(string sql)
     {
         var builder = new SqlConnectionStringBuilder(CliRunner.SqlServer) { InitialCatalog = "master", Pooling = false };
