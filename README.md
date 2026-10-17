@@ -178,7 +178,7 @@ dotnet run --project src/Simple.Server -- --Simple:Instance=wt25 --urls=http://1
 
 服务端默认连 `http://127.0.0.1:5200` 上的假 RIoT（`Simple:Riot:Url`、`Simple:Riot:CallApiKey`，仓库里的密钥是假 RIoT 认的占位串）。每 10 秒读一次 RIoT 的地图列表，看连不连得上；连不上时按逐步拉长、最长 30 秒的间隔一直重试（ADR 0008），不会因为 RIoT 掉线而退出。`Simple:Riot:Url` 留空时不连 RIoT，状态里写 `not-configured`。这里只读，不建单、不发命令。
 
-仓库里的配置只指向回环地址和 LocalDB。真实的连接串和地址放在仓库外：用 `--Simple:SettingsFile=<路径>` 指定一个 JSON 配置文件，或用环境变量（例如 `ConnectionStrings__Simple`、`Simple__Instance`）。连接串里不写库名，库名由实例名决定。配置不合法时服务端拒绝启动，退出码为 2，并逐项说明是哪一项不对；控制台的 HTTPS 地址（ADR 0046）做好之前，接口只听回环，所以接口的监听地址（`urls`）不是回环地址、或不是 `http://` 时也拒绝启动。
+仓库里的配置只指向回环地址和 LocalDB。真实的连接串和地址放在仓库外：用 `--Simple:SettingsFile=<路径>` 指定一个 JSON 配置文件，或用环境变量（例如 `ConnectionStrings__Simple`、`Simple__Instance`）。连接串里不写库名，库名由实例名决定。配置不合法时服务端拒绝启动，退出码为 2，并逐项说明是哪一项不对。接口本身（`urls`）只听回环、只走明文：不是回环地址、或不是 `http://` 时也拒绝启动；别的电脑经下面"控制台的 HTTPS 地址"打开控制台。
 
 ### 登录
 
@@ -212,6 +212,24 @@ dotnet run --project src/Simple.Server -- --Simple:Instance=wt25 --urls=http://1
   "暂停值守"开着时，值守账号的每个请求（包括登录）都回 403，问题类型 `watch-paused`。
 - **账号**：班组长、工程师账号必须写所属项目，值守账号不写；值守账号整个系统只有一个；管理员账号只能由服务端命令建，不能经接口建、删或设密码。服务端里还没有项目表，项目先按名字存，以后有了项目再改成引用（ADR 0015、0017）。密码只有一条规则：至少 8 个字符；只存哈希（PBKDF2-HMAC-SHA512，22 万次），旧的弱哈希在下次登录时自动升级。
 - **记在哪**：建账号、删账号、设密码、开关暂停值守进事件记录，写账号、入口和来源 IP，不写密码。登录、退出、登录失败只进程序日志（写来源 IP），不进事件记录。
+
+### 控制台的 HTTPS 地址与车辆一览页的明文地址
+
+做法见 ADR 0046。两个地址默认都不配，开发、测试和 CI 只用回环上的接口。
+
+- **控制台的 HTTPS 地址**：`Simple:Console:Url`，例如 `https://172.19.205.222:5443`。只能是 `https://`，要写明一块网卡的 IP 地址（证书里要写这个 IP，所以不收 `localhost` 和机器名），不收 `0.0.0.0`、`[::]`、`*`。这里提供全部接口和登录（以后还有控制台页面），不提供车载终端协议；TLS 1.2；不发 HSTS。
+- **控制台的证书**：服务端第一次带着 `Simple:Console:Url` 启动时自己生成一张，记事件 `console.certificate-created`，程序日志里写一条警告提醒去装。证书写明自己不是证书机构、只能证明这台服务器：`basicConstraints` 关键且 `CA:false`，`keyUsage` 只有 `digitalSignature`，扩展用途只有 serverAuth，`subjectAltName` 写配置的 IP 和本机机器名；有效期 20 年。证书本身存在库里（`ConsoleCertificates` 表），生成后固定不变；钥匙和车载终端的钥匙一样是 Windows 密钥存储里一把有名字的 ECDSA P-256 钥匙，默认名字 `Simple-Console-<实例名>`（`Simple:Console:KeyName`），放在 `Simple:OnboardTerminals:ServerKeyStore` 指的存储里。证书和钥匙都要备份（归部署那张票）。
+- **装到用控制台的电脑上**：在服务端机器上导出证书文件，拷到那台电脑上双击 → "安装证书" → "当前用户" → "将所有的证书都放入下列存储" → "受信任的根证书颁发机构" → 完成 → 安全警告点"是"：
+
+  ```
+  dotnet run --project src/Simple.Server -- export-console-certificate C:\temp\simple-console.cer
+  ```
+
+  命令输出证书的 SHA-256，可以和状态接口里的对一下。
+- **换 IP、换机器名、钥匙丢了**：服务端发现库里的证书不写着现在的 IP 或机器名，或者钥匙不在、对不上，就拒绝启动（退出码 2），在程序日志里说明。确实要换的，运行 `discard-console-certificate` 作废旧证书（记事件 `console.certificate-discarded`），下次启动生成新的，那几台电脑各重装一次。服务端不会自己悄悄换证书，因为换了就要每台电脑重装。
+- **到期提醒**：状态接口的 `consoleEndpoint.certificate` 写证书的 SHA-256、写给了哪些 IP 和名字、到期时刻、还剩几天；还剩 90 天以内时 `expiresSoon` 为 `true`。控制台和值守 AI 都从这里读。
+- **车辆一览页的明文地址**：`Simple:Overview:Url`，例如 `http://172.19.205.222:5080`。只能是 `http://`，要写明一块网卡的 IP 地址（或 `localhost`），不收所有网卡一起听的写法。这里只提供车辆一览页和它的数据，不收登录，别的请求一律 404；登录 Cookie 是 `Secure` 的，浏览器不会在这个地址上发它。车辆一览页本身还没做，所以现在这个地址上什么都没有。
+- **各回各的**：哪个地址提供什么按请求进来的那条连接分，不按主机名或端口：回环上的接口和控制台的 HTTPS 地址提供除车载终端协议以外的一切；车载终端端点只提供车载终端协议；一览页的明文地址只提供标了"一览页"的接口。
 
 ### 车载终端端点
 

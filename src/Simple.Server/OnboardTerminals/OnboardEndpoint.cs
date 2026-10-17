@@ -1,30 +1,24 @@
-using System.Net;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
-using Grpc.AspNetCore.Server;
-using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.Options;
 using Simple.Protocol;
 using Simple.Server.Configuration;
+using Simple.Server.Listeners;
 using Simple.Server.Status;
 
 namespace Simple.Server.OnboardTerminals;
 
 /// <summary>
-/// The listeners of the server process (ADR 0025). The API listens on
-/// loopback only, over plain HTTP, because it has no authentication yet. The
-/// onboard terminal endpoint may listen on an address the vehicles reach,
+/// The API's loopback addresses and the onboard terminal endpoint (ADR 0025).
+/// The terminal endpoint may listen on an address the vehicles reach,
 /// because nothing but the terminal protocol is served there, over TLS 1.2
-/// with the certificate the terminals pin. Requests are kept to their own
-/// listener by the connection they arrive on (<see cref="KeepToOwnListener"/>),
-/// not by host name or port, which a caller chooses.
+/// with the certificate the terminals pin (see <see cref="Listener.KeepToOwnListener"/>).
+/// The console's and the overview's addresses are <see cref="ConsoleEndpoint"/>'s.
 /// </summary>
 public sealed partial class OnboardEndpoint(IOptions<ServerSettings> settings, ILogger<OnboardEndpoint> logger) : IDisposable
 {
-    private const string TerminalListenerItem = "Simple.OnboardTerminalListener";
-
     private readonly Lock gate = new();
     private X509Certificate2? certificate;
     private ListenOptions? listener;
@@ -88,22 +82,18 @@ public sealed partial class OnboardEndpoint(IOptions<ServerSettings> settings, I
         {
             if (key == "urls")
             {
-                Listen(kestrel, BindingAddress.Parse(url), _ => { });
+                Listener.Listen(kestrel, BindingAddress.Parse(url), _ => { });
             }
         }
 
         if (ConfiguredUrl is { } terminalUrl)
         {
             var certificate = Certificate;
-            Listen(kestrel, BindingAddress.Parse(terminalUrl), listen =>
+            Listener.Listen(kestrel, BindingAddress.Parse(terminalUrl), listen =>
             {
                 listener = listen;
                 listen.Protocols = HttpProtocols.Http2;
-                listen.Use(next => connection =>
-                {
-                    connection.Items[TerminalListenerItem] = true;
-                    return next(connection);
-                });
+                Listener.Mark(listen, ListenerKind.Terminal);
                 listen.UseHttps(new HttpsConnectionAdapterOptions
                 {
                     ServerCertificate = certificate,
@@ -127,32 +117,7 @@ public sealed partial class OnboardEndpoint(IOptions<ServerSettings> settings, I
         }
 
         // Once bound, the listener knows its port, also when 0 was configured.
-        if (listener?.IPEndPoint is { Port: > 0 } bound)
-        {
-            var address = BindingAddress.Parse(url);
-            url = $"{address.Scheme}://{address.Host}:{bound.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-        }
-
-        return new OnboardTerminalEndpointStatus(url, CertificatePin.Of(Certificate));
-    }
-
-    /// <summary>
-    /// Middleware, after routing: on the terminal listener only the terminal
-    /// protocol is found, and the terminal protocol is found nowhere else.
-    /// </summary>
-    public static Task KeepToOwnListener(HttpContext context, RequestDelegate next)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(next);
-        var onTerminalListener = context.Features.Get<IConnectionItemsFeature>()?.Items.ContainsKey(TerminalListenerItem) == true;
-        var isTerminalProtocol = context.GetEndpoint()?.Metadata.GetMetadata<GrpcMethodMetadata>() is not null;
-        if (onTerminalListener != isTerminalProtocol)
-        {
-            context.Response.StatusCode = StatusCodes.Status404NotFound;
-            return Task.CompletedTask;
-        }
-
-        return next(context);
+        return new OnboardTerminalEndpointStatus(Listener.Describe(url, listener), CertificatePin.Of(Certificate));
     }
 
     public void Dispose()
@@ -169,17 +134,4 @@ public sealed partial class OnboardEndpoint(IOptions<ServerSettings> settings, I
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Server key {KeyName} from the {Store} key store, certificate pin {Pin}")]
     private static partial void LogKeyLoaded(ILogger logger, string keyName, string store, string pin);
-
-    private static void Listen(KestrelServerOptions kestrel, BindingAddress address, Action<ListenOptions> configure)
-    {
-        var host = address.Host.Trim('[', ']');
-        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
-        {
-            kestrel.ListenLocalhost(address.Port, configure);
-        }
-        else
-        {
-            kestrel.Listen(IPAddress.Parse(host), address.Port, configure);
-        }
-    }
 }
