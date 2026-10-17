@@ -21,6 +21,11 @@ Nothing here touches anything but the probe: no firewall rule, no service, no
 other process. Step 4 uses linkcut on the vehicle PC (listening on 127.0.0.1
 only) because the vehicle PC's firewall profile is off.
 
+Every ssh and scp call is checked: a non-zero exit stops the run. An alias of
+'.' runs that side on this machine without ssh, for checking the script itself
+on a development machine (add -KeyStore user when this machine's account is not
+an administrator).
+
 .EXAMPLE
 pwsh -File tools/protocol-probe/field/Run-Field.ps1 -Run F:/simple/probe-run/18-field -ServerAlias factory01 -ClientAlias agv03 -ServerBind 172.19.205.222 -Steps 1,3,4,6,7,8,9,2
 pwsh -File tools/protocol-probe/field/Run-Field.ps1 -Run F:/simple/probe-run/18-field -ServerAlias factory01 -ClientAlias agv03 -ServerBind 172.19.205.222 -Steps Collect,Cleanup
@@ -33,6 +38,7 @@ param(
     [Parameter(Mandatory)] [string] $ServerBind,
     [string] $ServerRoot = 'D:/simple-probe',
     [string] $ClientRoot = 'C:/simple-probe',
+    [ValidateSet('machine', 'user')] [string] $KeyStore = 'machine',
     [int] $SoakMinutes = 30
 )
 
@@ -41,7 +47,8 @@ $Steps = $Steps -split ','
 $Run = [IO.Path]::GetFullPath($Run)
 $Port = 5443
 $RelayPort = 6443
-$script:Procs = @{}
+# Ordered, so that Stop-All can stop terminals before the server.
+$script:Procs = [ordered]@{}
 $script:Pin = $null
 foreach ($d in 'mirror', 'results', 'logs') { New-Item -ItemType Directory -Force (Join-Path $Run $d) | Out-Null }
 
@@ -79,16 +86,25 @@ function Select-Log([string] $Path, [string] $Pattern, [int] $After = 0) {
 
 # Runs a script on the remote machine. It travels as -EncodedCommand: piping it
 # to 'pwsh -Command -' silently skips a multi-line block at the end of the input.
+# A non-zero exit (ssh cannot connect, or the script failed) throws.
 function Invoke-Remote([string] $Alias, [string] $Script) {
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
-    ssh -T $Alias "pwsh -NoProfile -EncodedCommand $encoded"
+    if ($Alias -eq '.') { pwsh -NoProfile -EncodedCommand $encoded }
+    else { ssh -T $Alias "pwsh -NoProfile -EncodedCommand $encoded" }
+    if ($LASTEXITCODE -ne 0) { throw "remote command on '$Alias' failed with exit code $LASTEXITCODE" }
 }
 
 function Start-Remote([string] $Name, [string] $Alias, [string] $Exe, [string[]] $ArgList) {
     $mirror = Join-Path $Run "mirror/$Name.log"
-    $command = "& '$Exe' " + ($ArgList -join ' ')
-    $psi = [Diagnostics.ProcessStartInfo]::new('ssh')
-    foreach ($a in '-T', $Alias, $command) { $psi.ArgumentList.Add($a) }
+    if ($Alias -eq '.') {
+        $psi = [Diagnostics.ProcessStartInfo]::new($Exe)
+        foreach ($a in $ArgList) { $psi.ArgumentList.Add($a) }
+    }
+    else {
+        $command = "& '$Exe' " + ($ArgList -join ' ')
+        $psi = [Diagnostics.ProcessStartInfo]::new('ssh')
+        foreach ($a in '-T', $Alias, $command) { $psi.ArgumentList.Add($a) }
+    }
     $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
@@ -112,18 +128,22 @@ function Send-Line([string] $Name, [string] $Text) {
 }
 
 # Stops a remote probe process: 'quit' on its console first (the server then
-# disposes its certificate, which removes the temporary key container), and
-# only if it has not exited after 10 s, or with -Kill, Stop-Process by its pid.
+# ends its streams and disposes its certificate, which removes the temporary key
+# container), and only if it has not exited in time (40 s for a server, whose
+# Kestrel shutdown timeout is 30 s; 10 s otherwise), or with -Kill, Stop-Process
+# by its pid.
 function Stop-Remote([string] $Name, [switch] $Kill) {
     $entry = $script:Procs[$Name]
     if (-not $entry) { return }
     if (-not $Kill -and -not $entry.Process.HasExited) {
         try { Send-Line $Name 'quit' } catch { Write-Host "quit to $Name failed: $_" }
     }
-    if ($Kill -or -not $entry.Process.WaitForExit(10000)) {
+    $grace = $Name -like 'server*' ? 40000 : 10000
+    $quitAt = Get-Date
+    if ($Kill -or -not $entry.Process.WaitForExit($grace)) {
         $start = @(Select-Log $entry.Mirror 'START (server|client) pid=\d+') | Select-Object -Last 1
         if ($start -match 'pid=(\d+)') {
-            Invoke-Remote $entry.Alias "Get-Process -Id $($Matches[1]) -ErrorAction SilentlyContinue | Where-Object { `$_.Path -like '*simple-probe*' } | Stop-Process -Force" | Out-Null
+            Invoke-Remote $entry.Alias "`$p = @(Get-Process | Where-Object { `$_.Id -eq $($Matches[1]) -and `$_.Path -like '*simple-probe*' }); if (`$p) { `$p | Stop-Process -Force }" | Out-Null
         }
         Write-Host "killed $Name"
     }
@@ -132,15 +152,20 @@ function Stop-Remote([string] $Name, [switch] $Kill) {
     $entry.ErrTask.Wait(3000) | Out-Null
     $entry.Out.Dispose(); $entry.Err.Dispose()
     $script:Procs.Remove($Name)
-    Write-Host "stopped $Name"
+    Write-Host "stopped $Name after $([int]((Get-Date) - $quitAt).TotalMilliseconds) ms"
 }
 
-function Stop-All { foreach ($n in @($script:Procs.Keys)) { Stop-Remote $n } }
+# Terminals and linkcut first, servers last: a server that is quit while
+# terminals are still connected has to end their streams first.
+function Stop-All {
+    $names = @($script:Procs.Keys)
+    foreach ($n in @($names | Where-Object { $_ -notlike 'server*' }) + @($names | Where-Object { $_ -like 'server*' })) { Stop-Remote $n }
+}
 
 function Start-Server([string] $Name, [string] $Log, [string] $Data = "$ServerRoot/data", [string[]] $Extra = @()) {
     $mirror = Join-Path $Run "mirror/$Name.log"
     $after = Get-LineCount $mirror
-    Start-Remote $Name $ServerAlias "$ServerRoot/server/simple-probe-server.exe" (@('--bind', $ServerBind, '--port', "$Port", '--data', $Data, '--key-load', 'machine', '--log', "$ServerRoot/logs/$Log") + $Extra)
+    Start-Remote $Name $ServerAlias "$ServerRoot/server/simple-probe-server.exe" (@('--bind', $ServerBind, '--port', "$Port", '--data', $Data, '--key-load', $KeyStore, '--log', "$ServerRoot/logs/$Log") + $Extra)
     if (-not (Wait-Line $mirror 'CONSOLE ready' 60 $after)) { throw "server $Name did not start; see $mirror" }
 }
 
@@ -148,7 +173,7 @@ function Get-Pin { (Invoke-Remote $ServerAlias "Get-Content '$ServerRoot/data/se
 
 function Start-Client([string] $Name, [string] $Data, [string] $Log, [string[]] $Extra = @(), [string] $Server = "https://${ServerBind}:$Port") {
     if (-not $script:Pin) { $script:Pin = Get-Pin }
-    Start-Remote $Name $ClientAlias "$ClientRoot/client/simple-probe-client.exe" (@('--data', "$ClientRoot/$Data", '--key-store', 'machine', '--log', "$ClientRoot/logs/$Log", '--server', $Server, '--pin', $script:Pin) + $Extra)
+    Start-Remote $Name $ClientAlias "$ClientRoot/client/simple-probe-client.exe" (@('--data', "$ClientRoot/$Data", '--key-store', $KeyStore, '--log', "$ClientRoot/logs/$Log", '--server', $Server, '--pin', $script:Pin) + $Extra)
 }
 
 function Reset-Client([string] $Data) {
@@ -202,7 +227,7 @@ function Get-Percentile([double[]] $Values, [double] $P) {
 function Step-1 {
     # Step 1 together with 8(a)/(b): a brand-new terminal.
     Reset-Client 'client-a'
-    Invoke-Remote $ServerAlias "Remove-Item -Force -ErrorAction SilentlyContinue '$ServerRoot/data/terminals.json'" | Out-Null
+    Invoke-Remote $ServerAlias "if (Test-Path '$ServerRoot/data/terminals.json') { Remove-Item -Force '$ServerRoot/data/terminals.json' }" | Out-Null
     Start-Server 'server' 'step1-server.log'
     $script:Pin = Get-Pin
     Start-Client 'client-a' 'client-a' 'step1-client-a.log'
@@ -467,44 +492,64 @@ function Step-Collect {
     foreach ($pair in @(@($ServerAlias, $ServerRoot), @($ClientAlias, $ClientRoot))) {
         $target = Join-Path $Run "logs/$($pair[0])"
         New-Item -ItemType Directory -Force $target | Out-Null
-        scp -q -r "$($pair[0]):$($pair[1])/logs/*" $target
+        if ($pair[0] -eq '.') { Copy-Item -Recurse -Force "$($pair[1])/logs/*" $target }
+        else {
+            scp -q -r "$($pair[0]):$($pair[1])/logs/*" $target
+            if ($LASTEXITCODE -ne 0) { throw "scp from '$($pair[0])' failed with exit code $LASTEXITCODE" }
+        }
         Write-Host "collected $(@(Get-ChildItem $target).Count) log files from $($pair[0])"
     }
 }
 
 function Step-Cleanup {
     Start-Result '第 11 步：清理核对'
+    $problems = [Collections.Generic.List[string]]::new()
     # Terminal identities first, while the client executable is still there.
-    $dirs = @(Invoke-Remote $ClientAlias "Get-ChildItem '$ClientRoot' -Directory -ErrorAction SilentlyContinue | Where-Object Name -like 'client-*' | ForEach-Object Name")
+    $dirs = @(Invoke-Remote $ClientAlias "if (Test-Path '$ClientRoot') { Get-ChildItem '$ClientRoot' -Directory | Where-Object Name -like 'client-*' | ForEach-Object Name }")
     foreach ($d in $dirs) { Reset-Client $d.Trim() }
-    # Temporary key containers the server left behind when it was killed.
-    $names = @(Get-ChildItem (Join-Path $Run 'mirror') -Filter 'server*.log' | ForEach-Object { Select-Log $_.FullName 'keyContainer=\{[0-9A-Fa-f-]+\} machine=True' } |
-        ForEach-Object { [regex]::Match($_, 'keyContainer=(\{[0-9A-Fa-f-]+\})').Groups[1].Value } | Sort-Object -Unique)
-    $list = ($names | ForEach-Object { "'$_'" }) -join ','
+    # Temporary key containers the server left behind: every SERVER-CERT line in
+    # the server machine's own logs, plus this machine's mirrors of the consoles.
+    $remote = @(Invoke-Remote $ServerAlias "if (Test-Path '$ServerRoot/logs') { Get-ChildItem '$ServerRoot/logs' -Filter *.log | Select-String -Pattern 'keyContainer=\{[0-9A-Fa-f-]+\} machine=(True|False)' | ForEach-Object { `$_.Matches[0].Value } }")
+    $mirrored = @(Get-ChildItem (Join-Path $Run 'mirror') -Filter 'server*.log' -ErrorAction SilentlyContinue | ForEach-Object { Select-Log $_.FullName 'keyContainer=\{[0-9A-Fa-f-]+\} machine=(True|False)' })
+    $containers = @(@($remote) + @($mirrored) | ForEach-Object {
+            $m = [regex]::Match($_, 'keyContainer=(\{[0-9A-Fa-f-]+\}) machine=(True|False)')
+            if ($m.Success) { "$($m.Groups[1].Value) $($m.Groups[2].Value)" }
+        } | Sort-Object -Unique)
+    # Each item travels as 'name|machine' so that a single container is not
+    # unrolled into its characters on the remote side.
+    $list = ($containers | ForEach-Object { "'$($_ -replace ' ', '|')'" }) -join ','
     $containerScript = @"
 `$p = [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider
-foreach (`$n in @($list)) {
-    `$before = [System.Security.Cryptography.CngKey]::Exists(`$n, `$p, 'MachineKey')
-    if (`$before) { [System.Security.Cryptography.CngKey]::Open(`$n, `$p, 'MachineKey').Delete() }
-    "container `$n existedBefore=`$before existsAfter=`$([System.Security.Cryptography.CngKey]::Exists(`$n, `$p, 'MachineKey'))"
+foreach (`$item in @($list)) {
+    `$c = `$item -split '\|'
+    `$open = `$c[1] -eq 'True' ? [System.Security.Cryptography.CngKeyOpenOptions]::MachineKey : [System.Security.Cryptography.CngKeyOpenOptions]::None
+    `$before = [System.Security.Cryptography.CngKey]::Exists(`$c[0], `$p, `$open)
+    if (`$before) { [System.Security.Cryptography.CngKey]::Open(`$c[0], `$p, `$open).Delete() }
+    "container `$(`$c[0]) machine=`$(`$c[1]) existedBefore=`$before existsAfter=`$([System.Security.Cryptography.CngKey]::Exists(`$c[0], `$p, `$open))"
 }
 "@
-    $containers = @(Invoke-Remote $ServerAlias $containerScript)
-    Add-Result "- factory01 上服务端留下的临时密钥容器（取自全部服务端日志的 keyContainer=，共 $($names.Count) 个）："
-    Add-Excerpt '按名删除' $containers
+    $deleted = @(if ($containers.Count -gt 0) { Invoke-Remote $ServerAlias $containerScript })
+    Add-Result "- $ServerAlias 上服务端导入证书时建的临时密钥容器（取自 $ServerAlias 上的服务端日志和本机镜像里全部 keyContainer=，共 $($containers.Count) 个）："
+    Add-Excerpt '按名删除并核对' $deleted
+    if ($deleted.Count -ne $containers.Count) { $problems.Add("expected $($containers.Count) container results, got $($deleted.Count)") }
+    foreach ($line in $deleted) { if ($line -notmatch 'existsAfter=False') { $problems.Add("container still exists: $line") } }
     $check = @"
 "probeProcesses=`$(@(Get-Process | Where-Object { `$_.Path -like '*simple-probe*' }).Count)"
 "probeCertsLocalMachine=`$(@(Get-ChildItem Cert:\LocalMachine\My | Where-Object Subject -like '*simple-probe*').Count)"
 "probeCertsCurrentUser=`$(@(Get-ChildItem Cert:\CurrentUser\My | Where-Object Subject -like '*simple-probe*').Count)"
-"probeMachineKeyNames=`$(@(certutil -key -csp 'Microsoft Software Key Storage Provider' 2>&1 | Select-String 'simple-probe').Count)"
+"probeTerminalKeyNames=`$(@(certutil -key -csp 'Microsoft Software Key Storage Provider' 2>&1 | Select-String 'simple-probe').Count)"
 "probeFirewallRules=`$(@(Get-NetFirewallRule -DisplayName 'simple-probe*' -ErrorAction SilentlyContinue).Count)"
 "@
     foreach ($pair in @(@($ServerAlias, $ServerRoot), @($ClientAlias, $ClientRoot))) {
-        Invoke-Remote $pair[0] "Remove-Item -Recurse -Force '$($pair[1])' -ErrorAction SilentlyContinue" | Out-Null
+        Invoke-Remote $pair[0] "if (Test-Path '$($pair[1])') { Remove-Item -Recurse -Force '$($pair[1])' }" | Out-Null
         $lines = @(Invoke-Remote $pair[0] ($check + "`n`"dirExists=`$(Test-Path '$($pair[1])')`""))
-        Add-Excerpt "$($pair[0]) 清理后核对（目录 $($pair[1]) 已删除）" $lines
+        Add-Excerpt "$($pair[0]) 清理后核对（probeTerminalKeyNames 只数名字带 simple-probe 的机器密钥，也就是终端钥匙；服务端临时容器名是 GUID，靠上面按名核对）" $lines
+        $expected = 'probeProcesses=0', 'probeCertsLocalMachine=0', 'probeCertsCurrentUser=0', 'probeTerminalKeyNames=0', 'probeFirewallRules=0', 'dirExists=False'
+        foreach ($e in $expected) { if ($lines -notcontains $e) { $problems.Add("$($pair[0]): expected $e, got: $($lines -join '; ')") } }
     }
+    if ($problems.Count -gt 0) { Add-Result ''; Add-Result "**清理核对不通过：** $($problems -join ' | ')" }
     Save-Result 'cleanup'
+    if ($problems.Count -gt 0) { throw "cleanup check failed: $($problems -join ' | ')" }
 }
 
 try {

@@ -6,10 +6,13 @@ using TerminalStatus = Simple.ProtocolProbe.V1.Status;
 
 namespace Simple.ProtocolProbe.Server;
 
-/// <summary>The <c>simple.probe.v1</c> duplex stream: one per terminal at a time.</summary>
-internal sealed class ProbeV1Service(TerminalHub hub, ProbeServerOptions options) : Probe.ProbeBase
+/// <summary>The <c>simple.probe.v1</c> duplex stream: one per terminal at a time.
+/// Every stream ends as soon as the server starts stopping, so that <c>quit</c>
+/// does not wait for Kestrel's shutdown timeout while terminals are connected.</summary>
+internal sealed class ProbeV1Service(TerminalHub hub, ProbeServerOptions options, IHostApplicationLifetime lifetime) : Probe.ProbeBase
 {
     private static readonly TimeSpan FirstReportWithin = TimeSpan.FromSeconds(15);
+    private static readonly Status ShuttingDown = new(StatusCode.Unavailable, "server is shutting down");
 
     public override async Task Connect(
         IAsyncStreamReader<Report> requestStream,
@@ -27,7 +30,7 @@ internal sealed class ProbeV1Service(TerminalHub hub, ProbeServerOptions options
         }
 
         Report first;
-        using (var firstWait = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken))
+        using (var firstWait = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, lifetime.ApplicationStopping))
         {
             firstWait.CancelAfter(FirstReportWithin);
             try
@@ -38,6 +41,10 @@ internal sealed class ProbeV1Service(TerminalHub hub, ProbeServerOptions options
                     return;
                 }
             }
+            catch (OperationCanceledException) when (lifetime.ApplicationStopping.IsCancellationRequested)
+            {
+                throw new RpcException(ShuttingDown);
+            }
             catch (OperationCanceledException) when (!context.CancellationToken.IsCancellationRequested)
             {
                 throw new RpcException(new Status(StatusCode.DeadlineExceeded, "no first report within 15 s"));
@@ -47,7 +54,7 @@ internal sealed class ProbeV1Service(TerminalHub hub, ProbeServerOptions options
         }
 
         var session = hub.Admit(info, first);
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, lifetime.ApplicationStopping);
         var writing = WriteAsync(session, responseStream, stop.Token);
         var commanding = CommandAsync(session, stop.Token);
         var reading = Task.CompletedTask;
@@ -66,6 +73,11 @@ internal sealed class ProbeV1Service(TerminalHub hub, ProbeServerOptions options
             {
                 await reading;
             }
+        }
+        catch (OperationCanceledException) when (lifetime.ApplicationStopping.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested)
+        {
+            killed = ShuttingDown;
+            reason = "server is shutting down";
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or InvalidOperationException)
         {
@@ -127,7 +139,7 @@ internal sealed class ProbeV1Service(TerminalHub hub, ProbeServerOptions options
 
 /// <summary>The <c>simple.probe.v2</c> stream: only shows that a second major is
 /// served side by side. It admits confirmed terminal keys and keeps no state.</summary>
-internal sealed class ProbeV2Service(TerminalHub hub) : V2.Probe.ProbeBase
+internal sealed class ProbeV2Service(TerminalHub hub, IHostApplicationLifetime lifetime) : V2.Probe.ProbeBase
 {
     public override async Task Connect(
         IAsyncStreamReader<V2.Report> requestStream,
@@ -143,10 +155,18 @@ internal sealed class ProbeV2Service(TerminalHub hub) : V2.Probe.ProbeBase
             throw new RpcException(new Status(StatusCode.PermissionDenied, "only confirmed terminal keys may use v2"));
         }
 
-        await foreach (var report in requestStream.ReadAllAsync(context.CancellationToken))
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, lifetime.ApplicationStopping);
+        try
         {
-            Log.Information("RX v2 conn={Conn} seq={Seq} vehicleNumber={Vehicle}", info.ConnectionId, report.Seq, report.VehicleNumber);
-            await responseStream.WriteAsync(new V2.Downstream { Message = $"v2 got {report.Seq}" }, context.CancellationToken);
+            await foreach (var report in requestStream.ReadAllAsync(stop.Token))
+            {
+                Log.Information("RX v2 conn={Conn} seq={Seq} vehicleNumber={Vehicle}", info.ConnectionId, report.Seq, report.VehicleNumber);
+                await responseStream.WriteAsync(new V2.Downstream { Message = $"v2 got {report.Seq}" }, stop.Token);
+            }
+        }
+        catch (OperationCanceledException) when (lifetime.ApplicationStopping.IsCancellationRequested)
+        {
+            throw new RpcException(new Status(StatusCode.Unavailable, "server is shutting down"));
         }
     }
 }

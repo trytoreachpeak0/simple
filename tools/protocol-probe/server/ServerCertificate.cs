@@ -15,9 +15,12 @@ namespace Simple.ProtocolProbe.Server;
 /// denied"). In-memory keys (EphemeralKeySet) were tried and do not work:
 /// SChannel refuses them ("the platform does not support ephemeral keys").
 /// Either way the PFX is imported into a temporary key container, which is
-/// removed when the certificate is disposed (Program.cs does so when the server
-/// stops through its console). A killed process leaves the container behind;
-/// its name is logged at start so that it can be deleted afterwards.
+/// removed when the certificate is disposed. Program.cs disposes it when the
+/// server stops through its console (<c>quit</c>) and shutdown completes; the
+/// streams end on ApplicationStopping, so that takes about a second even with
+/// terminals connected. A killed process, or one that fails to finish shutting
+/// down, leaves the container behind; its name is logged at start so that it can
+/// be deleted afterwards.
 /// </summary>
 internal static class ServerCertificate
 {
