@@ -110,6 +110,22 @@ public sealed class CommandLineTests
         Assert.False(Directory.Exists(Environment.Home));
     }
 
+    [Theory]
+    [InlineData("up")]
+    [InlineData("down")]
+    [InlineData("status")]
+    [InlineData("events")]
+    [InlineData("logs")]
+    public async Task EachCommandsHelpListsItsExitCodes(string command)
+    {
+        using var stdout = new StringWriter();
+
+        await SimpleCommand.InvokeAsync([command, "--help"], Environment with { Out = stdout }, TestContext.Current.CancellationToken);
+
+        Assert.Contains(SimpleCommand.ExitCodesOf(command), stdout.ToString(), StringComparison.Ordinal);
+        Assert.Subset(SimpleCommand.CommandExitCodes[command].ToHashSet(), new HashSet<int> { ExitCodes.Unexpected, ExitCodes.Usage });
+    }
+
     [Fact]
     public async Task HelpListsEveryExitCode()
     {

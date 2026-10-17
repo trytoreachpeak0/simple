@@ -12,6 +12,21 @@ public static partial class SimpleCommand
     public const string InstanceOption = "--instance";
     public const string JsonOption = "--json";
 
+    /// <summary>
+    /// The exit codes each command can end with, listed in its help. Every
+    /// command can also end with 1 (unexpected error) and 2 (bad arguments, or
+    /// SIMPLE_SQLSERVER refused). Checked by hand against LocalSystem: keep
+    /// this table in step when a command gains a new outcome.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, int[]> CommandExitCodes = new Dictionary<string, int[]>
+    {
+        ["up"] = [0, 1, 2, 3, 4, 6, 7, 9],
+        ["down"] = [0, 1, 2, 6, 7, 8, 9],
+        ["status"] = [0, 1, 2, 5, 6],
+        ["events"] = [0, 1, 2, 5],
+        ["logs"] = [0, 1, 2, 5],
+    };
+
     /// <summary>Builds the command tree. The actions run against <paramref name="environment"/>.</summary>
     public static RootCommand Create(CliEnvironment environment)
     {
@@ -94,7 +109,7 @@ public static partial class SimpleCommand
         var up = new Command(
             "up",
             "Build once, start every component of the local system from the build output, and return when all are ready. "
-            + "Running it again while the instance is up starts nothing. Exit codes 0, 2, 3, 4, 6, 7.")
+            + "Running it again while the instance is up starts nothing. " + ExitCodesOf("up"))
         {
             terminals,
             timeout,
@@ -105,7 +120,7 @@ public static partial class SimpleCommand
         var down = new Command(
             "down",
             "Stop the processes this instance started, by the process ids it recorded, gracefully (Ctrl+Break) so the server records server.stopped. "
-            + "Exit codes 0, 2, 7, 8, 9.")
+            + ExitCodesOf("down"))
         {
             reset,
         };
@@ -114,18 +129,18 @@ public static partial class SimpleCommand
 
         var status = new Command(
             "status",
-            "Show every process of the instance, whether it is running and ready, and the server's own status. Exit codes 0, 5, 6.");
+            "Show every process of the instance, whether it is running and ready, and the server's own status. " + ExitCodesOf("status"));
         status.SetAction((parse, cancellationToken) => RunAsync(parse, environment, (system, instance) =>
             system.StatusAsync(instance, cancellationToken)));
 
-        var events = new Command("events", "Read the server's event record, oldest first. Exit codes 0, 2, 5.")
+        var events = new Command("events", "Read the server's event record, oldest first. " + ExitCodesOf("events"))
         {
             since,
         };
         events.SetAction((parse, cancellationToken) => RunAsync(parse, environment, (system, instance) =>
             system.EventsAsync(instance, parse.GetValue(since), cancellationToken)));
 
-        var logs = new Command("logs", "Print a process's log. Logs stay after down, until the next up. Exit codes 0, 2, 5.")
+        var logs = new Command("logs", "Print a process's log. Logs stay after down, until the next up. " + ExitCodesOf("logs"))
         {
             logName,
             tail,
@@ -200,6 +215,8 @@ public static partial class SimpleCommand
 
         return outcome.Write(json, environment.Out, environment.Error);
     }
+
+    public static string ExitCodesOf(string command) => $"Exit codes {string.Join(", ", CommandExitCodes[command])}.";
 
     private static DateTimeOffset? ParseSince(ArgumentResult result)
     {

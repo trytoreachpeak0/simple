@@ -30,6 +30,10 @@ public sealed class SqlServerTargetTests
     [InlineData(@"Server=.\MSSQLSERVER;Integrated Security=true")]
     [InlineData(@"Server=localhost\mssqlserver;Integrated Security=true")]
     [InlineData(@"Server=.\SQLEXPRESS;Failover Partner=factory01;Integrated Security=true")]
+    // A SQL login would be written to the state files in clear text.
+    [InlineData(@"Server=.\SQLEXPRESS;User ID=sa;Password=not-a-real-one")]
+    [InlineData(@"Server=(localdb)\MSSQLLocalDB;UID=simple;PWD=not-a-real-one")]
+    [InlineData(@"Server=.\SQLEXPRESS;Integrated Security=true;Password=not-a-real-one")]
     [InlineData(@"Server=(localdb)\MSSQLLocalDB;Database=Simple_dev;Integrated Security=true")]
     [InlineData("not a connection string")]
     public void EverythingElseIsRefused(string connectionString)

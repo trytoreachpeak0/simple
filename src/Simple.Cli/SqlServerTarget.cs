@@ -53,6 +53,13 @@ public static partial class SqlServerTarget
             return $"{Variable} names a database. Leave it out: the database is Simple_<instance>.";
         }
 
+        // The connection string is kept in the instance's state files, so it
+        // must not carry a password: locally only Windows authentication.
+        if (!string.IsNullOrEmpty(builder.UserID) || !string.IsNullOrEmpty(builder.Password))
+        {
+            return $"{Variable} carries a SQL login (User ID or Password). Leave them out and use Integrated Security=true: the command line keeps the connection string in its state files.";
+        }
+
         if (!string.IsNullOrEmpty(builder.FailoverPartner))
         {
             return $"{Variable} names a failover partner ('{builder.FailoverPartner}'). Leave it out: the command line uses this machine's server only.";

@@ -8,7 +8,15 @@ using Simple.Cli.Processes;
 namespace Simple.Cli;
 
 /// <summary>Brings one instance of the local system up and down and reports on it.</summary>
-public sealed partial class LocalSystem(string repository, InstanceStore store, TextWriter progress)
+/// <param name="verifySqlServer">
+/// Asks a SQL Server which instance it is (<see cref="SqlServerTarget.VerifyAsync"/>
+/// unless a test replaces it); a non-null answer is the reason it is refused.
+/// </param>
+public sealed partial class LocalSystem(
+    string repository,
+    InstanceStore store,
+    TextWriter progress,
+    Func<string, CancellationToken, Task<string?>>? verifySqlServer = null)
 {
     public static readonly TimeSpan LockWait = TimeSpan.FromMinutes(5);
     public static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(30);
@@ -338,12 +346,12 @@ public sealed partial class LocalSystem(string repository, InstanceStore store, 
     }
 
     /// <summary>Asks the SQL Server which instance it is (<see cref="SqlServerTarget.VerifyAsync"/>); null when it may be used.</summary>
-    private static async Task<Outcome?> VerifySqlServerAsync(string sqlServer, CancellationToken cancellationToken)
+    private async Task<Outcome?> VerifySqlServerAsync(string sqlServer, CancellationToken cancellationToken)
     {
         string? refusal;
         try
         {
-            refusal = await SqlServerTarget.VerifyAsync(sqlServer, cancellationToken);
+            refusal = await (verifySqlServer ?? SqlServerTarget.VerifyAsync)(sqlServer, cancellationToken);
         }
         catch (Microsoft.Data.SqlClient.SqlException e)
         {
