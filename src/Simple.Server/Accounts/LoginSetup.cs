@@ -27,6 +27,9 @@ public static class LoginSetup
     /// <summary>The rate limit on password checks: logging in and changing one's own password.</summary>
     public const string RateLimitPolicy = "simple:password-attempts";
 
+    /// <summary>The largest body the password endpoints take: a name and a password need no more (#77 review).</summary>
+    public const long PasswordRequestSizeLimit = 4096;
+
     /// <summary>OWASP's current recommendation for PBKDF2-HMAC-SHA512 (ADR 0045); the framework's default is 100,000.</summary>
     public const int PasswordIterations = 220_000;
 
@@ -148,12 +151,16 @@ public static class LoginSetup
         return services;
     }
 
-    /// <summary>After routing: the request header, the rate limit, then who is logged in and what it may do.</summary>
+    /// <summary>
+    /// After routing: the request header, the rate limit, a login request's
+    /// old login cookie taken off, then who is logged in and what it may do.
+    /// </summary>
     public static void UseLogin(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
         app.Use(RequestHeader.Require);
         app.UseRateLimiter();
+        app.Use(LoginReplacement.Strip);
         app.UseAuthentication();
         app.UseAuthorization();
     }

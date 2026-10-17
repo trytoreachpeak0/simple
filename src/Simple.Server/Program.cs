@@ -78,7 +78,9 @@ builder.Services.AddHostedService<MesGatewayPoller>();
 builder.Services.AddRiotConnection();
 builder.Services.AddSingleton<OnboardEndpoint>();
 builder.Services.AddSingleton<OnboardTerminalRegistry>();
-builder.Services.AddGrpc();
+// No catch-all "unimplemented" endpoints: they would answer without login
+// and are not the terminal protocol (Access.OnboardTerminal).
+builder.Services.AddGrpc(options => options.IgnoreUnknownServices = true);
 // A server command listens nowhere: binding would open the terminal
 // certificate's key, in the key store of whoever runs the command.
 if (command is null)
@@ -99,7 +101,7 @@ try
     app = builder.Build();
     if (command is not null)
     {
-        return await AdminPasswordCommand.RunAsync(app.Services, Console.In, Console.Out, CancellationToken.None);
+        return await AdminPasswordCommand.RunAsync(app.Services, AdminPasswordCommand.Input(), Console.Out, CancellationToken.None);
     }
 
     app.UseRouting();

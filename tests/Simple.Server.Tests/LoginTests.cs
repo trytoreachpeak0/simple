@@ -134,7 +134,7 @@ public sealed class LoginTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task TheServerAllowsNoCrossOriginCallsAndSendsNoHsts()
+    public async Task TheServerAllowsNoCrossOriginCalls()
     {
         using var anonymous = server.CreateClient();
         using var preflight = new HttpRequestMessage(HttpMethod.Options, "/api/v1/login");
@@ -143,9 +143,8 @@ public sealed class LoginTests : IAsyncLifetime
         preflight.Headers.Add("Access-Control-Request-Headers", RequestHeader.Name);
 
         var response = await anonymous.SendAsync(preflight, Cancel);
-        var status = await admin.GetAsync(new Uri("/api/v1/status", UriKind.Relative), Cancel);
 
+        // No HSTS is tested on the console's HTTPS address (ConsoleListenerTests): plain HTTP never sends it.
         Assert.False(response.Headers.Contains("Access-Control-Allow-Origin"));
-        Assert.False(status.Headers.Contains("Strict-Transport-Security"));
     }
 }

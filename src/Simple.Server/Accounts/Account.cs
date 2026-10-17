@@ -11,6 +11,10 @@ public sealed class Account
 {
     public const int NameMaxLength = 100;
 
+    /// <summary>Whether a name can be an account's: 1 to 100 characters, no control characters, no surrounding spaces.</summary>
+    public static bool IsValidName(string? name) =>
+        !string.IsNullOrEmpty(name) && name.Length <= NameMaxLength && !name.Any(char.IsControl) && name.Trim() == name;
+
     public int Id { get; private set; }
 
     public required string Name { get; init; }
@@ -33,6 +37,14 @@ public sealed class Account
 
     /// <summary>The on-duty pause (ADR 0033): only the watch account has it; while on, its every request answers "paused".</summary>
     public bool Paused { get; set; }
+
+    /// <summary>
+    /// Raised with every new password. A login carries the version its
+    /// password was checked against, and one older than the account's is
+    /// refused: also a login whose password was checked just before the
+    /// password changed and that was written just after.
+    /// </summary>
+    public int CredentialVersion { get; set; }
 }
 
 /// <summary>The three console roles of ADR 0014, and the watch account of ADR 0033, which is no role.</summary>
@@ -54,13 +66,19 @@ public enum AccountRole
 
 /// <summary>
 /// One login (ADR 0045): a row per browser or program that logged in. The
-/// cookie carries only <see cref="Key"/>, encrypted; logging out, a new
+/// cookie carries only the login's random key, encrypted; logging out, a new
 /// password or a deleted account removes the row, and with it the login.
 /// </summary>
 public sealed class LoginRecord
 {
-    /// <summary>Random, and what the login cookie carries (encrypted).</summary>
-    public required string Key { get; init; }
+    /// <summary>
+    /// The SHA-256 of the login's key, in lowercase hex. The key itself is
+    /// only in the cookie: a copy of the database cannot be turned into a login.
+    /// </summary>
+    public required string KeyHash { get; init; }
+
+    /// <summary>The account's <see cref="Account.CredentialVersion"/> when its password was checked for this login.</summary>
+    public int CredentialVersion { get; init; }
 
     public int AccountId { get; init; }
 

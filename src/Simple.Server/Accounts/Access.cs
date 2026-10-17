@@ -67,6 +67,20 @@ public static class AccessExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.WithMetadata(new AccessMetadata(access));
+        if (access == Access.OnboardTerminal)
+        {
+            // It opens the endpoint without login: only the terminal protocol,
+            // which its own listener and TLS protect, may have it.
+            builder.Add(endpoint =>
+            {
+                if (!endpoint.Metadata.Any(m => m is Grpc.AspNetCore.Server.GrpcMethodMetadata))
+                {
+                    throw new InvalidOperationException(
+                        $"{endpoint.DisplayName} is not the onboard terminal protocol and cannot have {nameof(Access)}.{nameof(Access.OnboardTerminal)}.");
+                }
+            });
+        }
+
         return access is Access.Anonymous or Access.OnboardTerminal
             ? builder.AllowAnonymous()
             : builder.RequireAuthorization(PolicyName(access));

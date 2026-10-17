@@ -33,6 +33,35 @@ public static class AdminPasswordCommand
         return 0;
     }
 
+    /// <summary>
+    /// Standard input, or, when a person types at a console, what they type
+    /// without showing it on the screen.
+    /// </summary>
+    public static TextReader Input()
+    {
+        if (Console.IsInputRedirected)
+        {
+            return Console.In;
+        }
+
+        Console.Error.Write("The administrator's new password (not shown): ");
+        var typed = new System.Text.StringBuilder();
+        while (Console.ReadKey(intercept: true) is var key && key.Key != ConsoleKey.Enter)
+        {
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                typed.Length = Math.Max(0, typed.Length - 1);
+            }
+            else if (!char.IsControl(key.KeyChar))
+            {
+                typed.Append(key.KeyChar);
+            }
+        }
+
+        Console.Error.WriteLine();
+        return new StringReader(typed.ToString());
+    }
+
     public static async Task SetAsync(IServiceProvider services, string password, CancellationToken cancellationToken)
     {
         await using var scope = services.CreateAsyncScope();

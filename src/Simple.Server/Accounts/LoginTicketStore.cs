@@ -16,6 +16,7 @@ public sealed class LoginTicketStore(LoginRegistry registry) : ITicketStore
     public const string AccountIdClaim = "simple:account-id";
     public const string EntryClaim = "simple:entry";
     public const string ProjectClaim = "simple:project";
+    public const string CredentialVersionClaim = "simple:credential-version";
 
     public async Task<string> StoreAsync(AuthenticationTicket ticket, HttpContext httpContext, CancellationToken cancellationToken)
     {
@@ -24,11 +25,13 @@ public sealed class LoginTicketStore(LoginRegistry registry) : ITicketStore
         var principal = ticket.Principal;
         var accountId = int.Parse(principal.FindFirstValue(AccountIdClaim)!, System.Globalization.CultureInfo.InvariantCulture);
         var entry = principal.FindFirstValue(EntryClaim)!;
+        var credentialVersion = int.Parse(principal.FindFirstValue(CredentialVersionClaim)!, System.Globalization.CultureInfo.InvariantCulture);
         return await registry.AddAsync(
             accountId,
             entry,
             httpContext.Connection.RemoteIpAddress?.ToString(),
             ticket.Properties.IssuedUtc ?? throw new InvalidOperationException("A login ticket has no issue time."),
+            credentialVersion,
             cancellationToken);
     }
 
@@ -58,12 +61,16 @@ public sealed class LoginTicketStore(LoginRegistry registry) : ITicketStore
 
     public Task RemoveAsync(string key) => throw new NotSupportedException();
 
-    /// <summary>The principal the login endpoint signs in: which account, through which entry. The store adds the rest.</summary>
-    public static ClaimsPrincipal PrincipalForLogin(int accountId, string entry) =>
+    /// <summary>
+    /// The principal the login endpoint signs in: which account, through which
+    /// entry, checked against which password. The store adds the rest.
+    /// </summary>
+    public static ClaimsPrincipal PrincipalForLogin(int accountId, string entry, int credentialVersion) =>
         new(new ClaimsIdentity(
             [
                 new Claim(AccountIdClaim, accountId.ToString(System.Globalization.CultureInfo.InvariantCulture)),
                 new Claim(EntryClaim, entry),
+                new Claim(CredentialVersionClaim, credentialVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)),
             ],
             CookieAuthenticationDefaults.AuthenticationScheme));
 

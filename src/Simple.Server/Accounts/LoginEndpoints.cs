@@ -23,6 +23,9 @@ public static class LoginEndpoints
         app.MapPost("/api/v1/login", LogInAsync)
             .RequireAccess(Access.Anonymous)
             .RequireRateLimiting(LoginSetup.RateLimitPolicy)
+            .ReplacesLogin()
+            // Anyone may send it: a name and a password need no more.
+            .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(LoginSetup.PasswordRequestSizeLimit))
             .WithName("LogIn")
             .WithSummary("Logs in with an account name and password through the console or MCP entry; sets the login cookie.");
         app.MapPost("/api/v1/logout", LogOutAsync)
@@ -36,6 +39,7 @@ public static class LoginEndpoints
         app.MapPut("/api/v1/session/password", ChangeOwnPasswordAsync)
             .RequireAccess(Access.ChangeOwnPassword)
             .RequireRateLimiting(LoginSetup.RateLimitPolicy)
+            .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(LoginSetup.PasswordRequestSizeLimit))
             .WithName("ChangeOwnPassword")
             .WithSummary("Changes this account's password, given the old one. Every login of the account ends, this one too.");
     }
@@ -59,13 +63,22 @@ public static class LoginEndpoints
             });
         }
 
-        var account = request.Name is { Length: > 0 } name
-            ? await db.Accounts.SingleOrDefaultAsync(a => a.Name == name, cancellationToken)
+        // A name no account can have is not looked up; it is answered like any unknown one.
+        var account = Account.IsValidName(request.Name)
+            ? await db.Accounts.SingleOrDefaultAsync(a => a.Name == request.Name, cancellationToken)
             : null;
         var verdict = hasher.VerifyHashedPassword(account!, account?.PasswordHash ?? UnknownAccountHash, request.Password ?? string.Empty);
         if (account is null || verdict == PasswordVerificationResult.Failed)
         {
-            LoginLog.Failed(logger, request.Name, request.Entry, remote);
+            if (account is null)
+            {
+                LoginLog.FailedUnknown(logger, request.Entry!, remote);
+            }
+            else
+            {
+                LoginLog.Failed(logger, account.Name, request.Entry!, remote);
+            }
+
             return TypedResults.Problem(
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "The account name or the password is wrong.");
@@ -77,9 +90,10 @@ public static class LoginEndpoints
             return (ProblemHttpResult)AccessResultHandler.Paused();
         }
 
-        // An account the server command created while the server runs reaches
-        // the registry with the next flush; the login need not wait for it.
-        if (registry.Account(account.Id) is null)
+        // An account the server command created or gave a new password while
+        // the server runs reaches the registry with the next flush; the login
+        // need not wait for it.
+        if (registry.Account(account.Id)?.CredentialVersion != account.CredentialVersion)
         {
             registry.Put(account, endLogins: false);
         }
@@ -92,9 +106,14 @@ public static class LoginEndpoints
 
         await http.SignInAsync(
             CookieAuthenticationDefaults.AuthenticationScheme,
-            LoginTicketStore.PrincipalForLogin(account.Id, request.Entry!),
+            LoginTicketStore.PrincipalForLogin(account.Id, request.Entry!, account.CredentialVersion),
             new AuthenticationProperties { IsPersistent = true });
         LoginLog.LoggedIn(logger, account.Name, request.Entry!, remote);
+        // The computer's previous login, if it was still logged in, is replaced.
+        if (LoginReplacement.ReplacedLoginKey(http) is { } previous)
+        {
+            await registry.EndAsync(previous, cancellationToken);
+        }
         return TypedResults.Ok(new SessionView(account.Name, account.Role, account.Project, request.Entry!));
     }
 

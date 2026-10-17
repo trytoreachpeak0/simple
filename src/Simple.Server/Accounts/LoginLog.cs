@@ -11,8 +11,17 @@ public static partial class LoginLog
     [LoggerMessage(Level = LogLevel.Information, Message = "{Name} logged in through {Entry} from {RemoteAddress}")]
     public static partial void LoggedIn(ILogger logger, string name, string entry, string? remoteAddress);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Failed login as {Name} through {Entry} from {RemoteAddress}: wrong account name or password")]
-    public static partial void Failed(ILogger logger, string? name, string? entry, string? remoteAddress);
+    /// <summary>A wrong password for an account that exists. Its name was checked when it was made: no line breaks, at most 100 characters.</summary>
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Failed login as {Name} through {Entry} from {RemoteAddress}: wrong password")]
+    public static partial void Failed(ILogger logger, string name, string entry, string? remoteAddress);
+
+    /// <summary>
+    /// A name no account has. It is not written: anyone can send it, with
+    /// line breaks or megabytes of text, and people type passwords into the
+    /// name box.
+    /// </summary>
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Failed login as an unknown account through {Entry} from {RemoteAddress}")]
+    public static partial void FailedUnknown(ILogger logger, string entry, string? remoteAddress);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "The watch account {Name} tried to log in through {Entry} from {RemoteAddress} while on-duty watching is paused")]
     public static partial void RefusedWhilePaused(ILogger logger, string name, string entry, string? remoteAddress);

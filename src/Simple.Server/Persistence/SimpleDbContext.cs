@@ -63,8 +63,9 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
         modelBuilder.Entity<LoginRecord>(e =>
         {
             e.ToTable("Logins");
-            e.HasKey(x => x.Key);
-            e.Property(x => x.Key).HasMaxLength(64).IsUnicode(false);
+            e.HasKey(x => x.KeyHash);
+            // Hex compares exactly; a case-insensitive collation would not hurt it, but says the wrong thing.
+            e.Property(x => x.KeyHash).HasMaxLength(64).IsUnicode(false).UseCollation("Latin1_General_BIN2");
             e.Property(x => x.Entry).HasMaxLength(20);
             e.Property(x => x.RemoteAddress).HasMaxLength(64);
             e.HasOne<Account>().WithMany().HasForeignKey(x => x.AccountId).OnDelete(DeleteBehavior.Cascade);

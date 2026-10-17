@@ -136,6 +136,7 @@ public sealed class AccountChanges(SimpleDbContext db, EventStore events, IPassw
         else
         {
             admin.PasswordHash = hasher.HashPassword(admin, password);
+            admin.CredentialVersion++;
             await db.SaveChangesAsync(cancellationToken);
             await db.Logins.Where(l => l.AccountId == admin.Id).ExecuteDeleteAsync(cancellationToken);
             await events.AppendAsync(EventTypes.AccountPasswordSet, actor, new { name = admin.Name, by = "server command" }, cancellationToken);
@@ -148,6 +149,7 @@ public sealed class AccountChanges(SimpleDbContext db, EventStore events, IPassw
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         account.PasswordHash = hasher.HashPassword(account, password);
+        account.CredentialVersion++;
         await db.SaveChangesAsync(cancellationToken);
         await db.Logins.Where(l => l.AccountId == account.Id).ExecuteDeleteAsync(cancellationToken);
         await events.AppendAsync(EventTypes.AccountPasswordSet, actor, new { name = account.Name, by }, cancellationToken);

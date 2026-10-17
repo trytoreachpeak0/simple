@@ -49,6 +49,9 @@ namespace Simple.Server.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<int>("CredentialVersion")
+                        .HasColumnType("int");
+
                     b.Property<DateTimeOffset?>("LastSeenAt")
                         .HasColumnType("datetimeoffset");
 
@@ -84,12 +87,16 @@ namespace Simple.Server.Persistence.Migrations
 
             modelBuilder.Entity("Simple.Server.Accounts.LoginRecord", b =>
                 {
-                    b.Property<string>("Key")
+                    b.Property<string>("KeyHash")
                         .HasMaxLength(64)
                         .IsUnicode(false)
-                        .HasColumnType("varchar(64)");
+                        .HasColumnType("varchar(64)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<int>("AccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("CredentialVersion")
                         .HasColumnType("int");
 
                     b.Property<string>("Entry")
@@ -110,7 +117,7 @@ namespace Simple.Server.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
 
-                    b.HasKey("Key");
+                    b.HasKey("KeyHash");
 
                     b.HasIndex("AccountId");
 

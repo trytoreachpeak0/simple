@@ -53,7 +53,7 @@ public static class AccountEndpoints
     {
         var errors = new Dictionary<string, string[]>();
         var name = request.Name;
-        if (string.IsNullOrEmpty(name) || name.Length > Account.NameMaxLength || name.Any(char.IsControl) || name.Trim() != name)
+        if (!Account.IsValidName(name))
         {
             errors["name"] = [$"name has 1 to {Account.NameMaxLength} characters, without control characters or surrounding spaces."];
         }
@@ -61,6 +61,9 @@ public static class AccountEndpoints
         switch (request.Role)
         {
             case null:
+                errors["role"] = ["role is team-leader, engineer or watch."];
+                break;
+            case { } role when !Enum.IsDefined(role):
                 errors["role"] = ["role is team-leader, engineer or watch."];
                 break;
             case AccountRole.Admin:

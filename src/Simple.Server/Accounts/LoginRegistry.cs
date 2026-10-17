@@ -15,7 +15,8 @@ namespace Simple.Server.Accounts;
 /// seen, when a cookie was renewed) is written by <see cref="FlushAsync"/>,
 /// which also drops logins the database no longer has (the administrator's
 /// password set by the server command from another process) and logins not
-/// seen for <see cref="Lifetime"/>.
+/// seen for <see cref="Lifetime"/>. Logins are kept by the SHA-256 of their
+/// key, here and in the database; only the cookie holds the key itself.
 /// </summary>
 /// <remarks>
 /// Hand-written because ASP.NET Core has only the interface for a
@@ -31,10 +32,11 @@ public sealed partial class LoginRegistry(IServiceScopeFactory scopes, TimeProvi
     /// <summary>A cookie this old is renewed for another <see cref="Lifetime"/> on its next use: once a day.</summary>
     public static readonly TimeSpan RenewAfter = TimeSpan.FromDays(1);
 
+    /// <summary>By key hash.</summary>
     private readonly ConcurrentDictionary<string, LoginState> logins = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<int, AccountState> accounts = new();
 
-    /// <summary>Logins ended here whose row could not be deleted yet; <see cref="FlushAsync"/> tries again.</summary>
+    /// <summary>Key hashes of logins ended here whose row could not be deleted yet; <see cref="FlushAsync"/> tries again.</summary>
     private readonly ConcurrentDictionary<string, byte> pendingDeletes = new(StringComparer.Ordinal);
 
     /// <summary>
@@ -56,29 +58,40 @@ public sealed partial class LoginRegistry(IServiceScopeFactory scopes, TimeProvi
 
         foreach (var login in await db.Logins.AsNoTracking().ToListAsync(cancellationToken))
         {
-            logins[login.Key] = new LoginState(login, 0);
+            logins[login.KeyHash] = new LoginState(login, 0);
         }
     }
 
     /// <summary>The account as it is now, or null when it no longer exists.</summary>
     public AccountState? Account(int id) => accounts.GetValueOrDefault(id);
 
+    /// <summary>Every account as it is now.</summary>
+    public IReadOnlyList<AccountState> Accounts() => [.. accounts.Values];
+
+    /// <summary>The SHA-256 of a login key, in lowercase hex: how the login is kept.</summary>
+    public static string HashOf(string key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
+    }
+
     /// <summary>
-    /// The login behind a cookie, now marked as seen together with its
-    /// account; null when it has ended or was not seen for <see cref="Lifetime"/>.
+    /// The login behind a cookie's key, now marked as seen together with its
+    /// account; null when it has ended, was not seen for <see cref="Lifetime"/>,
+    /// or its password was checked before the account's latest new password.
     /// </summary>
     public (LoginState Login, AccountState Account)? Check(string key)
     {
-        ArgumentNullException.ThrowIfNull(key);
-        if (!logins.TryGetValue(key, out var login) || !accounts.TryGetValue(login.AccountId, out var account))
+        var hash = HashOf(key);
+        if (!logins.TryGetValue(hash, out var login) || !accounts.TryGetValue(login.AccountId, out var account))
         {
             return null;
         }
 
         var now = time.GetUtcNow();
-        if (now - login.LastSeenAt > Lifetime)
+        if (now - login.LastSeenAt > Lifetime || login.CredentialVersion != account.CredentialVersion)
         {
-            End(key);
+            End(hash);
             return null;
         }
 
@@ -87,13 +100,17 @@ public sealed partial class LoginRegistry(IServiceScopeFactory scopes, TimeProvi
         return (login, account);
     }
 
-    /// <summary>Records a new login in the database, then here; returns its key.</summary>
-    public async Task<string> AddAsync(int accountId, string entry, string? remoteAddress, DateTimeOffset issuedAt, CancellationToken cancellationToken)
+    /// <summary>Records a new login in the database, then here; returns its key, for the cookie only.</summary>
+    /// <param name="credentialVersion">The account's credential version the password was checked against.</param>
+    public async Task<string> AddAsync(
+        int accountId, string entry, string? remoteAddress, DateTimeOffset issuedAt, int credentialVersion, CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
+        var key = Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(32));
         var record = new LoginRecord
         {
-            Key = Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(32)),
+            KeyHash = HashOf(key),
+            CredentialVersion = credentialVersion,
             AccountId = accountId,
             Entry = entry,
             RemoteAddress = remoteAddress,
@@ -108,29 +125,41 @@ public sealed partial class LoginRegistry(IServiceScopeFactory scopes, TimeProvi
             await db.SaveChangesAsync(cancellationToken);
         }
 
-        logins[record.Key] = new LoginState(record, Interlocked.Increment(ref version));
+        logins[record.KeyHash] = new LoginState(record, Interlocked.Increment(ref version));
         if (accounts.TryGetValue(accountId, out var account))
         {
             account.Seen(now);
         }
 
-        return record.Key;
+        return key;
     }
 
     /// <summary>The cookie of a login was renewed (once a day); written with the next flush.</summary>
     public void Renewed(string key, DateTimeOffset issuedAt)
     {
-        if (logins.TryGetValue(key, out var login))
+        if (logins.TryGetValue(HashOf(key), out var login))
         {
             login.Renewed(issuedAt);
         }
     }
 
-    /// <summary>Ends one login (logging out): at once here, then in the database.</summary>
+    /// <summary>
+    /// Ends one login (logging out, or logging in again on the same computer):
+    /// at once here, then in the database. A database out of reach does not
+    /// fail it: the next flush deletes the row. Until then, a restart of the
+    /// server would read the row back and the login would live again.
+    /// </summary>
     public async Task EndAsync(string key, CancellationToken cancellationToken)
     {
-        End(key);
-        await DeletePendingAsync(cancellationToken);
+        End(HashOf(key));
+        try
+        {
+            await DeletePendingAsync(cancellationToken);
+        }
+        catch (Exception e) when (e is Microsoft.Data.SqlClient.SqlException or DbUpdateException or InvalidOperationException or TimeoutException)
+        {
+            LogFlushFailed(logger, e);
+        }
     }
 
     /// <summary>
@@ -188,7 +217,7 @@ public sealed partial class LoginRegistry(IServiceScopeFactory scopes, TimeProvi
             foreach (var login in logins.Values.Where(l => l.Dirty).ToList())
             {
                 var (seen, issued) = login.TakeChanges();
-                await db.Logins.Where(l => l.Key == login.Key)
+                await db.Logins.Where(l => l.KeyHash == login.KeyHash)
                     .ExecuteUpdateAsync(set => set.SetProperty(l => l.LastSeenAt, seen).SetProperty(l => l.IssuedAt, issued), cancellationToken);
             }
 
@@ -201,7 +230,7 @@ public sealed partial class LoginRegistry(IServiceScopeFactory scopes, TimeProvi
 
             // Changes made by another process: the server command.
             var before = Interlocked.Read(ref version);
-            var keys = (await db.Logins.Select(l => l.Key).ToListAsync(cancellationToken)).ToHashSet(StringComparer.Ordinal);
+            var keys = (await db.Logins.Select(l => l.KeyHash).ToListAsync(cancellationToken)).ToHashSet(StringComparer.Ordinal);
             var storedAccounts = await db.Accounts.AsNoTracking().ToListAsync(cancellationToken);
             foreach (var key in logins.Where(l => l.Value.Version <= before && !keys.Contains(l.Key)).Select(l => l.Key).ToList())
             {
@@ -216,7 +245,8 @@ public sealed partial class LoginRegistry(IServiceScopeFactory scopes, TimeProvi
 
             foreach (var stored in storedAccounts)
             {
-                if (!accounts.TryGetValue(stored.Id, out var known) || (known.Version <= before && known.Paused != stored.Paused))
+                if (!accounts.TryGetValue(stored.Id, out var known)
+                    || (known.Version <= before && (known.Paused != stored.Paused || known.CredentialVersion != stored.CredentialVersion)))
                 {
                     Put(stored, endLogins: false);
                 }
@@ -228,11 +258,11 @@ public sealed partial class LoginRegistry(IServiceScopeFactory scopes, TimeProvi
         }
     }
 
-    private void End(string key)
+    private void End(string hash)
     {
-        if (logins.TryRemove(key, out _))
+        if (logins.TryRemove(hash, out _))
         {
-            pendingDeletes[key] = 0;
+            pendingDeletes[hash] = 0;
         }
     }
 
@@ -254,7 +284,7 @@ public sealed partial class LoginRegistry(IServiceScopeFactory scopes, TimeProvi
         var keys = pendingDeletes.Keys.ToList();
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<SimpleDbContext>();
-        await db.Logins.Where(l => keys.Contains(l.Key)).ExecuteDeleteAsync(cancellationToken);
+        await db.Logins.Where(l => keys.Contains(l.KeyHash)).ExecuteDeleteAsync(cancellationToken);
         foreach (var key in keys)
         {
             pendingDeletes.TryRemove(key, out _);
@@ -273,7 +303,9 @@ public sealed class LoginState(LoginRecord record, long version)
     private DateTimeOffset issuedAt = record.IssuedAt;
     private bool dirty;
 
-    public string Key { get; } = record.Key;
+    public string KeyHash { get; } = record.KeyHash;
+
+    public int CredentialVersion { get; } = record.CredentialVersion;
 
     internal long Version { get; } = version;
 
@@ -362,6 +394,7 @@ public sealed class AccountState
         Role = account.Role;
         Project = account.Project;
         Paused = account.Paused;
+        CredentialVersion = account.CredentialVersion;
         lastSeenAt = account.LastSeenAt;
     }
 
@@ -376,6 +409,9 @@ public sealed class AccountState
     public string? Project { get; }
 
     public bool Paused { get; }
+
+    /// <summary>Raised with every new password (<see cref="Account.CredentialVersion"/>).</summary>
+    public int CredentialVersion { get; }
 
     public DateTimeOffset? LastSeenAt
     {

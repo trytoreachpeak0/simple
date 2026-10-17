@@ -36,7 +36,8 @@ namespace Simple.Server.Persistence.Migrations
                     Project = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true),
                     PasswordHash = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: false),
                     LastSeenAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: true),
-                    Paused = table.Column<bool>(type: "bit", nullable: false)
+                    Paused = table.Column<bool>(type: "bit", nullable: false),
+                    CredentialVersion = table.Column<int>(type: "int", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -61,7 +62,8 @@ namespace Simple.Server.Persistence.Migrations
                 name: "Logins",
                 columns: table => new
                 {
-                    Key = table.Column<string>(type: "varchar(64)", unicode: false, maxLength: 64, nullable: false),
+                    KeyHash = table.Column<string>(type: "varchar(64)", unicode: false, maxLength: 64, nullable: false, collation: "Latin1_General_BIN2"),
+                    CredentialVersion = table.Column<int>(type: "int", nullable: false),
                     AccountId = table.Column<int>(type: "int", nullable: false),
                     Entry = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
                     RemoteAddress = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: true),
@@ -71,7 +73,7 @@ namespace Simple.Server.Persistence.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_Logins", x => x.Key);
+                    table.PrimaryKey("PK_Logins", x => x.KeyHash);
                     table.ForeignKey(
                         name: "FK_Logins_Accounts_AccountId",
                         column: x => x.AccountId,
