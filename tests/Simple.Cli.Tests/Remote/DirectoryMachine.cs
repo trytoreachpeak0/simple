@@ -32,8 +32,7 @@ public sealed class DirectoryMachine(string root) : IRemoteMachine
     /// <summary>How often the client side writes a heartbeat line.</summary>
     public TimeSpan Heartbeat { get; init; } = TimeSpan.FromMilliseconds(500);
 
-    /// <summary>After this many heartbeats the client goes silent but stays connected, as when the network is lost.</summary>
-    public int? SilenceAfter { get; init; }
+    private volatile bool silent;
 
     /// <summary>The names of the files sent, in order.</summary>
     public IReadOnlyList<string> Sent
@@ -70,7 +69,7 @@ public sealed class DirectoryMachine(string root) : IRemoteMachine
             SshMachine.RunOptions with
             {
                 Heartbeat = Heartbeat,
-                Beats = SilenceAfter,
+                Silent = () => silent,
                 KillOnCancel = false,
                 Started = process =>
                 {
@@ -108,6 +107,9 @@ public sealed class DirectoryMachine(string root) : IRemoteMachine
 
         return Task.CompletedTask;
     }
+
+    /// <summary>From now on the client writes no heartbeats but stays connected, as when the network is lost.</summary>
+    public void GoSilent() => silent = true;
 
     /// <summary>Kills what sessions of abandoned runs left running, so a test that fails leaves nothing behind.</summary>
     public void KillAbandoned()

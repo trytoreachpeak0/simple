@@ -47,14 +47,15 @@ public sealed class RemoteDisconnectTests
     public async Task ASilentConnectionEndsTheRunAfterTheAliveTimeout()
     {
         await using var sandbox = await GitSandbox.CreateAsync(Cancel);
-        var machine = new DirectoryMachine(sandbox.RemoteRoot) { SilenceAfter = 2 };
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
         int[] pids = [];
         try
         {
-            var watch = Stopwatch.StartNew();
             var running = Run(sandbox, machine, alive: TimeSpan.FromSeconds(3)).RunAsync("exec", ["pwsh", "-NoProfile", "-Command", SleepWithAChild], json: false, Cancel);
             pids = await PidsAsync(sandbox, running);
 
+            machine.GoSilent();
+            var watch = Stopwatch.StartNew();
             var outcome = await running;
 
             Assert.True(watch.Elapsed < TimeSpan.FromSeconds(30), $"The run went on for {watch.Elapsed.TotalSeconds} s without heartbeats.");

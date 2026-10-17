@@ -89,7 +89,8 @@ function Stop-Abandoned([Diagnostics.Process] $process) {
         try { $process.Kill($true) } catch { }
     }
 
-    [Console]::Error.WriteLine('simple remote: the connection to the command line is gone; the run is ended.')
+    # Nothing is written on the way out: with this end gone, a write into
+    # the session's output may block, and no one would read it.
     [Environment]::Exit(3)
 }
 
@@ -175,6 +176,8 @@ function Receive-Snapshot {
                 Fetch-Origin
                 $null | & git -C $repo bundle verify --quiet $bundle 2>$null
                 if ($LASTEXITCODE -ne 0) {
+                    # Finish exits outright and skips the finally below.
+                    Remove-Item -LiteralPath $bundle -Force -ErrorAction Ignore
                     Finish @{ status = 'needFullBundle' }
                 }
             }

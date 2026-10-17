@@ -42,13 +42,21 @@ public static class RemoteCommand
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repository));
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(root, project)));
         if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-            || !(Directory.Exists(full) || (File.Exists(full) && full.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))))
+            || !((Directory.Exists(full) && Directory.EnumerateFiles(full, "*.csproj").Any())
+                || (File.Exists(full) && full.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))))
         {
             return null;
         }
 
         return Path.GetRelativePath(root, full).Replace('\\', '/');
     }
+
+    /// <summary>Whether a passed-through argument would pick what dotnet test runs.</summary>
+    private static bool TargetsItself(string argument) =>
+        new[] { ProjectOption, "--solution" }.Any(option =>
+            argument.Equals(option, StringComparison.OrdinalIgnoreCase)
+            || argument.StartsWith(option + "=", StringComparison.OrdinalIgnoreCase)
+            || argument.StartsWith(option + ":", StringComparison.OrdinalIgnoreCase));
 
     public static Command Create(CliEnvironment environment)
     {
@@ -84,7 +92,12 @@ public static class RemoteCommand
         var arguments = parse.UnmatchedTokens.ToList();
         Outcome outcome;
         string? projectRefusal = null;
-        if (command == "test" && parse.GetValue<string?>(ProjectOption) is { } project)
+        if (command == "test" && arguments.FirstOrDefault(TargetsItself) is { } passed)
+        {
+            // Passed through after --, it would get past the check below.
+            projectRefusal = $"'{passed}' is not passed through: the run picks its target itself; name a project with {ProjectOption} <path> before any --.";
+        }
+        else if (command == "test" && parse.GetValue<string?>(ProjectOption) is { } project)
         {
             if (ProjectPath(environment.Repository, project) is { } relative)
             {

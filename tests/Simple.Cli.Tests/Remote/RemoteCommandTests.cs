@@ -172,6 +172,26 @@ public sealed class RemoteCommandTests
         Assert.Null(RemoteCommand.ProjectPath(repository, "tests/NoSuch.Tests"));
         Assert.Null(RemoteCommand.ProjectPath(repository, "README.md"));
         Assert.Null(RemoteCommand.ProjectPath(repository, "."));
+        // A directory without a project file: dotnet test would look for one higher up.
+        Assert.Null(RemoteCommand.ProjectPath(repository, "tests"));
+    }
+
+    [Theory]
+    [InlineData("--project", "../elsewhere")]
+    [InlineData("--project=../elsewhere")]
+    [InlineData("--PROJECT:../elsewhere")]
+    [InlineData("--solution", "../elsewhere/x.slnx")]
+    [InlineData("--solution=../elsewhere/x.slnx")]
+    public async Task ATargetPassedThroughIsRefused(params string[] passed)
+    {
+        using var stdout = new StringWriter();
+        var environment = Environment with { Repository = CliEnvironment.FindRepository(AppContext.BaseDirectory), Out = stdout, RemoteAlias = "remote-test" };
+
+        var exitCode = await SimpleCommand.InvokeAsync(["remote", "test", "--json", "--", .. passed], environment, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        using var output = JsonDocument.Parse(stdout.ToString());
+        Assert.Contains($"'{passed[0]}' is not passed through", output.RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
     }
 
     [Fact]

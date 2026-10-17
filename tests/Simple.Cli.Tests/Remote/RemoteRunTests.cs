@@ -119,6 +119,8 @@ public sealed class RemoteRunTests
         Assert.Equal(["new"], Lines(stdout));
         Assert.Equal(2, Bundles(machine).Count);
         Assert.Contains("sending the full history", stderr, StringComparison.Ordinal);
+        // Neither the refused bundle nor the full one is left behind there.
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(sandbox.RemoteRoot, "incoming")));
     }
 
     [Fact]

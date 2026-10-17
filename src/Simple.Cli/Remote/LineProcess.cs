@@ -9,7 +9,7 @@ namespace Simple.Cli.Remote;
 /// at this interval until the process ends, and is then closed: for ssh, how
 /// the remote side tells this end is still there.
 /// </param>
-/// <param name="Beats">How many heartbeats to write before going silent while staying connected; null, until the end. Stands for a lost network in tests.</param>
+/// <param name="Silent">While it returns true, no heartbeat is written but the input stays open: a lost network, in tests.</param>
 /// <param name="KillOnCancel">
 /// Cancelling kills the process with its children (true), or only closes its
 /// input and stops reading it, leaving it running (false): what sshd does to a
@@ -18,7 +18,7 @@ namespace Simple.Cli.Remote;
 /// <param name="Started">Told about the process once it has started.</param>
 public sealed record LineProcessOptions(
     TimeSpan? Heartbeat = null,
-    int? Beats = null,
+    Func<bool>? Silent = null,
     bool KillOnCancel = true,
     Action<Process>? Started = null);
 
@@ -69,7 +69,7 @@ public static class LineProcess
         options.Started?.Invoke(process);
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
-        var beating = options.Heartbeat is { } interval ? BeatAsync(process.StandardInput, interval, options.Beats, stop.Token) : Task.CompletedTask;
+        var beating = options.Heartbeat is { } interval ? BeatAsync(process.StandardInput, interval, options.Silent, stop.Token) : Task.CompletedTask;
         try
         {
             // Also waits until both streams are read to the end.
@@ -115,13 +115,13 @@ public static class LineProcess
         }
     }
 
-    private static async Task BeatAsync(StreamWriter input, TimeSpan interval, int? beats, CancellationToken stop)
+    private static async Task BeatAsync(StreamWriter input, TimeSpan interval, Func<bool>? silent, CancellationToken stop)
     {
         try
         {
-            for (var written = 0; ; written++)
+            while (true)
             {
-                if (beats is not { } limit || written < limit)
+                if (silent?.Invoke() != true)
                 {
                     await input.WriteLineAsync(HeartbeatLine.AsMemory(), stop);
                     await input.FlushAsync(stop);
