@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Simple.Server.Configuration;
+using Simple.Server.Mes;
 using Simple.Server.OnboardTerminals;
 using Simple.Server.Persistence;
 
@@ -17,7 +18,9 @@ namespace Simple.Server.Tests;
 /// One server instance, run in process, with a database of its own: a random
 /// instance name, so concurrent tests and sessions never share a database.
 /// Disposing stops the server, drops the database and deletes the instance's
-/// server key.
+/// server key. Its MES gateway is a <see cref="StubMesGateway"/> that answers
+/// a good, empty round unless a test tells it otherwise, so the MES adds
+/// nothing to the event record.
 /// </summary>
 /// <param name="kestrel">
 /// Listen on real loopback sockets (the API on http://127.0.0.1:0, the
@@ -41,6 +44,8 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
 
     public string Instance { get; } = instance ?? $"test_{Guid.NewGuid():N}"[..17];
 
+    public StubMesGateway MesGateway { get; } = new();
+
     public ServerSettings Database => new() { Instance = Instance, ConnectionString = SqlServer };
 
     public IServiceProvider Services =>
@@ -61,6 +66,11 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
         {
             [ServerSettings.InstanceKey] = Instance,
             [ServerSettings.ConnectionStringKey] = SqlServer,
+            // Nothing listens there; the stub answers in its place.
+            [$"{MesGatewaySettings.Section}:Url"] = "http://127.0.0.1:9",
+            [$"{MesGatewaySettings.Section}:PollInterval"] = "00:00:00.1",
+            [$"{MesGatewaySettings.Section}:RetryMaxDelay"] = "00:00:00.3",
+            [$"{MesGatewaySettings.Section}:StaleAfter"] = "00:00:02",
         };
         // Without real sockets there is no terminal endpoint to reach, so none
         // is configured, and no server key is made for the test.
@@ -70,7 +80,7 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
             settings["urls"] = "http://127.0.0.1:0";
         }
 
-        var created = new Factory(settings, time);
+        var created = new Factory(settings, time, MesGateway);
         try
         {
             HttpClient client;
@@ -141,11 +151,15 @@ public sealed class ServerInstance(string? instance = null, bool kestrel = false
     private List<Uri> Addresses() =>
         Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Select(a => new Uri(a)).ToList();
 
-    private sealed class Factory(Dictionary<string, string?> settings, TimeProvider? time) : WebApplicationFactory<Program>
+    private sealed class Factory(Dictionary<string, string?> settings, TimeProvider? time, StubMesGateway mesGateway) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
-            builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(settings));
+            builder
+                .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(settings))
+                .ConfigureTestServices(services => services
+                    .AddHttpClient(MesGatewayPoller.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(mesGateway.CreateHandler));
             if (time is not null)
             {
                 builder.ConfigureTestServices(services => services.Replace(ServiceDescriptor.Singleton(time)));

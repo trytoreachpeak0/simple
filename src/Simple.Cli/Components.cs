@@ -13,6 +13,24 @@ public static class Components
 {
     public static IReadOnlyList<Component> All { get; } =
     [
+        // Started before the server, which is told its address. up waits for
+        // each component to be ready before it starts the next, so the
+        // gateway answers by the server's first fetch. A gateway that goes
+        // away later is the server's to notice: mes.unreachable, then
+        // mes.recovered.
+        new(
+            Name: "mes-gateway",
+            Project: "src/Simple.MesGateway/Simple.MesGateway.csproj",
+            Count: _ => 1,
+            PortsPerProcess: 1,
+            Arguments: context =>
+            [
+                $"--urls={context.Url()}",
+                "--Simple:Mes:Source=Fake",
+            ],
+            IsReady: (context, http, cancellationToken) =>
+                Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),
+            ApiPort: 0),
         new(
             Name: "server",
             Project: "src/Simple.Server/Simple.Server.csproj",
@@ -26,6 +44,7 @@ public static class Components
                 $"--ConnectionStrings:Simple={context.SqlServer}",
                 $"--Simple:OnboardTerminals:Url=https://127.0.0.1:{context.Ports[1].ToString(CultureInfo.InvariantCulture)}",
                 $"--Simple:OnboardTerminals:ServerKeyName={ServerKeyName(context.Instance)}",
+                $"--Simple:MesGateway:Url={context.UrlOf("mes-gateway")}",
             ],
             IsReady: (context, http, cancellationToken) =>
                 Readiness.HttpOkAsync(http, new Uri(context.Url(), "/health/ready"), cancellationToken),
@@ -48,7 +67,7 @@ public static class Components
     ];
 
     /// <summary>The component that answers the server API (status, events).</summary>
-    public static Component Server => All[0];
+    public static Component Server { get; } = All.Single(c => c.Name == "server");
 
     /// <summary>
     /// The persisted key behind the certificate the instance's terminals pin,
@@ -106,6 +125,10 @@ public sealed record ComponentContext(
     string Directory)
 {
     public Uri Url(int port = 0) => new($"http://127.0.0.1:{Ports[port].ToString(CultureInfo.InvariantCulture)}");
+
+    /// <summary>The loopback address of another process's port, for a component that connects to it.</summary>
+    public Uri UrlOf(string process, int port = 0) =>
+        new($"http://127.0.0.1:{PortsOf[process][port].ToString(CultureInfo.InvariantCulture)}");
 }
 
 public static class Readiness

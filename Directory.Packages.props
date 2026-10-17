@@ -25,7 +25,7 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Windows.CsWin32" Version="0.3.363" />
-    <!-- The onboard terminal's reconnect backoff. -->
+    <!-- Retries with backoff and jitter (ADR 0008): the MES gateway's rounds, the server's polling of the gateway and the onboard terminal's reconnects. -->
     <PackageVersion Include="Polly.Core" Version="8.8.0" />
     <PackageVersion Include="System.CommandLine" Version="2.0.13" />
     <!-- Transitive via Microsoft.Data.SqlClient 6.1.7 (EF Core SQL Server), which

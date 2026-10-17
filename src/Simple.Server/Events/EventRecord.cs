@@ -26,6 +26,12 @@ public static class EventTypes
     public const string ServerStarted = "server.started";
     public const string ServerStopped = "server.stopped";
 
+    /// <summary>The MES became unavailable, or its cause changed: data.cause is "gateway" or "read".</summary>
+    public const string MesUnreachable = "mes.unreachable";
+
+    /// <summary>The MES is available again after <see cref="MesUnreachable"/>.</summary>
+    public const string MesRecovered = "mes.recovered";
+
     /// <summary>
     /// The server found no key for its terminal certificate and created one:
     /// the certificate pin is new, and terminals pinned to an earlier key refuse

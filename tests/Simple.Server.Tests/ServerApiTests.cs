@@ -40,7 +40,7 @@ public sealed class ServerApiTests(RunningServer running) : IClassFixture<Runnin
     }
 
     [Fact]
-    public async Task StatusReportsVersionStartTimeInstanceAndEmptyParts()
+    public async Task StatusReportsVersionStartTimeInstanceAndItsParts()
     {
         var status = await client.GetFromJsonAsync<StatusResponse>(new Uri("/api/v1/status", UriKind.Relative), Cancel);
 
@@ -51,7 +51,7 @@ public sealed class ServerApiTests(RunningServer running) : IClassFixture<Runnin
         Assert.Equal($"Simple_{running.Server.Instance}", status.Database);
         Assert.Empty(status.OnboardTerminals);
         Assert.Null(status.Riot);
-        Assert.Null(status.MesGateway);
+        Assert.Equal(new Uri("http://127.0.0.1:9"), status.MesGateway.Url);
     }
 
     [Fact]

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Simple.Server.Configuration;
 using Simple.Server.Events;
+using Simple.Server.Mes;
 using Simple.Server.OnboardTerminals;
 using Simple.Server.Persistence;
 using Simple.Server.Status;
@@ -38,6 +39,15 @@ builder.Services.AddDbContext<SimpleDbContext>((services, options) =>
 builder.Services.AddScoped<EventStore>();
 builder.Services.AddSingleton<ServerInfo>();
 builder.Services.AddHostedService<ServerLifecycleRecorder>();
+builder.Services.AddOptions<MesGatewaySettings>()
+    .BindConfiguration(MesGatewaySettings.Section)
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<MesGatewaySettings>, MesGatewaySettingsValidator>();
+builder.Services.AddHttpClient(MesGatewayPoller.HttpClientName)
+    .ConfigureHttpClient((services, client) =>
+        client.Timeout = services.GetRequiredService<IOptions<MesGatewaySettings>>().Value.RequestTimeout);
+builder.Services.AddSingleton<MesGatewayMonitor>();
+builder.Services.AddHostedService<MesGatewayPoller>();
 builder.Services.AddSingleton<OnboardEndpoint>();
 builder.Services.AddSingleton<OnboardTerminalRegistry>();
 builder.Services.AddGrpc();
