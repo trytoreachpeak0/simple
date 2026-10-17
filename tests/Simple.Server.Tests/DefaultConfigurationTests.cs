@@ -20,8 +20,11 @@ public sealed partial class DefaultConfigurationTests
             .Where(f => !Path.GetRelativePath(root, f).Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj" or ".git"))
             .ToList();
 
-        // Finding no file at all would prove nothing.
+        // Finding no file at all would prove nothing. The MES gateway's must be
+        // among them: it is the one component that will be pointed at the
+        // production MES.
         Assert.Contains(files, f => f.EndsWith(Path.Combine("Simple.Server", "appsettings.json"), StringComparison.Ordinal));
+        Assert.Contains(files, f => f.EndsWith(Path.Combine("src", "Simple.MesGateway", "appsettings.json"), StringComparison.Ordinal));
         var findings = files
             .SelectMany(f => FindRealHosts(File.ReadAllText(f)).Select(finding => $"{Path.GetRelativePath(root, f)}: {finding}"))
             .ToList();
@@ -34,6 +37,8 @@ public sealed partial class DefaultConfigurationTests
     [InlineData("""{ "Riot": { "BaseUrl": "http://10.20.30.40:8080/api" } }""")]
     [InlineData("""{ "Mes": { "Endpoint": "https://mes.example.com/query" } }""")]
     [InlineData("""{ "Mes": { "Host": "factory01" } }""")]
+    [InlineData("""{ "Urls": "http://10.1.2.3:5190", "MesGateway": { "Source": "Fake" } }""")]
+    [InlineData("""{ "Simple": { "MesGateway": { "Url": "http://factory01:5190" } } }""")]
     [InlineData("""{ "Riot": { "Address": "192.168.1.20:8080" } }""")]
     [InlineData("""{ "ConnectionStrings": { "Simple": "Server=factory01;Integrated Security=true" } }""")]
     [InlineData("""{ "ConnectionStrings": { "Simple": "Data Source=tcp:10.0.0.5,1433;Integrated Security=true" } }""")]

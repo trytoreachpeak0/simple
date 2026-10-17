@@ -631,5 +631,26 @@ public sealed record InstanceReport(
     [
         $"Instance {Instance} from {Repository}, database {Database} on {SqlServer}",
         .. Processes.Select(p => $"  {p.Name,-12} {(p.Ready ? "ready" : p.Alive ? "not ready" : "gone"),-10} pid {p.Pid,-7} {p.Url}  log {p.Log}"),
+        .. MesLine(),
     ];
+
+    /// <summary>What the server last learned from the MES gateway, from its status.</summary>
+    private IEnumerable<string> MesLine()
+    {
+        if (Server is not { } server || !server.TryGetProperty("mesGateway", out var mes) || mes.ValueKind != JsonValueKind.Object)
+        {
+            yield break;
+        }
+
+        var reachable = mes.GetProperty("reachable");
+        var gateway = reachable.ValueKind == JsonValueKind.Null ? "not asked yet"
+            : reachable.GetBoolean() ? "reachable"
+            : $"unreachable ({mes.GetProperty("gatewayError").GetString()})";
+        var round = mes.GetProperty("lastRound");
+        var last = round.ValueKind == JsonValueKind.Null ? "no round yet"
+            : round.GetProperty("succeeded").GetBoolean()
+                ? $"round {round.GetProperty("round").GetInt64()} at {round.GetProperty("readAt").GetDateTimeOffset().ToLocalTime():HH:mm:ss}, {mes.GetProperty("rowCount").GetInt32()} rows"
+                : $"round {round.GetProperty("round").GetInt64()} failed: {round.GetProperty("failure").GetProperty("message").GetString()}";
+        yield return $"  MES gateway {gateway}; {last}";
+    }
 }
