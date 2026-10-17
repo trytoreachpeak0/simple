@@ -94,19 +94,46 @@ function Stop-Abandoned([Diagnostics.Process] $process) {
     [Environment]::Exit(3)
 }
 
+# Runs git and returns its exit code and output, watching the connection
+# while it waits, as for the command: a fetch from the origin or of a large
+# bundle can take minutes. A process of its own with an empty input: git
+# started with & and no input blocks while the heartbeat reader waits on
+# this session's input (a silent connection hung git init, 2026-10-17).
+function Start-Git([string[]] $arguments) {
+    $start = [Diagnostics.ProcessStartInfo]::new('git')
+    foreach ($argument in $arguments) {
+        $start.ArgumentList.Add($argument)
+    }
+
+    $start.UseShellExecute = $false
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+    $process = [Diagnostics.Process]::Start($start)
+    $process.StandardInput.Close()
+    $output = $process.StandardOutput.ReadToEndAsync()
+    $errors = $process.StandardError.ReadToEndAsync()
+    while (-not $process.WaitForExit(500)) {
+        if (Test-Abandoned) {
+            Stop-Abandoned $process
+        }
+    }
+
+    $process.WaitForExit()
+    @{ ExitCode = $process.ExitCode; Output = "$($output.Result)$($errors.Result)".Trim() }
+}
+
 function Invoke-Git {
-    # Every git here gets an empty input ($null |). Started without one, a
-    # native command blocks while the heartbeat reader waits on this
-    # session's input: a silent connection hung git init (2026-10-17).
-    $output = $null | & git @args 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "git $($args -join ' ') exited with $LASTEXITCODE`: $($output -join ' ')"
+    $result = Start-Git $args
+    if ($result.ExitCode -ne 0) {
+        throw "git $($args -join ' ') exited with $($result.ExitCode): $($result.Output -replace '\s+', ' ')"
     }
 }
 
 function Test-Commit([string] $commit) {
-    $null | & git -C $repo cat-file -e "$commit^{commit}" 2>$null
-    $LASTEXITCODE -eq 0
+    (Start-Git @('-C', $repo, 'cat-file', '-e', "$commit^{commit}")).ExitCode -eq 0
 }
 
 function Get-Holder([string] $lock) {
@@ -162,20 +189,22 @@ function Fetch-Origin {
     }
 
     Say "fetching $($spec.originBranch) from $($spec.originUrl)"
-    $null | & git -C $repo fetch --quiet $spec.originUrl "+refs/heads/$($spec.originBranch):refs/remotes/origin/$($spec.originBranch)" 2>&1 |
-        ForEach-Object { Say "$_" }
+    $result = Start-Git @('-C', $repo, 'fetch', '--quiet', $spec.originUrl, "+refs/heads/$($spec.originBranch):refs/remotes/origin/$($spec.originBranch)")
+    $result.Output -split '\r?\n' | Where-Object { $_ } | ForEach-Object { Say $_ }
+}
+
+function Test-Bundle([string] $bundle) {
+    (Start-Git @('-C', $repo, 'bundle', 'verify', '--quiet', $bundle)).ExitCode -eq 0
 }
 
 function Receive-Snapshot {
     if ($spec.bundle) {
         $bundle = Join-Path $root $spec.bundle
         try {
-            $null | & git -C $repo bundle verify --quiet $bundle 2>$null
-            if ($LASTEXITCODE -ne 0) {
+            if (-not (Test-Bundle $bundle)) {
                 # Most likely the cache lacks what the bundle builds on.
                 Fetch-Origin
-                $null | & git -C $repo bundle verify --quiet $bundle 2>$null
-                if ($LASTEXITCODE -ne 0) {
+                if (-not (Test-Bundle $bundle)) {
                     # Finish exits outright and skips the finally below.
                     Remove-Item -LiteralPath $bundle -Force -ErrorAction Ignore
                     Finish @{ status = 'needFullBundle' }
@@ -222,14 +251,148 @@ function Checkout-Snapshot {
 
 function Remove-Instance {
     if (Test-Path -LiteralPath $worktree) {
-        $null | & git -C $repo worktree remove --force $worktree 2>$null
+        [void](Start-Git @('-C', $repo, 'worktree', 'remove', '--force', $worktree))
         if (Test-Path -LiteralPath $worktree) {
             Remove-Item -LiteralPath $worktree -Recurse -Force
         }
     }
 
     Remove-Item -LiteralPath (Join-Path $root "runs/$instance") -Recurse -Force -ErrorAction Ignore
-    $null | & git -C $repo update-ref -d $spec.ref 2>$null
+    [void](Start-Git @('-C', $repo, 'update-ref', '-d', $spec.ref))
+}
+
+# Files no run needs any more. Every version of the command line installs an
+# agent of its own (named after its content) and nothing removed the old ones:
+# an agent no run has started for $spec.keepAgentDays is removed, and a clone
+# still on that version copies it again. A bundle is read within the run that
+# sent it; one a day old is a run's that ended before it could remove it.
+function Remove-OldFiles {
+    # Marks this agent as used.
+    [IO.File]::SetLastWriteTimeUtc($PSCommandPath, [DateTime]::UtcNow)
+    $agents = [DateTime]::UtcNow.AddDays(-$spec.keepAgentDays)
+    Get-ChildItem -LiteralPath $PSScriptRoot -Filter 'agent-*.ps1' -File |
+        Where-Object { $_.Name -match '\Aagent-[0-9a-f]{12}\.ps1\z' -and $_.FullName -ne $PSCommandPath -and $_.LastWriteTimeUtc -lt $agents } |
+        Remove-Item -Force -ErrorAction Ignore
+    $bundles = [DateTime]::UtcNow.AddDays(-1)
+    Get-ChildItem -LiteralPath (Join-Path $root 'incoming') -Filter '*.bundle' -File |
+        Where-Object { $_.LastWriteTimeUtc -lt $bundles } |
+        Remove-Item -Force -ErrorAction Ignore
+}
+
+# The names of the keys in one store of the Microsoft Software Key Storage
+# Provider: .NET opens a key by name but cannot list them.
+function Get-KeyNames([bool] $machine) {
+    if (-not ('SimpleRemoteKeyNames' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class SimpleRemoteKeyNames
+{
+    [DllImport("ncrypt.dll", CharSet = CharSet.Unicode)]
+    private static extern int NCryptOpenStorageProvider(out IntPtr provider, string name, int flags);
+
+    [DllImport("ncrypt.dll", CharSet = CharSet.Unicode)]
+    private static extern int NCryptEnumKeys(IntPtr provider, string scope, out IntPtr keyName, ref IntPtr state, int flags);
+
+    [DllImport("ncrypt.dll")]
+    private static extern int NCryptFreeBuffer(IntPtr buffer);
+
+    [DllImport("ncrypt.dll")]
+    private static extern int NCryptFreeObject(IntPtr handle);
+
+    public static string[] List(bool machine)
+    {
+        IntPtr provider;
+        int status = NCryptOpenStorageProvider(out provider, "Microsoft Software Key Storage Provider", 0);
+        if (status != 0) throw new Win32Exception(status);
+        var names = new List<string>();
+        IntPtr state = IntPtr.Zero;
+        try
+        {
+            while (true)
+            {
+                IntPtr key;
+                // NCRYPT_MACHINE_KEY_FLAG, NCRYPT_SILENT_FLAG; NTE_NO_MORE_ITEMS ends the list.
+                status = NCryptEnumKeys(provider, null, out key, ref state, (machine ? 0x20 : 0) | 0x40);
+                if (status == unchecked((int)0x8009002A)) break;
+                if (status != 0) throw new Win32Exception(status);
+                names.Add(Marshal.PtrToStringUni(Marshal.ReadIntPtr(key)));
+                NCryptFreeBuffer(key);
+            }
+        }
+        finally
+        {
+            if (state != IntPtr.Zero) NCryptFreeBuffer(state);
+            NCryptFreeObject(provider);
+        }
+        return names.ToArray();
+    }
+}
+'@
+    }
+
+    [SimpleRemoteKeyNames]::List($machine)
+}
+
+# Test databases and keys that runs ended before their tests could clean up
+# left behind (a cut connection ends a run with its tests), cleared before
+# heavy work. Only while every slot is free: a test run holds one for as long
+# as it runs, so nothing cleared is in use; with any slot taken, a later run
+# clears them. Only names matching the request's patterns, the tests' own
+# naming, are touched. A failure is said and the run goes on.
+function Clear-Leftovers {
+    $sweep = $spec.sweep
+    $held = [Collections.Generic.List[IO.FileStream]]::new()
+    try {
+        foreach ($slot in 0..($spec.slots - 1)) {
+            $stream = Open-Lock (Join-Path $root "slots/$slot.lock")
+            if (-not $stream) {
+                return
+            }
+
+            $held.Add($stream)
+        }
+
+        if ($sweep.sqlServer) {
+            $connection = [System.Data.SqlClient.SqlConnection]::new($sweep.sqlServer)
+            $connection.Open()
+            try {
+                $command = $connection.CreateCommand()
+                $command.CommandText = 'SELECT name FROM sys.databases'
+                $reader = $command.ExecuteReader()
+                $names = @(while ($reader.Read()) { $reader.GetString(0) })
+                $reader.Dispose()
+                foreach ($name in $names | Where-Object { [regex]::IsMatch($_, $sweep.databases) }) {
+                    $drop = $connection.CreateCommand()
+                    $drop.CommandText = "DECLARE @sql nvarchar(max) = N'ALTER DATABASE ' + QUOTENAME(@name) + N' SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ' + QUOTENAME(@name); EXEC (@sql);"
+                    [void]$drop.Parameters.AddWithValue('@name', $name)
+                    [void]$drop.ExecuteNonQuery()
+                    Say "dropped database $name, left behind by an earlier test run"
+                }
+            }
+            finally {
+                $connection.Dispose()
+            }
+        }
+
+        $machine = $sweep.keyStore -eq 'machine'
+        $options = $machine ? [Security.Cryptography.CngKeyOpenOptions]::MachineKey : [Security.Cryptography.CngKeyOpenOptions]::None
+        foreach ($name in Get-KeyNames $machine | Where-Object { [regex]::IsMatch($_, $sweep.keys) }) {
+            [Security.Cryptography.CngKey]::Open($name, [Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider, $options).Delete()
+            Say "deleted key $name, left behind by an earlier test run"
+        }
+    }
+    catch {
+        Say "could not clear what earlier test runs left behind: $_"
+    }
+    finally {
+        foreach ($stream in $held) {
+            $stream.Dispose()
+        }
+    }
 }
 
 # Keeps the newest runs of the instance.
@@ -261,6 +424,7 @@ try {
     }
 
     $lock = Wait-Lock @(Join-Path $root "locks/$instance.lock") "instance $instance"
+    Remove-OldFiles
 
     if ($spec.commit) {
         Receive-Snapshot
@@ -279,7 +443,11 @@ try {
         else {
             $slot = $null
             if ($spec.slot) {
-                $slots = 0..($spec.slots - 1) | ForEach-Object { Join-Path $root "slots/$_.lock" }
+                if ($spec.sweep) {
+                    Clear-Leftovers
+                }
+
+                $slots =0..($spec.slots - 1) | ForEach-Object { Join-Path $root "slots/$_.lock" }
                 $slot = Wait-Lock $slots 'a slot for heavy work'
             }
 

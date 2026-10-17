@@ -21,6 +21,9 @@ public interface IRemoteMachine
     /// <summary>Set for every command run there, on top of that machine's own environment.</summary>
     IReadOnlyDictionary<string, string> Environment { get; }
 
+    /// <summary>What tests leave behind there and the remote side clears before heavy work; null clears nothing.</summary>
+    RemoteSweep? Sweep { get; }
+
     /// <summary>Runs <paramref name="script"/> in PowerShell 7 there and returns its exit code.</summary>
     Task<int> RunAsync(string script, Action<string> onOutput, Action<string> onError, CancellationToken cancellationToken);
 

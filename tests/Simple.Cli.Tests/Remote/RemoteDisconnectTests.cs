@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using Simple.Cli.Remote;
 
 namespace Simple.Cli.Tests.Remote;
@@ -65,6 +67,62 @@ public sealed class RemoteDisconnectTests
         finally
         {
             CleanUp(machine, pids);
+        }
+    }
+
+    [Fact]
+    public async Task ASilentConnectionEndsAFetchThatHangs()
+    {
+        // Before the command starts, the remote side may fetch from the
+        // origin (or from a large bundle) for minutes; a cut connection must
+        // end that as well. The origin here accepts the connection and never
+        // answers, so the fetch would wait forever.
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+        using var origin = new TcpListener(IPAddress.Loopback, 0);
+        origin.Start();
+        // The snapshot is HEAD, which is on origin/main: nothing is sent, and
+        // the remote side, which lacks it, fetches it from the origin.
+        await sandbox.GitAsync(Cancel, "remote", "set-url", "origin", $"http://127.0.0.1:{((IPEndPoint)origin.LocalEndpoint).Port}/simple.git");
+        try
+        {
+            var running = Run(sandbox, machine, alive: TimeSpan.FromSeconds(3)).RunAsync("exec", ["pwsh", "-NoProfile", "-Command", "'must not run'"], json: false, Cancel);
+            using var fetching = await origin.AcceptTcpClientAsync(Cancel).AsTask().WaitAsync(TimeSpan.FromSeconds(60), Cancel);
+
+            machine.GoSilent();
+            var watch = Stopwatch.StartNew();
+            var outcome = await running.WaitAsync(TimeSpan.FromSeconds(60), Cancel);
+
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(30), $"The fetch went on for {watch.Elapsed.TotalSeconds} s without heartbeats.");
+            Assert.Equal(ExitCodes.RemoteFailed, outcome.ExitCode);
+            // The fetch itself was ended: its end of the connection closes,
+            // or is reset when the process is killed.
+            using var closed = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
+            closed.CancelAfter(TimeSpan.FromSeconds(10));
+            var stream = fetching.GetStream();
+            var buffer = new byte[4096];
+            try
+            {
+                while (await stream.ReadAsync(buffer, closed.Token) > 0)
+                {
+                    // The request git sent before it waited.
+                }
+            }
+            catch (IOException e) when (e.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionReset })
+            {
+            }
+        }
+        catch (OperationCanceledException) when (!Cancel.IsCancellationRequested)
+        {
+            Assert.Fail("The fetch's connection to the origin was still open 10 s after the run ended.");
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail("The run went on for over 60 s: a fetch that hangs is not ended when the connection goes silent.");
+        }
+        finally
+        {
+            machine.KillAbandoned();
         }
     }
 
