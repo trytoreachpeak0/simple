@@ -65,6 +65,29 @@ dotnet test --solution simple.slnx
 
 `Simple.Cli.Tests` 里的冒烟测试经编译好的命令行真起真停两套随机名字的实例，`dotnet test` 时随其他测试一起跑，CI 上也跑。
 
+## 把重活送到远端机器上跑
+
+改代码留在本机，完整编译、全量测试、起整套系统这些重活可以送到另一台 Windows 机器上跑。远端是哪台机器只从环境变量 `SIMPLE_REMOTE` 读，它的值是本机 SSH 配置（`~/.ssh/config`）里的一个主机别名，仓库里不写任何机器名或地址。
+
+```
+./simple remote build
+./simple remote test --filter-class "*CliTests"     # 后面的参数原样交给 dotnet test（MTP 选项）
+./simple remote up                                  # 远端起整套系统，返回后系统继续运行
+./simple remote status                              # 还有 down、events、logs，转给远端那份 simple
+./simple remote exec -- dotnet --info               # 在远端的工作树里跑任意命令
+./simple remote forget                              # 停掉、删库、删远端目录；删 worktree 之前用
+```
+
+- **跑的恰好是本机这棵树**：每次先把工作树做成一个快照提交，包括没提交的改动和还没 `git add` 的新文件，按 `.gitignore` 排除被忽略的文件；用的是一份临时索引，不动真正的索引和工作区。作者、时间都是固定值，所以同一棵树每次得到同一个提交号；工作树干净时就用 `HEAD` 本身。远端检出这个确切的提交再跑，开头和结尾各打印一行：提交号、基于哪个 `HEAD`、几个未提交的文件、哪台机器。
+- **怎么送**：只把 `origin/main` 之后的部分（本地没推送的提交加快照）打成 git bundle，经 scp 送到远端的裸仓库缓存；远端缺前置对象时从 origin 拉一次，还不行就送完整历史。远端已经有这个提交就什么都不送。不往 GitHub 推任何分支。快照里新增了超过 10 MiB 的文件时列出来并拒绝发送。
+- **远端的目录**：`C:\simple-remote\` 下有 `repo.git`（所有实例共用的对象缓存）、`wt\<实例名>`（每个 worktree 一个检出目录）、`runs\<实例名>`（每次运行的结果，保留最近 20 次）、`locks`、`slots`。实例名与本机相同，所以远端的 `simple up` 也按本机那套实例规则分开端口和库。检出时清掉残留文件，但保留被忽略的 `bin/`、`obj/`、`artifacts/`，编译是增量的。
+- **排队**：同一个实例同一时刻只跑一条远程命令，后来的等着，并打印在等谁；`build`、`test`、`exec`、`up` 还要占用整机 4 个名额中的一个。等 30 分钟还轮不到就以退出码 22 结束。
+- **结果**：输出实时回传；退出码是远端命令自己的（例如测试的 2、8 原样返回）。`simple remote` 自己的失败用 20（没跑成：git、ssh、scp 出错，或远端在起命令之前失败）、21（快照含大文件，没送）、22（等不到实例或名额）；`--json` 时标准输出是一个 `{exitCode, error, result}`，`result` 里有提交号、`HEAD`、未提交文件数和远端退出码。`build`、`test`、`exec` 的输出和测试结果（TRX）拷回本机 `artifacts/remote/<实例名>/<时刻>-<提交号前 8 位>/`；`exec` 的命令把文件写进 `%SIMPLE_REMOTE_RUN%` 也会拷回来。
+- **远端也只起本机的假系统**：远端的命令把 `SIMPLE_SQLSERVER` 和 `SIMPLE_TEST_SQLSERVER` 指向那台机器上专给它用的命名实例 `.\SIMPLE_DEV`，`simple` 在那台机器上照样只接受本机的 LocalDB 或命名实例；`simple remote` 没有任何指向真实系统的开关。
+- **断线**：SSH 一断，远端会结束这次运行的所有进程，不会留下没人管的测试进程。`up` 起的部件是例外：它们脱离 SSH 会话继续运行，用 `simple remote down` 停。
+
+为什么手写这一层：现成的同步工具（Mutagen、Syncthing 等）都是持续同步型的，说不出某一次运行看到的是哪个状态的树，"同步到一半就开跑"正是要避免的；`simple remote` 只是 git、ssh、scp 之上的一层薄胶水，"这次跑的是哪棵树"由提交号保证。
+
 ## 只运行服务端
 
 ```

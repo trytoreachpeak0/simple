@@ -26,6 +26,7 @@ namespace Simple.Cli.Processes;
 public static class ChildProcess
 {
     private const uint ProcThreadAttributeHandleList = 0x00020002;
+    private const int AccessDenied = 5;
 
     /// <summary>
     /// Starts <paramref name="executable"/> in a hidden console of its own.
@@ -79,29 +80,51 @@ public static class ChildProcess
                     lpAttributeList = attributes,
                 };
 
-                var commandLine = (CommandLine.Quote(executable) + " " + CommandLine.Join(arguments) + "\0").ToCharArray();
                 var block = EnvironmentBlock(environment);
-                PROCESS_INFORMATION information;
-                fixed (char* commandLinePointer = commandLine)
-                fixed (char* blockPointer = block)
-                fixed (char* directory = workingDirectory)
-                fixed (char* application = executable)
+                PROCESS_INFORMATION information = default;
+                var flags = PROCESS_CREATION_FLAGS.CREATE_NO_WINDOW
+                    | PROCESS_CREATION_FLAGS.CREATE_UNICODE_ENVIRONMENT
+                    | PROCESS_CREATION_FLAGS.EXTENDED_STARTUPINFO_PRESENT;
+
+                // Started over SSH (simple remote up), the command line runs in
+                // the session's job, which kills every process in it when the
+                // session ends; the components must outlive it. On simple01 that
+                // job allows breaking away (2026-10-17: KILL_ON_JOB_CLOSE |
+                // BREAKAWAY_OK). A job that does not allow it refuses the flag
+                // with access denied, and the component starts inside it as
+                // before.
+                foreach (var breakaway in new[] { PROCESS_CREATION_FLAGS.CREATE_BREAKAWAY_FROM_JOB, default })
                 {
-                    if (!PInvoke.CreateProcess(
+                    // CreateProcess may write into the command line, so each attempt gets its own copy.
+                    var commandLine = (CommandLine.Quote(executable) + " " + CommandLine.Join(arguments) + "\0").ToCharArray();
+                    bool created;
+                    fixed (char* commandLinePointer = commandLine)
+                    fixed (char* blockPointer = block)
+                    fixed (char* directory = workingDirectory)
+                    fixed (char* application = executable)
+                    {
+                        created = PInvoke.CreateProcess(
                             application,
                             commandLinePointer,
                             null,
                             null,
                             true,
-                            PROCESS_CREATION_FLAGS.CREATE_NO_WINDOW
-                                | PROCESS_CREATION_FLAGS.CREATE_UNICODE_ENVIRONMENT
-                                | PROCESS_CREATION_FLAGS.EXTENDED_STARTUPINFO_PRESENT,
+                            flags | breakaway,
                             blockPointer,
                             directory,
                             (STARTUPINFOW*)&startup,
-                            &information))
+                            &information);
+                    }
+
+                    if (created)
                     {
-                        throw new Win32Exception(Marshal.GetLastPInvokeError(), $"Could not start {executable}");
+                        break;
+                    }
+
+                    var error = Marshal.GetLastPInvokeError();
+                    if (breakaway == default || error != AccessDenied)
+                    {
+                        throw new Win32Exception(error, $"Could not start {executable}");
                     }
                 }
 

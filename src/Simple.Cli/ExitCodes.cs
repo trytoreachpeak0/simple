@@ -17,6 +17,12 @@ public static class ExitCodes
     public const int StopForced = 8;
     public const int DatabaseFailed = 9;
 
+    // simple remote ends with the remote command's own exit code. Its own
+    // failures use codes no simple command and no test run (MTP: 0-13) uses.
+    public const int RemoteFailed = 20;
+    public const int RemoteRefused = 21;
+    public const int RemoteBusy = 22;
+
     /// <summary>The table printed in the help text.</summary>
     public const string HelpText =
         """
@@ -33,5 +39,12 @@ public static class ExitCodes
           8  a component did not stop within the timeout and was killed (down)
           9  the SQL Server could not be reached (up, down --reset), or the database could
              not be dropped (down --reset)
+
+        simple remote ends with the exit code of the command it ran on the remote machine
+        (a test run's own codes included), or with one of its own:
+          20  the command did not run: git, ssh or scp failed, or the remote side failed
+              before starting it
+          21  the snapshot was not sent: it adds large files (listed)
+          22  the instance or a slot on the remote machine stayed busy too long
         """;
 }

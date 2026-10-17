@@ -166,6 +166,7 @@ public static partial class SimpleCommand
             status,
             events,
             logs,
+            Remote.RemoteCommand.Create(environment),
             signal,
         };
     }
@@ -251,8 +252,17 @@ public static partial class SimpleCommand
 /// <summary>Where the command line runs: which clone, where its files go, which SQL Server, where it writes.</summary>
 public sealed record CliEnvironment(string Repository, string Home, string SqlServer, TextWriter Out, TextWriter Error)
 {
+    /// <summary>The SSH alias simple remote runs on, from SIMPLE_REMOTE.</summary>
+    public string? RemoteAlias { get; init; }
+
+    /// <summary>The machine simple remote runs on instead of <see cref="RemoteAlias"/>; tests set it.</summary>
+    public Remote.IRemoteMachine? RemoteMachine { get; init; }
+
     public static CliEnvironment FromProcess() =>
-        new(FindRepository(AppContext.BaseDirectory), InstanceStore.DefaultHome(), SqlServerTarget.Configured(), Console.Out, Console.Error);
+        new(FindRepository(AppContext.BaseDirectory), InstanceStore.DefaultHome(), SqlServerTarget.Configured(), Console.Out, Console.Error)
+        {
+            RemoteAlias = Environment.GetEnvironmentVariable(Remote.SshMachine.Variable) is { Length: > 0 } alias ? alias : null,
+        };
 
     /// <summary>The clone the command line was built from: the nearest folder above it that holds simple.slnx.</summary>
     public static string FindRepository(string start)
