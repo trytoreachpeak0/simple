@@ -4,7 +4,7 @@
 
 | 谁 | 怎么跑 |
 | --- | --- |
-| 人、AI 会话 | `./simple scenario run <场景名>`，或在 simple01 上：`simple remote exec -- pwsh -File ./simple.ps1 scenario run <场景名> --server-key-store Machine` |
+| 人、AI 会话 | `./simple scenario run <场景名>`，或在远端机器上：`./simple remote scenario run <场景名>`（见下面的"在远端机器上跑"） |
 | `dotnet test`、CI | `tests/Simple.Cli.Tests/ScenarioTests.cs` 把这里的每个场景当作一个测试用例 |
 
 每个场景是这个目录下的一个 `.yaml` 文件，场景名就是文件名（不带扩展名，子目录用 `/`）。格式定义是 [`scenario.schema.json`](scenario.schema.json)（JSON Schema）；文件第一行写上 `# yaml-language-server: $schema=scenario.schema.json`，支持 YAML 语言服务的编辑器就能按它提示和校验。
@@ -19,6 +19,16 @@
 
 `<场景>` 可以是场景名（`infrastructure-up`），也可以是任意位置的 `.yaml` 文件路径，方便先在别处写一个会失败的场景再放进来。
 
+### 在远端机器上跑
+
+`./simple remote scenario run <场景>`、`list`、`validate` 在 `SIMPLE_REMOTE` 指的远端机器上跑同一个命令，用的是本克隆此刻的工作树（没提交的改动和新文件都在，见仓库根 README 的"把重活送到远端机器上跑"）。和本机的区别：
+
+- `run` 占远端整机的一个名额，服务端钥匙放在那台机器的本机级存储里，证据目录写进这次运行的目录，随输出一起拷回本机 `artifacts/remote/<实例名>/<时刻>-<提交号前 8 位>/`。输出里 `Evidence:` 那一行是远端的路径，本机的副本在最后一行写的目录下。退出码照样是判定。
+- 场景写成路径时，文件必须在本克隆里、没被 `.gitignore` 排除，否则远端拿不到它，命令以 2 结束。
+- 不收 `--evidence`、`--server-key-store`、写在 `--` 之后的 `--instance`（这三样由它自己定；`--instance` 要写在 `--` 之前，那是 `simple remote` 自己的选项）和 `--keep-up`（远端留着的系统会随 SSH 会话一起被结束）。
+- 按 Ctrl+C 时远端这次运行整个被结束，不写 `result.json`；部件进程随之结束，实例的库留到下一次运行重置。
+- `./simple remote forget` 也重置场景用的实例 `<实例名>-scenario`（删库、删服务端钥匙）。
+
 `run` 做的事：
 
 1. 校验文件，不对就以退出码 2 结束，什么都不启动。
@@ -27,7 +37,7 @@
 4. 每 250 毫秒看一次系统：服务端的 `GET /api/v1/status` 和事件记录 `GET /api/v1/events`。按顺序做事件，判每个期望，直到所有事件做完、所有期望都有了判定。
 5. 导出事件记录和最后的状态，再拿最后这份事件记录把事件类期望复核一遍（见下文），停掉系统（`--keep-up` 时不停，可以接着用 `simple status/events/logs --instance <实例>` 看），收集各部件日志，写 `result.json` 和校验清单。系统停了以后实例的数据库还在，下一次跑这个实例时才重置。
 
-中途按 Ctrl+C，或者运行器自己出了异常，也照样停掉系统、收集证据、写 `result.json`，判定是"判不了"，原因写在 `driveFailure` 里。停系统有自己的 5 分钟时限，不受 Ctrl+C 影响。系统没能停掉时，`result.json` 的 `teardown` 写明原因，命令以退出码 1 结束（不管判定是什么），因为留着一套没停的系统本身就是运行失败；`dotnet test` 里这个用例也算失败。所以看 `result.json` 判断一次运行是否成功，除了 `verdict`（或 `asExpected`），还要看 `teardown.stopped`：`verdict` 只说场景本身，不说系统停没停。证据文件（时间线也算）写不进去（例如磁盘满）时，不影响判定和停系统，只列在 `evidenceMissing` 里。
+中途按 Ctrl+C，或者运行器自己出了异常，也照样停掉系统、收集证据、写 `result.json`，判定是"判不了"，原因写在 `driveFailure` 里。停系统有自己的 5 分钟时限，不受 Ctrl+C 影响。系统没能停掉时，`result.json` 的 `teardown` 写明原因，命令以退出码 1 结束（不管判定是什么），因为留着一套没停的系统本身就是运行失败；`dotnet test` 里这个用例也算失败。所以看 `result.json` 判断一次运行是否成功，除了 `verdict`（或 `asExpected`），还要看 `teardown.stopped`：`verdict` 只说场景本身，不说系统停没停（带 `--keep-up` 时 `stopped` 为 `false`、`kept` 为 `true`，系统本来就该留着，不算失败）。证据文件（时间线也算）写不进去（例如磁盘满）时，不影响判定和停系统，只列在 `evidenceMissing` 里。
 
 ## 四种判定和退出码
 

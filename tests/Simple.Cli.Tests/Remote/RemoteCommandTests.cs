@@ -18,6 +18,7 @@ public sealed class RemoteCommandTests
     [InlineData(new[] { "remote", "test", "--", "--filter-method", "*Remote*" }, new[] { "--filter-method", "*Remote*" })]
     [InlineData(new[] { "remote", "exec", "--", "dotnet", "--info" }, new[] { "dotnet", "--info" })]
     [InlineData(new[] { "remote", "logs", "server", "--tail", "20" }, new[] { "server", "--tail", "20" })]
+    [InlineData(new[] { "remote", "scenario", "run", "infrastructure-up", "--json" }, new[] { "run", "infrastructure-up" })]
     [InlineData(new[] { "remote", "--instance", "other", "up", "--json", "--terminals", "2" }, new[] { "--terminals", "2" })]
     public void ArgumentsAfterTheCommandGoToTheRemoteCommandInOrder(string[] args, string[] passed)
     {
@@ -80,6 +81,161 @@ public sealed class RemoteCommandTests
         Assert.Equal(["-NoProfile", "-NonInteractive", "-File", "simple.ps1"], plan.Arguments.Take(4));
         Assert.Equal("--json", plan.Arguments[^1]);
         Assert.Equal((checkout, slot, true, command == "forget"), (plan.Checkout, plan.Slot, plan.RunsSimple, plan.Forget));
+    }
+
+    /// <summary>
+    /// A scenario run there is heavy like up, keeps its server's key in the
+    /// machine's store (no DPAPI for an SSH key login) and writes its evidence
+    /// into the run directory, which comes back.
+    /// </summary>
+    [Fact]
+    public void AScenarioRunTakesASlotAndItsEvidenceComesBack()
+    {
+        var plan = RemotePlan.For("scenario", ["run", "infrastructure-up"], "C:/simple-remote/runs/i/r", json: true, instance: "i");
+
+        Assert.Equal("pwsh", plan.FileName);
+        Assert.Equal(
+            ["scenario", "run", "--instance", "i-scenario", SimpleCommand.ServerKeyStoreOption, "Machine", "--evidence", "C:/simple-remote/runs/i/r", "infrastructure-up", "--json"],
+            plan.Arguments.Skip(4));
+        Assert.True(plan is { Checkout: true, Slot: true, KeepsResults: true, RunsSimple: true, Forget: false });
+    }
+
+    [Theory]
+    [InlineData("list")]
+    [InlineData("validate")]
+    public void ListingAndValidatingScenariosSeeThisTreeWithoutASlot(string command)
+    {
+        var plan = RemotePlan.For("scenario", [command, "scenarios/new.yaml"], "C:/simple-remote/runs/i/r", json: false);
+
+        Assert.Equal(["scenario", command, "scenarios/new.yaml"], plan.Arguments.Skip(4));
+        Assert.True(plan is { Checkout: true, Slot: false, KeepsResults: false, RunsSimple: true });
+    }
+
+    /// <summary>Named on both sides from the same instance, so forget resets exactly what the runs used.</summary>
+    [Theory]
+    [InlineData("42-simple-remote")]
+    [InlineData("foo-")]
+    public void ForgetResetsTheInstanceTheScenarioRunsUse(string instance)
+    {
+        var run = RemotePlan.For("scenario", ["run", "infrastructure-up"], "unused", json: false, instance);
+        var forget = RemotePlan.ForgetScenarios(instance);
+
+        Assert.Equal(["down", "--reset", "--instance", $"{instance}-scenario"], forget.Arguments.Skip(4));
+        Assert.Equal($"{instance}-scenario", run.Arguments[run.Arguments.ToList().IndexOf("--instance") + 1]);
+    }
+
+    [Theory]
+    [InlineData("--evidence", "D:/elsewhere")]
+    [InlineData("--evidence=D:/elsewhere")]
+    [InlineData("--keep-up")]
+    [InlineData("--server-key-store", "User")]
+    [InlineData("--SERVER-KEY-STORE:User")]
+    [InlineData("--", "--instance", "other")]
+    public async Task WhatSimpleRemoteScenarioSetsItselfIsRefused(params string[] passed)
+    {
+        var (exitCode, error) = await RemoteScenarioAsync(["run", "infrastructure-up", .. passed]);
+        passed = [.. passed.Where(p => p != "--")];
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains($"'{passed[0]}' is not passed through", error, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("start infrastructure-up")]
+    public async Task ScenarioNeedsRunListOrValidate(string arguments)
+    {
+        var (exitCode, error) = await RemoteScenarioAsync(arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("needs run, list or validate", error, StringComparison.Ordinal);
+    }
+
+    /// <summary>Refused before anything is sent or a slot is waited for.</summary>
+    [Theory]
+    [InlineData("run", "takes exactly one scenario")]
+    [InlineData("run a b", "takes exactly one scenario")]
+    [InlineData("run --filter x", "takes exactly one scenario")]
+    [InlineData("list infrastructure-up", "takes no scenario")]
+    public async Task ScenarioArgumentsAreCheckedHere(string arguments, string error)
+    {
+        var (exitCode, message) = await RemoteScenarioAsync(arguments.Split(' '));
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains(error, message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AScenarioPathMustBeAFileInsideTheClone()
+    {
+        var repository = CliEnvironment.FindRepository(AppContext.BaseDirectory);
+        var inside = Path.Combine(repository, "scenarios", "infrastructure-up.yaml");
+        var outside = Path.Combine(Path.GetTempPath(), $"simple-remote-scenario-{Guid.NewGuid():N}.yaml");
+        File.WriteAllText(outside, "title: outside\n");
+        try
+        {
+            Assert.Equal("infrastructure-up", RemoteCommand.ScenarioPath(repository, "infrastructure-up"));
+            Assert.Equal("scenarios/infrastructure-up.yaml", RemoteCommand.ScenarioPath(repository, inside));
+            // Relative to the current directory, as simple scenario reads it.
+            Assert.Equal("scenarios/infrastructure-up.yaml", RemoteCommand.ScenarioPath(repository, Path.GetRelativePath(System.Environment.CurrentDirectory, inside)));
+            Assert.Null(RemoteCommand.ScenarioPath(repository, Path.Combine(repository, "scenarios", "no-such.yaml")));
+            Assert.Null(RemoteCommand.ScenarioPath(repository, outside));
+        }
+        finally
+        {
+            File.Delete(outside);
+        }
+    }
+
+    [Fact]
+    public async Task AScenarioOutsideTheCloneIsRefused()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"simple-remote-scenario-{Guid.NewGuid():N}.yaml");
+        File.WriteAllText(file, "title: elsewhere\n");
+        try
+        {
+            var (exitCode, error) = await RemoteScenarioAsync(["run", file]);
+
+            Assert.Equal(ExitCodes.Usage, exitCode);
+            Assert.Contains("is not a .yaml file inside this clone", error, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    /// <summary>The snapshot leaves out what .gitignore excludes, so the remote side would not find the file.</summary>
+    [Fact]
+    public async Task AScenarioGitIgnoresIsRefused()
+    {
+        var repository = CliEnvironment.FindRepository(AppContext.BaseDirectory);
+        var file = Path.Combine(repository, "artifacts", $"simple-remote-scenario-{Guid.NewGuid():N}.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        File.WriteAllText(file, "title: ignored\n");
+        try
+        {
+            var (exitCode, error) = await RemoteScenarioAsync(["validate", file]);
+
+            Assert.Equal(ExitCodes.Usage, exitCode);
+            Assert.Contains("is excluded by .gitignore", error, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    private static async Task<(int ExitCode, string? Error)> RemoteScenarioAsync(string[] arguments)
+    {
+        using var stdout = new StringWriter();
+        // A refusal that regressed would reach this machine, which fails loudly, not a real one.
+        var environment = Environment with { Repository = CliEnvironment.FindRepository(AppContext.BaseDirectory), Out = stdout, RemoteMachine = new FailingMachine() };
+
+        var exitCode = await SimpleCommand.InvokeAsync(["remote", "scenario", "--json", .. arguments], environment, TestContext.Current.CancellationToken);
+
+        using var output = JsonDocument.Parse(stdout.ToString());
+        return (exitCode, output.RootElement.GetProperty("error").GetString());
     }
 
     [Fact]
