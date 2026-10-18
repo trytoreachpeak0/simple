@@ -106,12 +106,6 @@ public sealed partial class LocalSystem(
             }
         }
 
-        var siteFile = Scenarios.Site.PathOf(Repository, options.Site);
-        if (!File.Exists(siteFile))
-        {
-            return Outcome.Fail(ExitCodes.Usage, $"Site '{options.Site}' has no {Path.Combine("sites", options.Site, Scenarios.Site.FileName)} in {Repository}.");
-        }
-
         if (await VerifySqlServerAsync(sqlServer, cancellationToken) is { } refused)
         {
             return refused;
@@ -124,6 +118,12 @@ public sealed partial class LocalSystem(
             return Outcome.Fail(
                 ExitCodes.Usage,
                 $"Instance {instance} keeps its server key in the {recorded} key store, not {options.KeyStore}. Run simple down --reset first.");
+        }
+
+        var siteFile = Scenarios.Site.PathOf(Repository, options.Site);
+        if (!File.Exists(siteFile))
+        {
+            return Outcome.Fail(ExitCodes.Usage, $"Site '{options.Site}' has no {Path.Combine("sites", options.Site, Scenarios.Site.FileName)} in {Repository}.");
         }
 
         // Kept after down, so down --reset finds the database where up made it

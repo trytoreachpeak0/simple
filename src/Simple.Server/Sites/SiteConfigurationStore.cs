@@ -11,6 +11,43 @@ public sealed record SiteVersion(int Version, DateTimeOffset CreatedAt, string S
 /// <summary>Which version is current, without its content: for the status API.</summary>
 public sealed record SiteVersionSummary(int Version, string Site, DateTimeOffset CreatedAt, string Source);
 
+/// <summary>
+/// Which version of the site configuration is in effect, held in memory for
+/// the status API, which answers without the database (a database briefly
+/// out of reach logs nobody out, ADR 0045). Loaded when the server starts
+/// and set by whatever stores a version in this process; a version another
+/// process stores (the import command run beside a running server) shows
+/// after the next start.
+/// </summary>
+public sealed class CurrentSiteVersion
+{
+    private SiteVersionSummary? current;
+
+    public SiteVersionSummary? Summary => Volatile.Read(ref current);
+
+    public void Set(SiteVersionSummary? summary) => Volatile.Write(ref current, summary);
+}
+
+/// <summary>Loads <see cref="CurrentSiteVersion"/> at start, after the database is migrated.</summary>
+public sealed class CurrentSiteVersionLoader(IServiceScopeFactory scopes, CurrentSiteVersion current) : IHostedLifecycleService
+{
+    public async Task StartingAsync(CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        current.Set(await scope.ServiceProvider.GetRequiredService<SiteConfigurationStore>().CurrentSummaryAsync(cancellationToken));
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+}
+
 /// <summary>Writes versions of the site configuration to their tables and reads the current one back.</summary>
 public sealed class SiteConfigurationStore(SimpleDbContext db)
 {

@@ -82,6 +82,9 @@ builder.Services.AddSingleton<ConsoleEndpoint>();
 builder.Services.AddHostedService<ConsoleCertificateLoader>();
 builder.Services.AddScoped<AccountChanges>();
 builder.Services.AddScoped<SiteConfigurationStore>();
+// After the recorder, which migrates the database it is read from.
+builder.Services.AddSingleton<CurrentSiteVersion>();
+builder.Services.AddHostedService<CurrentSiteVersionLoader>();
 builder.Services.AddOptions<MesGatewaySettings>()
     .BindConfiguration(MesGatewaySettings.Section)
     .ValidateOnStart();

@@ -13,7 +13,7 @@ public static class StatusEndpoints
 {
     public static void MapStatusEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/status", async (ServerInfo info, IOptions<ServerSettings> settings, OnboardTerminalRegistry terminals, OnboardEndpoint endpoint, ConsoleEndpoint console, MesGatewayMonitor mes, RiotConnectionMonitor riot, SiteConfigurationStore site, CancellationToken cancellationToken) =>
+        app.MapGet("/api/v1/status", (ServerInfo info, IOptions<ServerSettings> settings, OnboardTerminalRegistry terminals, OnboardEndpoint endpoint, ConsoleEndpoint console, MesGatewayMonitor mes, RiotConnectionMonitor riot, CurrentSiteVersion site) =>
                 new StatusResponse(
                     info.Version,
                     info.StartedAt,
@@ -25,7 +25,7 @@ public static class StatusEndpoints
                     MesGateway: mes.Status(),
                     ConsoleEndpoint: console.Describe(),
                     OverviewEndpoint: console.DescribeOverview(),
-                    SiteConfiguration: await site.CurrentSummaryAsync(cancellationToken)))
+                    SiteConfiguration: site.Summary))
             .RequireAccess(Access.View)
             .WithName("GetStatus")
             .WithSummary("Server version, start time and instance, and the state of every connected part.");

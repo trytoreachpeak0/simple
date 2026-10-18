@@ -121,6 +121,9 @@ public static class SiteImportCommand
             await transaction.CommitAsync(cancellationToken);
         }
 
+        // A server running in this process shows it at once.
+        scope.ServiceProvider.GetService<CurrentSiteVersion>()?.Set(await store.CurrentSummaryAsync(cancellationToken));
+
         await output.WriteLineAsync(
             $"Imported site {configuration.Site} as version {version.ToString(CultureInfo.InvariantCulture)}: "
             + $"{configuration.Projects.Count} projects, {configuration.Zones.Count} dispatch zones, {configuration.Areas.Count} areas, "

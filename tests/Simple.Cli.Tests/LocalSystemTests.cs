@@ -365,6 +365,20 @@ public sealed class LocalSystemTests : IDisposable
     }
 
     [Fact]
+    public async Task UpRefusesASiteTheCloneHasNoFileForBeforeRecordingAnything()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var system = new LocalSystem(Path.Combine(store.Home, "no-clone"), store, TextWriter.Null, (_, _) => Task.FromResult<string?>(null));
+
+        var outcome = await system.UpAsync(instance, CliRunner.SqlServer, new UpOptions(0, Site: "nowhere"), TimeSpan.FromSeconds(5), Cancel);
+
+        Assert.Equal(ExitCodes.Usage, outcome.ExitCode);
+        Assert.Contains(Path.Combine("sites", "nowhere", "site.yaml"), outcome.Error, StringComparison.Ordinal);
+        Assert.Null(store.Read(instance));
+        Assert.Null(store.ReadSqlServer(instance));
+    }
+
+    [Fact]
     public async Task DownWaitsForAFileInTheRunDirectoryThatIsReleasedSoon()
     {
         var instance = $"test_{Guid.NewGuid():N}"[..17];
