@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Simple.Cli.Processes;
+using Simple.Server.OnboardTerminals;
 
 namespace Simple.Cli.Tests;
 
@@ -14,6 +15,17 @@ namespace Simple.Cli.Tests;
 [Trait("Category", "Smoke")]
 public sealed class TerminalSmokeTests
 {
+    /// <summary>After this, a terminal's freshest report no longer counts (ADR 0009).</summary>
+    private static readonly TimeSpan StaleAfter = OnboardTerminalRegistry.StaleAfter;
+
+    /// <summary>
+    /// How much later than its due moment the stale event may carry: its
+    /// time is taken when the server's one event writer appends it, after
+    /// the timer fired and anything queued before it was written, on a
+    /// machine running the other tests at the same time.
+    /// </summary>
+    private static readonly TimeSpan RecordingMargin = TimeSpan.FromSeconds(1);
+
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
     [Fact(Timeout = 600_000)]
@@ -66,10 +78,13 @@ public sealed class TerminalSmokeTests
         Assert.Equal("vehicle-1", scan.GetProperty("data").GetProperty("vehicleId").GetString());
         Assert.Equal("LOT-SMOKE-0001", scan.GetProperty("data").GetProperty("text").GetString());
 
-        // terminal-2 is killed outright: within 10 s its reports are stale.
+        // terminal-2 is killed outright: StaleAfter later its reports are
+        // stale. Killed as the process up started (pid and start time), not
+        // whatever has its pid by now (#85).
         var victim = Pid(processes, "terminal-2");
-        using (var process = Process.GetProcessById(victim))
+        using (var process = ChildProcess.Find(victim, started[victim]))
         {
+            Assert.NotNull(process);
             process.Kill();
             await process.WaitForExitAsync(Cancel);
         }
@@ -79,8 +94,17 @@ public sealed class TerminalSmokeTests
             cli,
             instance,
             e => e.GetProperty("type").GetString() == "onboard.stale" && e.GetProperty("data").GetProperty("vehicleId").GetString() == "vehicle-2",
-            TimeSpan.FromSeconds(15));
-        Assert.InRange(stale.GetProperty("occurredAt").GetDateTimeOffset() - killedAt, TimeSpan.FromSeconds(-1), TimeSpan.FromSeconds(10));
+            StaleAfter + TimeSpan.FromSeconds(5));
+        // The server judged from the freshest report it had, which terminal-2
+        // wrote before it was killed, and declared it stale once that report
+        // was StaleAfter old: not earlier, and not later than the stale timer
+        // firing and the event being written allow (RecordingMargin). Its
+        // timer is set to that moment; nothing polls. Together: stale at most
+        // StaleAfter + RecordingMargin after the kill.
+        var occurredAt = stale.GetProperty("occurredAt").GetDateTimeOffset();
+        var lastFresh = stale.GetProperty("data").GetProperty("lastFreshReportWrittenNoEarlierThan").GetDateTimeOffset();
+        Assert.True(lastFresh <= killedAt, $"The freshest report, written no earlier than {lastFresh:O}, is from after the kill at {killedAt:O}.");
+        Assert.InRange(occurredAt - lastFresh, StaleAfter, StaleAfter + RecordingMargin);
 
         // down stops everything still running; the server key stays for the next up.
         var down = await cli.RunJsonAsync("down", "--instance", instance);

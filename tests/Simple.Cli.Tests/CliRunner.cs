@@ -88,7 +88,13 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
             var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
             var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
             await process.WaitForExitAsync(timeout.Token);
-            return (process.ExitCode, await stdout, await stderr);
+            var error = await stderr;
+            if (args is ["up", ..] && process.ExitCode != ExitCodes.Success && KeepLogs(args) is { } kept)
+            {
+                error += $"{Environment.NewLine}The instance's console output and program logs are kept in {kept}";
+            }
+
+            return (process.ExitCode, await stdout, error);
         }
         catch (OperationCanceledException)
         {
@@ -96,6 +102,24 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
             cancellationToken.ThrowIfCancellationRequested();
             throw new TimeoutException($"simple {string.Join(' ', args)} did not finish within {CommandTimeout}.");
         }
+    }
+
+    /// <summary>
+    /// After an up that failed: the console output and program logs of its
+    /// instance's processes, which go when the home directory is deleted, are
+    /// copied to SIMPLE_TEST_EVIDENCE (CI sets it under its test results), so
+    /// that why a component did not get ready is known (#85).
+    /// </summary>
+    private string? KeepLogs(string[] args)
+    {
+        var at = Array.IndexOf(args, "--instance");
+        if (at < 0 || at + 1 >= args.Length)
+        {
+            return null;
+        }
+
+        var instance = args[at + 1];
+        return TestEvidence.Keep(new InstanceStore(Home).LogDirectory(instance), $"{instance}-up-failed", "SIMPLE_TEST_EVIDENCE", "test-evidence");
     }
 
     public async Task<bool> DatabaseExistsAsync(string instance)

@@ -167,23 +167,6 @@ public sealed class ScenarioTests
     /// under its test results), to the run directory simple remote brings
     /// back, or under artifacts/ in the clone.
     /// </summary>
-    private static void Keep(string evidence)
-    {
-        var root = Environment.GetEnvironmentVariable("SIMPLE_SCENARIO_EVIDENCE") is { Length: > 0 } configured ? configured
-            : Environment.GetEnvironmentVariable("SIMPLE_REMOTE_RUN") is { Length: > 0 } run ? Path.Combine(run, "scenario-evidence")
-            : Path.Combine(Repository, "artifacts", "scenario-evidence");
-        if (!Directory.Exists(evidence))
-        {
-            return;
-        }
-
-        foreach (var file in Directory.EnumerateFiles(evidence, "*", SearchOption.AllDirectories))
-        {
-            var target = Path.Combine(root, Path.GetFileName(evidence), Path.GetRelativePath(evidence, file));
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(file, target, overwrite: true);
-        }
-
-        TestContext.Current.SendDiagnosticMessage($"The evidence of the failed run is kept in {Path.Combine(root, Path.GetFileName(evidence))}");
-    }
+    private static void Keep(string evidence) =>
+        TestEvidence.Keep(evidence, Path.GetFileName(evidence), "SIMPLE_SCENARIO_EVIDENCE", "scenario-evidence");
 }

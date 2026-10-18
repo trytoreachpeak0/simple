@@ -25,23 +25,23 @@ public sealed class RemoteDisconnectTests
     {
         await using var sandbox = await GitSandbox.CreateAsync(Cancel);
         var machine = new DirectoryMachine(sandbox.RemoteRoot);
-        int[] pids = [];
+        Process[] processes = [];
         try
         {
             using var cut = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
             var running = Run(sandbox, machine).RunAsync("exec", ["pwsh", "-NoProfile", "-Command", SleepWithAChild], json: false, cut.Token);
-            pids = await PidsAsync(sandbox, running);
+            processes = await ProcessesAsync(sandbox, running);
 
             await cut.CancelAsync();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
 
-            Assert.True(await GoneWithinAsync(pids, TimeSpan.FromSeconds(15)), $"Still running 15 s after the cut: {string.Join(", ", pids.Where(Alive))}");
+            Assert.True(await GoneWithinAsync(processes, TimeSpan.FromSeconds(15)), $"Still running 15 s after the cut: {Running(processes)}");
             var next = await Run(sandbox, machine).RunAsync("exec", ["pwsh", "-NoProfile", "-Command", "'next'"], json: false, Cancel);
             Assert.True(next.ExitCode == ExitCodes.Success, $"{next.ExitCode}: {next.Error}");
         }
         finally
         {
-            CleanUp(machine, pids);
+            CleanUp(machine, processes);
         }
     }
 
@@ -50,11 +50,11 @@ public sealed class RemoteDisconnectTests
     {
         await using var sandbox = await GitSandbox.CreateAsync(Cancel);
         var machine = new DirectoryMachine(sandbox.RemoteRoot);
-        int[] pids = [];
+        Process[] processes = [];
         try
         {
             var running = Run(sandbox, machine, alive: TimeSpan.FromSeconds(3)).RunAsync("exec", ["pwsh", "-NoProfile", "-Command", SleepWithAChild], json: false, Cancel);
-            pids = await PidsAsync(sandbox, running);
+            processes = await ProcessesAsync(sandbox, running);
 
             machine.GoSilent();
             var watch = Stopwatch.StartNew();
@@ -62,11 +62,11 @@ public sealed class RemoteDisconnectTests
 
             Assert.True(watch.Elapsed < TimeSpan.FromSeconds(30), $"The run went on for {watch.Elapsed.TotalSeconds} s without heartbeats.");
             Assert.Equal(ExitCodes.RemoteFailed, outcome.ExitCode);
-            Assert.True(await GoneWithinAsync(pids, TimeSpan.FromSeconds(5)), $"Still running: {string.Join(", ", pids.Where(Alive))}");
+            Assert.True(await GoneWithinAsync(processes, TimeSpan.FromSeconds(5)), $"Still running: {Running(processes)}");
         }
         finally
         {
-            CleanUp(machine, pids);
+            CleanUp(machine, processes);
         }
     }
 
@@ -181,8 +181,15 @@ public sealed class RemoteDisconnectTests
             Alive = alive ?? TimeSpan.FromSeconds(30),
         };
 
-    /// <summary>Waits for the command to write the process ids of itself and its child.</summary>
-    private static async Task<int[]> PidsAsync(GitSandbox sandbox, Task<Outcome> running)
+    /// <summary>
+    /// Waits for the command to write the process ids of itself and its
+    /// child, and opens both at once, while they sleep. The handles held keep
+    /// Windows from giving those ids to another process once these two have
+    /// ended, so the checks and the clean-up below only ever see and kill
+    /// these two: by bare id, the clean-up once killed another test's freshly
+    /// started component that had been given a recycled id (#85).
+    /// </summary>
+    private static async Task<Process[]> ProcessesAsync(GitSandbox sandbox, Task<Outcome> running)
     {
         var runs = Path.Combine(sandbox.RemoteRoot, "runs", sandbox.Instance);
         for (var deadline = Stopwatch.StartNew(); deadline.Elapsed < TimeSpan.FromSeconds(60); await Task.Delay(200, Cancel))
@@ -203,46 +210,48 @@ public sealed class RemoteDisconnectTests
             // Set-Content ends the line: without its newline the file may be half written.
             if (written.EndsWith('\n') && written.Trim() is { Length: > 0 } text && text.Contains(' ', StringComparison.Ordinal))
             {
-                return text.Split(' ').Select(int.Parse).ToArray();
+                return [.. text.Split(' ').Select(int.Parse).Select(Open)];
             }
         }
 
         throw new TimeoutException("The command did not start its child within 60 s.");
     }
 
-    private static async Task<bool> GoneWithinAsync(int[] pids, TimeSpan wait)
+    private static Process Open(int pid)
+    {
+        var process = Process.GetProcessById(pid);
+        // Opens the handle now; the Process keeps it until disposed.
+        _ = process.SafeHandle;
+        return process;
+    }
+
+    private static async Task<bool> GoneWithinAsync(Process[] processes, TimeSpan wait)
     {
         for (var watch = Stopwatch.StartNew(); watch.Elapsed < wait; await Task.Delay(200, Cancel))
         {
-            if (!pids.Any(Alive))
+            if (processes.All(p => p.HasExited))
             {
                 return true;
             }
         }
 
-        return !pids.Any(Alive);
+        return processes.All(p => p.HasExited);
     }
 
-    private static bool Alive(int pid)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            return !process.HasExited;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-    }
+    private static string Running(Process[] processes) =>
+        string.Join(", ", processes.Where(p => !p.HasExited).Select(p => p.Id));
 
-    private static void CleanUp(DirectoryMachine machine, int[] pids)
+    private static void CleanUp(DirectoryMachine machine, Process[] processes)
     {
         machine.KillAbandoned();
-        foreach (var pid in pids.Where(Alive))
+        foreach (var process in processes)
         {
-            using var process = Process.GetProcessById(pid);
-            process.Kill(entireProcessTree: true);
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            process.Dispose();
         }
     }
 }

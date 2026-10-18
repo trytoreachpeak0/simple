@@ -6,6 +6,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Simple.Cli\Simple.Cli.csproj" />
+    <!-- The server's own timings (OnboardTerminalRegistry.StaleAfter), so smoke-test bounds follow them (#85). -->
+    <ProjectReference Include="..\..\src\Simple.Server\Simple.Server.csproj" />
   </ItemGroup>
 
 </Project>
