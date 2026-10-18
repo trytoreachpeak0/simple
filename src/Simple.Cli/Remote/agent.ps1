@@ -326,7 +326,9 @@ function Checkout-Snapshot {
     }
 }
 
-function Remove-Instance {
+# $resetRan: simple down --reset ran in the worktree and succeeded. Without
+# a worktree it did not run, and the records it works from stay.
+function Remove-Instance([bool] $resetRan) {
     if (Test-Path -LiteralPath $worktree) {
         Repair-Worktree
         # Twice --force: also a worktree that is locked.
@@ -342,6 +344,42 @@ function Remove-Instance {
     Clear-RefLocks
     foreach ($ref in $spec.ref, $spec.originRef) {
         [void](Start-Git @('-C', $repo, 'update-ref', '-d', $ref))
+    }
+
+    # The command line's own directories of the instance and of the one its
+    # scenario runs used (InstanceStore.InstanceDirectory): down --reset
+    # leaves their lock files and logs there (#88). When it did not run, a
+    # directory that still records processes, a database or a server key
+    # stays: those records are all that can stop, drop or delete them later,
+    # and only the sweep of test names would find them otherwise (review of
+    # #90). Other directories hold only locks and logs. They are under the home
+    # the command saw: SIMPLE_HOME as the request or this machine sets it,
+    # else %LOCALAPPDATA%\simple (InstanceStore.DefaultHome).
+    $simpleHome = @($spec.environment['SIMPLE_HOME'], $env:SIMPLE_HOME) | Where-Object { $_ } | Select-Object -First 1
+    $simpleHome ??= Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'simple'
+    $simpleHome = [IO.Path]::GetFullPath($simpleHome, $worktree)
+    foreach ($name in $spec.forgetInstances) {
+        # An instance name, never a path (SqlServerTarget.IsValidInstanceName).
+        if ($name -cnotmatch '\A[A-Za-z0-9_-]{1,50}\z') {
+            Say "not removing the directory of '$name': not an instance name"
+            continue
+        }
+
+        $directory = Join-Path $simpleHome "instances/$name"
+        if (Test-Path -LiteralPath $directory) {
+            $records = @('state.json', 'sqlserver.txt', 'serverkey.txt' | Where-Object { Test-Path -LiteralPath (Join-Path $directory $_) })
+            if (-not $resetRan -and $records) {
+                Say "keeping $($directory): it still records $($records -join ', '), and with no worktree here simple down --reset did not run"
+                continue
+            }
+
+            try {
+                Remove-Item -LiteralPath $directory -Recurse -Force
+            }
+            catch {
+                Say "could not remove $($directory): $_ Run simple remote forget again."
+            }
+        }
     }
 }
 
@@ -590,7 +628,7 @@ try {
     }
 
     if ($spec.operation -eq 'forget' -and $exitCode -eq 0) {
-        Remove-Instance
+        Remove-Instance $ran
     }
 
     Finish @{ status = 'ran'; ran = $ran; exitCode = $exitCode; hasResults = $hasResults }

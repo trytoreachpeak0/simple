@@ -266,6 +266,69 @@ public sealed partial class LocalSystem(
             ["Last lines of its console output:", .. tail]);
     }
 
+    /// <summary>How long a reset waits for a scenario run that holds the instance's scenario instance.</summary>
+    internal TimeSpan ScenarioWait { get; init; } = LockWait;
+
+    /// <summary>
+    /// simple down --reset: down with <c>reset</c>, and for an instance that is
+    /// not itself a scenario instance first the same for the instance its
+    /// scenario runs use (<see cref="Scenarios.ScenarioRunner.InstanceFor"/>),
+    /// whose database and server key would otherwise outlive the clone (#88).
+    /// The instance is left as it is when its scenario instance cannot be reset.
+    /// </summary>
+    public async Task<Outcome> ResetAsync(string instance, string sqlServer, CancellationToken cancellationToken)
+    {
+        if (Scenarios.ScenarioRunner.IsScenarioInstance(instance))
+        {
+            return await DownAsync(instance, sqlServer, reset: true, cancellationToken);
+        }
+
+        var scenario = Scenarios.ScenarioRunner.InstanceFor(instance);
+        if (!Directory.Exists(store.InstanceDirectory(scenario)))
+        {
+            // No scenario has run as it on this machine: every run takes its
+            // lock there first, which makes the directory. Taking the locks
+            // here would only make it, and removing it again races with a run
+            // that starts meanwhile (review of #90).
+            var alone = await DownAsync(instance, sqlServer, reset: true, cancellationToken);
+            return alone with { Result = WithScenarioInstance(alone.Result, null) };
+        }
+
+        Outcome scenarioDown;
+        // A run in progress resets, starts and stops its instance itself; this
+        // waits for it instead of stopping its system under it.
+        using (var run = await store.LockScenarioAsync(scenario, ScenarioWait, cancellationToken))
+        {
+            if (run is null)
+            {
+                return Outcome.Fail(
+                    ExitCodes.Busy,
+                    $"A scenario run is using instance {scenario}, which down --reset also resets. Instance {instance} is kept: run simple down --reset again once the run is over.");
+            }
+
+            scenarioDown = await DownAsync(scenario, sqlServer, reset: true, cancellationToken);
+        }
+
+        if (scenarioDown.ExitCode != ExitCodes.Success)
+        {
+            return scenarioDown with
+            {
+                Error = $"{scenarioDown.Error} That was the reset of {scenario}, the instance scenario runs use; instance {instance} is kept: run simple down --reset again.",
+            };
+        }
+
+        var down = await DownAsync(instance, sqlServer, reset: true, cancellationToken);
+        return down with { Result = WithScenarioInstance(down.Result, scenarioDown.Result), Lines = [.. scenarioDown.Lines, .. down.Lines] };
+    }
+
+    /// <summary>A down's result with what the down of its scenario instance gave (null when it had none here) as <c>scenarioInstance</c>.</summary>
+    private static System.Text.Json.Nodes.JsonObject WithScenarioInstance(object? result, object? scenarioResult)
+    {
+        var combined = JsonSerializer.SerializeToNode(result, Outcome.JsonOptions) as System.Text.Json.Nodes.JsonObject ?? [];
+        combined["scenarioInstance"] = JsonSerializer.SerializeToNode(scenarioResult, Outcome.JsonOptions);
+        return combined;
+    }
+
     public async Task<Outcome> DownAsync(string instance, string sqlServer, bool reset, CancellationToken cancellationToken)
     {
         using var held = await store.LockInstanceAsync(instance, LockWait, cancellationToken);

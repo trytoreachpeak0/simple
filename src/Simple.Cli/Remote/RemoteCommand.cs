@@ -26,7 +26,7 @@ public static class RemoteCommand
         ["events"] = "Read the server's event record there (simple events). Sends nothing.",
         ["logs"] = "Print a process's log there (simple logs <name>). Sends nothing.",
         ["forget"] = "Stop the instance there, drop its database and delete its worktree and runs (simple down --reset, then remove); "
-            + "the instance its scenario runs used is reset too. "
+            + "the instance its scenario runs used is reset too, and the command line's own directories of both go. "
             + "Use it before deleting the worktree here.",
     };
 
@@ -213,6 +213,11 @@ public static class RemoteCommand
         else if (argumentRefusal is not null)
         {
             outcome = Outcome.Fail(ExitCodes.Usage, argumentRefusal);
+        }
+        else if (SimpleCommand.InstanceRefusal(parse, environment.Repository, starts: true) is { } refused)
+        {
+            // The instance there is a clone's own: its worktree, its simple up, its scenario runs' instance.
+            outcome = Outcome.Fail(ExitCodes.Usage, refused);
         }
         else if (command == "exec" && arguments.Count == 0)
         {
