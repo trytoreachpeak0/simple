@@ -9,8 +9,11 @@ namespace Simple.Server.Sites;
 /// <summary>One version of the site configuration, with its parameters as columns.</summary>
 public sealed class SiteVersionRecord
 {
-    /// <summary>The version number, assigned by the database: 1 for the first import.</summary>
+    /// <summary>The row's own key, assigned by the database; the version's rows refer to it. Not the version number: it may skip.</summary>
     public int Id { get; private set; }
+
+    /// <summary>The version number people see: 1 for the first import, then one more each time, without gaps.</summary>
+    public int Version { get; init; }
 
     public DateTimeOffset CreatedAt { get; init; }
 

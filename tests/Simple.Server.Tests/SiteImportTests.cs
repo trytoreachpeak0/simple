@@ -79,6 +79,55 @@ public sealed class SiteImportTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task IdsThatDifferOnlyInCaseAreTwoAndTheVehicleLookupIsExact()
+    {
+        // Validation compares exactly; so does the database, so the import lists no problem and stores both.
+        server.Start();
+        server.Riot.SetMaps(Map);
+
+        var (exit, output) = await ImportAsync(ValidFile.Replace("id: v2", "id: V1", StringComparison.Ordinal));
+
+        Assert.Equal(SiteImportCommand.Imported, exit);
+        Assert.Contains("version 1", output, StringComparison.Ordinal);
+        await using var scope = server.Services.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<SiteConfigurationStore>();
+        Assert.True(await store.HasVehicleAsync("v1", Cancel));
+        Assert.True(await store.HasVehicleAsync("V1", Cancel));
+        Assert.False(await store.HasVehicleAsync("v2", Cancel));
+    }
+
+    [Fact]
+    public async Task TheVehicleLookupDoesNotIgnoreCase()
+    {
+        server.Start();
+        server.Riot.SetMaps(Map);
+        await ImportAsync(ValidFile);
+
+        await using var scope = server.Services.CreateAsyncScope();
+        Assert.False(await scope.ServiceProvider.GetRequiredService<SiteConfigurationStore>().HasVehicleAsync("V1", Cancel));
+    }
+
+    [Fact]
+    public async Task VersionsCountOneTwoAndAWriteOnAStaleVersionStoresNothing()
+    {
+        server.Start();
+        await using var scope = server.Services.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<SiteConfigurationStore>();
+        var at = DateTimeOffset.UtcNow;
+
+        var first = await store.AddAsync(Valid, SiteVersionSources.Import, at, basedOn: 0, null, Cancel);
+        var stale = await store.AddAsync(Valid, SiteVersionSources.Import, at, basedOn: 0, null, Cancel);
+        var second = await store.AddAsync(Valid, SiteVersionSources.Import, at, basedOn: 1, null, Cancel);
+
+        Assert.Equal(1, first!.Version);
+        Assert.Null(stale);
+        Assert.Equal(2, second!.Version);
+        Assert.Equal(2, (await store.CurrentAsync(Cancel))!.Version);
+        // The store tells the in-memory current version itself.
+        Assert.Equal(2, server.Services.GetRequiredService<CurrentSiteVersion>().Summary!.Version);
+    }
+
+    [Fact]
     public async Task TheImportIsRecordedInTheEventRecord()
     {
         var admin = server.Start();

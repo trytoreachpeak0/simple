@@ -31,8 +31,6 @@ public static class SiteImportCommand
     /// <summary>Nothing imported: the fleet manager's maps could not be read.</summary>
     public const int MapsUnreadable = 3;
 
-    private const string ImportLock = "Simple.SiteConfiguration.Import";
-
     public static async Task<int> RunAsync(IServiceProvider services, string? path, TextWriter output, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -86,30 +84,19 @@ public static class SiteImportCommand
 
         // A first import switches every task type off (ADR 0017).
         configuration = configuration.WithEverySwitchOff();
-        int version;
-        await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
-        {
-            // Two imports at once: the second waits and then finds the first's.
-            await db.Database.ExecuteSqlRawAsync(
-                $"""
-                DECLARE @result int;
-                EXEC @result = sp_getapplock @Resource = N'{ImportLock}', @LockMode = 'Exclusive', @LockOwner = 'Transaction';
-                IF @result < 0 THROW 50003, 'Could not take the site import lock.', 1;
-                """,
-                cancellationToken);
-            if (await store.CurrentSummaryAsync(cancellationToken) is { } raced)
-            {
-                return await AlreadyAsync(output, raced, configuration.Site);
-            }
-
-            var time = scope.ServiceProvider.GetRequiredService<TimeProvider>();
-            version = await store.AddAsync(configuration, SiteVersionSources.Import, time.GetUtcNow(), cancellationToken);
-            await scope.ServiceProvider.GetRequiredService<EventStore>().AppendAsync(
+        var time = scope.ServiceProvider.GetRequiredService<TimeProvider>();
+        var events = scope.ServiceProvider.GetRequiredService<EventStore>();
+        var stored = await store.AddAsync(
+            configuration,
+            SiteVersionSources.Import,
+            time.GetUtcNow(),
+            basedOn: 0,
+            version => events.AppendAsync(
                 EventTypes.SiteConfigurationImported,
                 EventSources.ServerCommand,
                 new
                 {
-                    Version = version,
+                    version.Version,
                     configuration.Site,
                     Projects = configuration.Projects.Count,
                     Zones = configuration.Zones.Count,
@@ -117,13 +104,15 @@ public static class SiteImportCommand
                     TaskTypes = configuration.TaskTypes.Count,
                     Vehicles = configuration.Vehicles.Count,
                 },
-                cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+                cancellationToken),
+            cancellationToken);
+        if (stored is null)
+        {
+            // Another import got there first, between the check above and the write.
+            return await AlreadyAsync(output, (await store.CurrentSummaryAsync(cancellationToken))!, configuration.Site);
         }
 
-        // A server running in this process shows it at once.
-        scope.ServiceProvider.GetService<CurrentSiteVersion>()?.Set(await store.CurrentSummaryAsync(cancellationToken));
-
+        var version = stored.Version;
         await output.WriteLineAsync(
             $"Imported site {configuration.Site} as version {version.ToString(CultureInfo.InvariantCulture)}: "
             + $"{configuration.Projects.Count} projects, {configuration.Zones.Count} dispatch zones, {configuration.Areas.Count} areas, "

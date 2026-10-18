@@ -49,26 +49,28 @@ public sealed class CurrentSiteVersionLoader(IServiceScopeFactory scopes, Curren
 }
 
 /// <summary>Writes versions of the site configuration to their tables and reads the current one back.</summary>
-public sealed class SiteConfigurationStore(SimpleDbContext db)
+public sealed class SiteConfigurationStore(SimpleDbContext db, CurrentSiteVersion current)
 {
+    private const string WriteLock = "Simple.SiteConfiguration.Write";
+
     public Task<SiteVersionSummary?> CurrentSummaryAsync(CancellationToken cancellationToken) =>
         db.SiteVersions.AsNoTracking()
-            .OrderByDescending(v => v.Id)
-            .Select(v => new SiteVersionSummary(v.Id, v.Site, v.CreatedAt, v.Source))
+            .OrderByDescending(v => v.Version)
+            .Select(v => new SiteVersionSummary(v.Version, v.Site, v.CreatedAt, v.Source))
             .FirstOrDefaultAsync(cancellationToken);
 
     /// <summary>Whether the vehicle list of the current configuration has this vehicle ID (ADR 0007); false before the first import.</summary>
     public async Task<bool> HasVehicleAsync(string vehicleId, CancellationToken cancellationToken)
     {
-        var current = await db.SiteVersions.AsNoTracking().OrderByDescending(v => v.Id).Select(v => (int?)v.Id).FirstOrDefaultAsync(cancellationToken);
-        return current is { } version
+        var newest = await db.SiteVersions.AsNoTracking().OrderByDescending(v => v.Version).Select(v => (int?)v.Id).FirstOrDefaultAsync(cancellationToken);
+        return newest is { } version
             && await db.Set<SiteVehicleRecord>().AsNoTracking().AnyAsync(v => v.VersionId == version && v.VehicleId == vehicleId, cancellationToken);
     }
 
     /// <summary>The current configuration: the newest version; null before the first import.</summary>
     public async Task<SiteVersion?> CurrentAsync(CancellationToken cancellationToken)
     {
-        var version = await db.SiteVersions.AsNoTracking().OrderByDescending(v => v.Id).FirstOrDefaultAsync(cancellationToken);
+        var version = await db.SiteVersions.AsNoTracking().OrderByDescending(v => v.Version).FirstOrDefaultAsync(cancellationToken);
         if (version is null)
         {
             return null;
@@ -117,25 +119,53 @@ public sealed class SiteConfigurationStore(SimpleDbContext db)
         {
             TaskTypeSwitches = [.. switches.OrderBy(s => projectOrder.GetValueOrDefault(s.Project)).ThenBy(s => taskTypeOrder.GetValueOrDefault(s.TaskType))],
         };
-        return new SiteVersion(version.Id, version.CreatedAt, version.Source, configuration);
+        return new SiteVersion(version.Version, version.CreatedAt, version.Source, configuration);
     }
 
     /// <summary>
-    /// Adds a version and returns its number. Saves within the context's
-    /// transaction when there is one. The configuration must be valid
-    /// (<see cref="SiteValidator"/>): every slot has exactly one row of the IO
-    /// point map, which is stored with it.
+    /// Stores a configuration as the next version, if the current version is
+    /// still <paramref name="basedOn"/> (0: there is none yet); otherwise
+    /// stores nothing and returns null. In one transaction, under a lock that
+    /// serializes every write of the configuration: the version number is the
+    /// current one plus one, so versions count 1, 2, 3 without gaps, and
+    /// <paramref name="alsoInTransaction"/> (for example the event record's
+    /// entry) commits with it. After the commit the server's in-memory current
+    /// version (<see cref="CurrentSiteVersion"/>) is the new one. The
+    /// configuration must be valid (<see cref="SiteValidator"/>): every slot
+    /// has exactly one row of the IO point map, which is stored with it.
     /// </summary>
-    public async Task<int> AddAsync(SiteConfiguration configuration, string source, DateTimeOffset createdAt, CancellationToken cancellationToken)
+    public async Task<SiteVersionSummary?> AddAsync(
+        SiteConfiguration configuration,
+        string source,
+        DateTimeOffset createdAt,
+        int basedOn,
+        Func<SiteVersionSummary, Task>? alsoInTransaction,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(configuration);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.Database.ExecuteSqlRawAsync(
+            $"""
+            DECLARE @result int;
+            EXEC @result = sp_getapplock @Resource = N'{WriteLock}', @LockMode = 'Exclusive', @LockOwner = 'Transaction';
+            IF @result < 0 THROW 50003, 'Could not take the site configuration write lock.', 1;
+            """,
+            cancellationToken);
+        var newest = await db.SiteVersions.MaxAsync(v => (int?)v.Version, cancellationToken) ?? 0;
+        if (newest != basedOn)
+        {
+            return null;
+        }
+
         var version = new SiteVersionRecord
         {
+            Version = newest + 1,
             CreatedAt = createdAt,
             Site = configuration.Site,
             Description = configuration.Description,
             Source = source,
-            Parameters = configuration.Parameters,
+            // A copy: EF Core tracks an owned object per row, and two versions may share one.
+            Parameters = configuration.Parameters with { },
         };
         db.SiteVersions.Add(version);
         await db.SaveChangesAsync(cancellationToken);
@@ -193,7 +223,15 @@ public sealed class SiteConfigurationStore(SimpleDbContext db)
         }
 
         await db.SaveChangesAsync(cancellationToken);
-        return id;
+        var summary = new SiteVersionSummary(version.Version, version.Site, version.CreatedAt, version.Source);
+        if (alsoInTransaction is not null)
+        {
+            await alsoInTransaction(summary);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        current.Set(summary);
+        return summary;
     }
 
     private IQueryable<T> Rows<T>(int version)

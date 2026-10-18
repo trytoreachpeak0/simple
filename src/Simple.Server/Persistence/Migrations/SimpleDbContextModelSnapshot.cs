@@ -202,7 +202,8 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("DoorSide")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<bool>("NotServed")
                         .HasColumnType("bit");
@@ -212,7 +213,8 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("Zone")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.HasKey("VersionId", "Area");
 
@@ -226,11 +228,13 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("Project")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<string>("TaskType")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<int>("Map")
                         .HasColumnType("int");
@@ -256,7 +260,8 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("Code")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<string>("Name")
                         .HasMaxLength(200)
@@ -277,7 +282,8 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("Code")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -309,11 +315,13 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("Project")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<string>("TaskType")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<bool>("Enabled")
                         .HasColumnType("bit");
@@ -330,7 +338,8 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("VehicleId")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<int>("Position")
                         .HasColumnType("int");
@@ -353,7 +362,8 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("VehicleId")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<int>("Position")
                         .HasColumnType("int");
@@ -361,12 +371,14 @@ namespace Simple.Server.Persistence.Migrations
                     b.Property<string>("Project")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<string>("RiotDeviceKey")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<int>("WaitingMap")
                         .HasColumnType("int");
@@ -377,7 +389,8 @@ namespace Simple.Server.Persistence.Migrations
                     b.Property<string>("Zone")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.HasKey("VersionId", "VehicleId");
 
@@ -391,7 +404,8 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("VehicleId")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<int>("Position")
                         .HasColumnType("int");
@@ -399,7 +413,8 @@ namespace Simple.Server.Persistence.Migrations
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.HasKey("VersionId", "VehicleId", "Position");
 
@@ -413,7 +428,8 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("VehicleId")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<int>("Slot")
                         .HasColumnType("int");
@@ -421,7 +437,8 @@ namespace Simple.Server.Persistence.Migrations
                     b.Property<string>("Group")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<string>("LightCurtain")
                         .IsRequired()
@@ -453,11 +470,13 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("VehicleId")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<string>("TaskType")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<int>("Position")
                         .HasColumnType("int");
@@ -485,14 +504,21 @@ namespace Simple.Server.Persistence.Migrations
                     b.Property<string>("Site")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<string>("Source")
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
+                    b.Property<int>("Version")
+                        .HasColumnType("int");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("Version")
+                        .IsUnique();
 
                     b.ToTable("SiteVersions", (string)null);
                 });
@@ -504,7 +530,8 @@ namespace Simple.Server.Persistence.Migrations
 
                     b.Property<string>("Code")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<string>("DemandOrder")
                         .IsRequired()
@@ -522,7 +549,8 @@ namespace Simple.Server.Persistence.Migrations
                     b.Property<string>("Project")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_BIN2");
 
                     b.Property<long>("WaitCap")
                         .HasColumnType("bigint");

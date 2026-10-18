@@ -17,8 +17,9 @@ namespace Simple.Server.Persistence.Migrations
                 {
                     Id = table.Column<int>(type: "int", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
+                    Version = table.Column<int>(type: "int", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: false),
-                    Site = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    Site = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Description = table.Column<string>(type: "nvarchar(1000)", maxLength: 1000, nullable: true),
                     Source = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
                     Parameters_DepartureNothingLoaded = table.Column<long>(type: "bigint", nullable: false),
@@ -68,8 +69,8 @@ namespace Simple.Server.Persistence.Migrations
                     VersionId = table.Column<int>(type: "int", nullable: false),
                     Area = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Position = table.Column<int>(type: "int", nullable: false),
-                    Zone = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true),
-                    DoorSide = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true),
+                    Zone = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true, collation: "Latin1_General_BIN2"),
+                    DoorSide = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true, collation: "Latin1_General_BIN2"),
                     NotServed = table.Column<bool>(type: "bit", nullable: false)
                 },
                 constraints: table =>
@@ -88,8 +89,8 @@ namespace Simple.Server.Persistence.Migrations
                 columns: table => new
                 {
                     VersionId = table.Column<int>(type: "int", nullable: false),
-                    Project = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
-                    TaskType = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    Project = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
+                    TaskType = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Map = table.Column<int>(type: "int", nullable: false),
                     Position = table.Column<int>(type: "int", nullable: false),
                     Station = table.Column<int>(type: "int", nullable: false),
@@ -111,7 +112,7 @@ namespace Simple.Server.Persistence.Migrations
                 columns: table => new
                 {
                     VersionId = table.Column<int>(type: "int", nullable: false),
-                    Code = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    Code = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Position = table.Column<int>(type: "int", nullable: false),
                     Name = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true)
                 },
@@ -131,7 +132,7 @@ namespace Simple.Server.Persistence.Migrations
                 columns: table => new
                 {
                     VersionId = table.Column<int>(type: "int", nullable: false),
-                    Code = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    Code = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Position = table.Column<int>(type: "int", nullable: false),
                     Name = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: false),
                     Pickup = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
@@ -153,8 +154,8 @@ namespace Simple.Server.Persistence.Migrations
                 columns: table => new
                 {
                     VersionId = table.Column<int>(type: "int", nullable: false),
-                    Project = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
-                    TaskType = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    Project = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
+                    TaskType = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Enabled = table.Column<bool>(type: "bit", nullable: false)
                 },
                 constraints: table =>
@@ -173,7 +174,7 @@ namespace Simple.Server.Persistence.Migrations
                 columns: table => new
                 {
                     VersionId = table.Column<int>(type: "int", nullable: false),
-                    VehicleId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    VehicleId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Position = table.Column<int>(type: "int", nullable: false),
                     Map = table.Column<int>(type: "int", nullable: false),
                     Station = table.Column<int>(type: "int", nullable: false)
@@ -194,11 +195,11 @@ namespace Simple.Server.Persistence.Migrations
                 columns: table => new
                 {
                     VersionId = table.Column<int>(type: "int", nullable: false),
-                    VehicleId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    VehicleId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Position = table.Column<int>(type: "int", nullable: false),
-                    RiotDeviceKey = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
-                    Project = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
-                    Zone = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    RiotDeviceKey = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
+                    Project = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
+                    Zone = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     WaitingMap = table.Column<int>(type: "int", nullable: false),
                     WaitingStation = table.Column<int>(type: "int", nullable: false)
                 },
@@ -218,9 +219,9 @@ namespace Simple.Server.Persistence.Migrations
                 columns: table => new
                 {
                     VersionId = table.Column<int>(type: "int", nullable: false),
-                    VehicleId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    VehicleId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Position = table.Column<int>(type: "int", nullable: false),
-                    Name = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false)
+                    Name = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2")
                 },
                 constraints: table =>
                 {
@@ -238,9 +239,9 @@ namespace Simple.Server.Persistence.Migrations
                 columns: table => new
                 {
                     VersionId = table.Column<int>(type: "int", nullable: false),
-                    VehicleId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    VehicleId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Slot = table.Column<int>(type: "int", nullable: false),
-                    Group = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    Group = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Position = table.Column<int>(type: "int", nullable: false),
                     Lock = table.Column<string>(type: "nvarchar(10)", maxLength: 10, nullable: false),
                     LightCurtain = table.Column<string>(type: "nvarchar(10)", maxLength: 10, nullable: false),
@@ -262,8 +263,8 @@ namespace Simple.Server.Persistence.Migrations
                 columns: table => new
                 {
                     VersionId = table.Column<int>(type: "int", nullable: false),
-                    VehicleId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
-                    TaskType = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    VehicleId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
+                    TaskType = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Position = table.Column<int>(type: "int", nullable: false)
                 },
                 constraints: table =>
@@ -282,10 +283,10 @@ namespace Simple.Server.Persistence.Migrations
                 columns: table => new
                 {
                     VersionId = table.Column<int>(type: "int", nullable: false),
-                    Code = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    Code = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     Position = table.Column<int>(type: "int", nullable: false),
                     Name = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: false),
-                    Project = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    Project = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false, collation: "Latin1_General_BIN2"),
                     DemandOrder = table.Column<string>(type: "nvarchar(40)", maxLength: 40, nullable: false),
                     WaitCap = table.Column<long>(type: "bigint", nullable: false)
                 },
@@ -299,6 +300,12 @@ namespace Simple.Server.Persistence.Migrations
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Restrict);
                 });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SiteVersions_Version",
+                table: "SiteVersions",
+                column: "Version",
+                unique: true);
         }
 
         /// <inheritdoc />

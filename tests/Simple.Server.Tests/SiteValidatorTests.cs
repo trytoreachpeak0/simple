@@ -445,6 +445,32 @@ public sealed class SiteValidatorTests
     }
 
     [Fact]
+    public void ValuesLongerThanTheirColumnsAreRefused()
+    {
+        var longId = new string('v', SiteModel.CodeMaxLength + 1);
+        var longName = new string('名', SiteModel.NameMaxLength + 1);
+        var configuration = WithVehicle("v1", v => v with { Id = longId }) with
+        {
+            TaskTypes = [Valid.TaskTypes[0] with { Name = longName }, Valid.TaskTypes[1]],
+            Areas = [.. Valid.Areas, new AreaSetting(new string('A', SiteModel.CodeMaxLength + 1), "Z", "front", false)],
+        };
+
+        var problems = SiteValidator.Validate(configuration, Map).Select(p => p.Where).ToList();
+
+        Assert.Contains($"vehicles[{longId}].id", problems);
+        Assert.Contains("task-types[TO_OVEN].name", problems);
+        Assert.Contains(problems, p => p.StartsWith("areas[AAA", StringComparison.Ordinal) && p.EndsWith("].area", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ValuesAtTheirColumnsLengthAreAllowed()
+    {
+        var configuration = WithVehicle("v1", v => v with { Id = new string('v', SiteModel.CodeMaxLength) });
+
+        Assert.Empty(SiteValidator.Validate(configuration, Map));
+    }
+
+    [Fact]
     public void AZoneOfAnUnknownProjectIsRefused()
     {
         var configuration = Valid with { Zones = [.. Valid.Zones, new DispatchZone("Y", "Y 区", "NOPE", DemandOrderPolicy.NearestFirst, DispatchZone.DefaultWaitCap)] };

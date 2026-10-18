@@ -35,6 +35,7 @@ public static class SiteValidator
         check.Switches();
         check.StationUses();
         check.Parameters();
+        check.Lengths();
         return check.Problems;
     }
 
@@ -326,6 +327,57 @@ public static class SiteValidator
                 Add(
                     "parameters.charge-levels",
                     $"四条电量线要满足 紧急充电线 < 去充电线 < 可接活线 ≤ 充满线（ADR 0020），现在是 {p.UrgentChargeLevel}、{p.ChargeNeededLevel}、{p.ReadyLevel}、{p.FullLevel}。");
+            }
+        }
+
+        // What does not fit its column is listed here rather than failing the import (SiteModel).
+        public void Lengths()
+        {
+            const int code = SiteModel.CodeMaxLength;
+            const int name = SiteModel.NameMaxLength;
+            Fits("name", c.Site, code);
+            Fits("description", c.Description, SiteModel.DescriptionMaxLength);
+            foreach (var p in c.Projects)
+            {
+                Fits($"projects[{p.Code}].code", p.Code, code);
+                Fits($"projects[{p.Code}].name", p.Name, name);
+            }
+
+            foreach (var z in c.Zones)
+            {
+                Fits($"zones[{z.Code}].code", z.Code, code);
+                Fits($"zones[{z.Code}].name", z.Name, name);
+            }
+
+            foreach (var a in c.Areas)
+            {
+                var area = a.Area.Trim();
+                Fits($"areas[{area}].area", area, code);
+                Fits($"areas[{area}].door-side", a.DoorSide, code);
+            }
+
+            foreach (var t in c.TaskTypes)
+            {
+                Fits($"task-types[{t.Code}].code", t.Code, code);
+                Fits($"task-types[{t.Code}].name", t.Name, name);
+            }
+
+            foreach (var v in c.Vehicles)
+            {
+                Fits($"vehicles[{v.Id}].id", v.Id, code);
+                Fits($"vehicles[{v.Id}].riot-device-key", v.RiotDeviceKey, code);
+                foreach (var g in v.SlotGroups)
+                {
+                    Fits($"vehicles[{v.Id}].slot-groups[{g.Name}].name", g.Name, code);
+                }
+            }
+        }
+
+        private void Fits(string at, string? value, int max)
+        {
+            if (value is { Length: var length } && length > max)
+            {
+                Add(at, $"最长 {max} 个字符，现在是 {length} 个。");
             }
         }
 
