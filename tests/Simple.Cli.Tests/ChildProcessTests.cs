@@ -1,4 +1,5 @@
 using System.Collections;
+using System.ComponentModel;
 using System.Diagnostics;
 using Simple.Cli.Processes;
 
@@ -42,6 +43,48 @@ public sealed class ChildProcessTests : IDisposable
         await UntilExitedAsync(started);
         Assert.Equal(uint.MaxValue, started.ExitCode);
         Assert.Equal("exited before it was ready, with exit code -1 (0xFFFFFFFF)", LocalSystem.ExitedBeforeReady(started.ExitCode));
+    }
+
+    [Fact]
+    public void AProcessFoundKeepsItsHandle()
+    {
+        using var started = Start("PING.EXE", "-n", "30", "127.0.0.1");
+        var (pid, startedAt) = (started.Pid, started.StartedAt);
+        using var found = ChildProcess.Find(pid, startedAt);
+        Assert.NotNull(found);
+        // From here on only the process Find returned holds a handle.
+        started.Dispose();
+
+        using (var other = Process.GetProcessById(pid))
+        {
+            other.Kill();
+            other.WaitForExit();
+        }
+
+        // Read through the handle Find opened: without it, the process
+        // would be gone and its exit code with it.
+        Assert.True(found.HasExited);
+        Assert.Equal(-1, found.ExitCode);
+    }
+
+    [Fact]
+    public void AProcessThatRefusesAFullHandleIsStillFoundNotTakenForGone()
+    {
+        using var started = Start("PING.EXE", "-n", "30", "127.0.0.1");
+        try
+        {
+            // As a process started elevated answers an ordinary terminal.
+            using var found = ChildProcess.Find(started.Pid, started.StartedAt, _ => throw new Win32Exception(5));
+
+            Assert.NotNull(found);
+            Assert.Equal(started.Pid, found.Id);
+        }
+        finally
+        {
+            using var other = Process.GetProcessById(started.Pid);
+            other.Kill();
+            other.WaitForExit();
+        }
     }
 
     [Fact]

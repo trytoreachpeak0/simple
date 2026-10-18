@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Sockets;
 using FluentModbus;
 
 namespace Simple.IoSimulator.Core.Tests;
@@ -78,13 +79,16 @@ public sealed class ModbusFaceTests : IDisposable
     /// The module closed the connection, as FluentModbus reports it either
     /// way: a reset (IOException), or the close read as the end of the
     /// stream (InvalidOperationException), whichever reaches the client
-    /// first (#85; the terminal's IoModuleReader takes both as unreadable).
+    /// first (#85; the terminal's IoModuleReader takes any failure as
+    /// unreadable). A read that timed out is an IOException too, but means
+    /// the module stayed silent, not that it closed the connection.
     /// </summary>
     private static void AssertClosed(Action read)
     {
         var e = Record.Exception(read);
         Assert.True(
-            e is IOException or InvalidOperationException { Message: "The TCP connection closed unexpectedly." },
+            e is IOException { InnerException: not SocketException { SocketErrorCode: SocketError.TimedOut } }
+                or InvalidOperationException { Message: "The TCP connection closed unexpectedly." },
             $"Not the connection closing: {e?.ToString() ?? "no exception"}");
     }
 

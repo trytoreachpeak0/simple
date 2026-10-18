@@ -216,13 +216,29 @@ public static class ChildProcess
     /// with it (a stop signal, a wait, a kill) reaches that process and no
     /// other that gets the id once it has exited (#85).
     /// </summary>
-    public static Process? Find(int pid, DateTimeOffset startedAt)
+    public static Process? Find(int pid, DateTimeOffset startedAt) => Find(pid, startedAt, process => _ = process.SafeHandle);
+
+    /// <param name="hold">Opens the handle the process keeps; tests stand in a refusal here.</param>
+    internal static Process? Find(int pid, DateTimeOffset startedAt, Action<Process> hold)
     {
+        ArgumentNullException.ThrowIfNull(hold);
         Process? process = null;
         try
         {
             process = Process.GetProcessById(pid);
-            _ = process.SafeHandle;
+            try
+            {
+                hold(process);
+            }
+            catch (Win32Exception e) when (e.NativeErrorCode == AccessDenied)
+            {
+                // The handle asks for every right, which a process started
+                // elevated refuses an ordinary terminal; its start time can
+                // still be read. It is compared without the handle held, as
+                // before #85, and is never taken for gone: a stop that may
+                // not kill it then fails loudly itself.
+            }
+
             if (!process.HasExited && new DateTimeOffset(process.StartTime.ToUniversalTime()) == startedAt)
             {
                 return process;
