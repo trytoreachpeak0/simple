@@ -43,12 +43,20 @@ public sealed class Cabinet : IDisposable
     private readonly Slot[] slots = Enumerable.Range(1, SlotCount).Select(n => new Slot(n)).ToArray();
     private bool disposed;
 
-    public Cabinet(TimeProvider time, CabinetTiming timing)
+    /// <param name="cargo">The slots (1-8) that hold cargo from the start, their light curtains reading it at once.</param>
+    public Cabinet(TimeProvider time, CabinetTiming timing, IEnumerable<int>? cargo = null)
     {
         ArgumentNullException.ThrowIfNull(time);
         ArgumentNullException.ThrowIfNull(timing);
         this.time = time;
         this.timing = timing;
+        foreach (var number in cargo ?? [])
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(number, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(number, SlotCount);
+            slots[number - 1].Cargo = true;
+            slots[number - 1].CargoSensed = true;
+        }
     }
 
     /// <summary>Raised after an IO point or a slot's state has changed; never under the cabinet's lock.</summary>

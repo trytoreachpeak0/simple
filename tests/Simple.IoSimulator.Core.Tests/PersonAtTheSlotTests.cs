@@ -33,6 +33,22 @@ public sealed class PersonAtTheSlotTests : IDisposable
     }
 
     [Fact]
+    public void CargoThereFromTheStartIsSeenAtOnceAndComesOutThroughTheDoor()
+    {
+        // A scenario's initial state: slots 1 and 3 hold cargo when the cabinet starts.
+        using var cabinet = new Cabinet(module.Time, CabinetTiming.Default, [1, 3]);
+
+        var inputs = cabinet.Inputs();
+        Assert.False(inputs[8]);
+        Assert.True(inputs[9]);
+        Assert.False(inputs[10]);
+        Assert.True(cabinet.State().Slots[0].Cargo);
+        cabinet.WriteOutput(1, true);
+        Assert.Equal(SlotResult.SlotNotEmpty, cabinet.Load(1));
+        Assert.Equal(SlotResult.Done, cabinet.Unload(1));
+    }
+
+    [Fact]
     public void CargoComesOutThroughAnOpenDoorAndAnEmptySlotHasNothingToTakeOut()
     {
         module.WriteOutput(5, true);
