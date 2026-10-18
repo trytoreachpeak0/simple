@@ -29,7 +29,11 @@ variable, an alias in the user's SSH configuration. Set it in the same
 PowerShell command as `simple remote`, since a shell's state may not carry
 from one tool call to the next: `$env:SIMPLE_REMOTE = '<alias>'; ./simple remote …`.
 The person who gave you the task tells you the alias. Without it every
-`simple remote` command ends with 2 and says so.
+`simple remote` command ends with 2 and says so. When there is no remote
+machine to use, ask whoever gave you the task before running anything heavy
+here: on a machine with enough memory to spare, the same commands without
+`remote` (`./simple scenario run <name>`, `dotnet test --solution simple.slnx`)
+do the same work locally.
 
 What `simple remote` does and what its exit codes mean:
 
@@ -213,8 +217,10 @@ person's decision, not part of a test run.
 Every default in this repository points at fakes on loopback, and the command
 line has no switch that points at anything real. In practice:
 
-- `simple up`, `simple scenario run` and everything under `simple remote` start
-  a local system of fakes only, on the machine that runs them. They drop
+- `simple up`, `simple scenario run` and the `simple remote` commands that run
+  `simple` there (`up`, `scenario`, `down` and the like) start a local system
+  of fakes only, on the machine that runs them. `simple remote exec` runs
+  whatever command you give it, so what it reaches is up to that command. They drop
   `Simple__*`, `ConnectionStrings__*`, `ASPNETCORE_*`, `Kestrel__*` and
   `DOTNET_ENVIRONMENT` from the components' environment, and accept only
   LocalDB or a named SQL Server instance on that machine.
