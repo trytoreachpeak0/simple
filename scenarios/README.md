@@ -146,11 +146,11 @@ expectations:                              # 至少一个
 
 ## 时间
 
-业务计时不靠给服务端加"测试倍速"：时长本来就是参数配置（`docs/adr/0017-site-config-lives-in-server.md`），场景要短就在自己的配置里写短。服务端现在还不读厂区配置，所以目前场景只能调假部件的节奏：假 RIoT 用自己的倍速（`initial.fake-riot.speedup`）。
+业务计时不靠给服务端加"测试倍速"：时长本来就是参数配置（`docs/adr/0017-site-config-lives-in-server.md`），场景要短就在自己的配置里写短。服务端起来前已经导入了场景的厂区配置（`sites/<site>/site.yaml`，见 `sites/README.md`），但还没有哪项业务用到这些时长，所以目前场景只能调假部件的节奏：假 RIoT 用自己的倍速（`initial.fake-riot.speedup`）。
 
 ## 厂区
 
-场景默认用虚构的小厂区 `sites/sample/`（三台车、区域 `S1-1`、`S1-2`、`S2-1`，任务类型 `SAMPLE_TO_OVEN`、`SAMPLE_TO_GATE`，和假 MES、假 RIoT 的起始数据对齐，见那里的 README）。校验时会检查：终端数不多于厂区车辆数，假 MES 行的区域号和任务类型是厂区里有的，改的车是厂区车辆清单里的。以后少数"D8 冒烟"场景会用 `site: d8`，等 `sites/d8/site.yaml` 写出来再加。
+场景默认用虚构的小厂区 `sites/sample/`（三台车、区域 `S1-1`、`S1-2`、`S2-1`，任务类型 `SAMPLE_TO_OVEN`、`SAMPLE_TO_GATE`，和假 MES、假 RIoT 的起始数据对齐，见那里的 README）。`run` 起系统时，服务端先导入 `site:` 写的厂区（服务端命令 `import-site`，对着假 RIoT 的地图整份校验），导入不了系统就起不来，场景判"判不了"。校验时会检查：终端数不多于厂区车辆数，假 MES 行的区域号和任务类型是厂区里有的，改的车是厂区车辆清单里的。`sites/d8/site.yaml` 已经有了，但假 RIoT 的地图还不是 D8 的 26 号图，所以 `site: d8` 的场景现在起不来；以后的"D8 冒烟"场景要先给假 RIoT 一份照 26 号图造的地图。
 
 ## 证据
 

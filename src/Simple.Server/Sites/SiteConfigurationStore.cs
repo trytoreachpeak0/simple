@@ -1,0 +1,243 @@
+using Microsoft.EntityFrameworkCore;
+using Simple.Server.Persistence;
+
+namespace Simple.Server.Sites;
+
+/// <summary>A stored version of the site configuration.</summary>
+/// <param name="Version">1 for the first import, one more for every later version.</param>
+/// <param name="Source">How it came, for example <see cref="SiteVersionSources.Import"/>.</param>
+public sealed record SiteVersion(int Version, DateTimeOffset CreatedAt, string Source, SiteConfiguration Configuration);
+
+/// <summary>Which version is current, without its content: for the status API.</summary>
+public sealed record SiteVersionSummary(int Version, string Site, DateTimeOffset CreatedAt, string Source);
+
+/// <summary>
+/// Which version of the site configuration is in effect, held in memory for
+/// the status API, which answers without the database (a database briefly
+/// out of reach logs nobody out, ADR 0045). Loaded when the server starts
+/// and set by whatever stores a version in this process; a version another
+/// process stores (the import command run beside a running server) shows
+/// after the next start.
+/// </summary>
+public sealed class CurrentSiteVersion
+{
+    private SiteVersionSummary? current;
+
+    public SiteVersionSummary? Summary => Volatile.Read(ref current);
+
+    public void Set(SiteVersionSummary? summary) => Volatile.Write(ref current, summary);
+}
+
+/// <summary>Loads <see cref="CurrentSiteVersion"/> at start, after the database is migrated.</summary>
+public sealed class CurrentSiteVersionLoader(IServiceScopeFactory scopes, CurrentSiteVersion current) : IHostedLifecycleService
+{
+    public async Task StartingAsync(CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        current.Set(await scope.ServiceProvider.GetRequiredService<SiteConfigurationStore>().CurrentSummaryAsync(cancellationToken));
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+}
+
+/// <summary>Writes versions of the site configuration to their tables and reads the current one back.</summary>
+public sealed class SiteConfigurationStore(SimpleDbContext db, CurrentSiteVersion current)
+{
+    private const string WriteLock = "Simple.SiteConfiguration.Write";
+
+    public Task<SiteVersionSummary?> CurrentSummaryAsync(CancellationToken cancellationToken) =>
+        db.SiteVersions.AsNoTracking()
+            .OrderByDescending(v => v.Version)
+            .Select(v => new SiteVersionSummary(v.Version, v.Site, v.CreatedAt, v.Source))
+            .FirstOrDefaultAsync(cancellationToken);
+
+    /// <summary>Whether the vehicle list of the current configuration has this vehicle ID (ADR 0007); false before the first import.</summary>
+    public async Task<bool> HasVehicleAsync(string vehicleId, CancellationToken cancellationToken)
+    {
+        var newest = await db.SiteVersions.AsNoTracking().OrderByDescending(v => v.Version).Select(v => (int?)v.Id).FirstOrDefaultAsync(cancellationToken);
+        return newest is { } version
+            && await db.Set<SiteVehicleRecord>().AsNoTracking().AnyAsync(v => v.VersionId == version && v.VehicleId == vehicleId, cancellationToken);
+    }
+
+    /// <summary>The current configuration: the newest version; null before the first import.</summary>
+    public async Task<SiteVersion?> CurrentAsync(CancellationToken cancellationToken)
+    {
+        var version = await db.SiteVersions.AsNoTracking().OrderByDescending(v => v.Version).FirstOrDefaultAsync(cancellationToken);
+        if (version is null)
+        {
+            return null;
+        }
+
+        var id = version.Id;
+        var vehicles = await Rows<SiteVehicleRecord>(id).OrderBy(x => x.Position).ToListAsync(cancellationToken);
+        var vehicleTaskTypes = (await Rows<SiteVehicleTaskTypeRecord>(id).OrderBy(x => x.Position).ToListAsync(cancellationToken)).ToLookup(x => x.VehicleId);
+        var groups = (await Rows<SiteVehicleSlotGroupRecord>(id).OrderBy(x => x.Position).ToListAsync(cancellationToken)).ToLookup(x => x.VehicleId);
+        var slots = (await Rows<SiteVehicleSlotRecord>(id).OrderBy(x => x.Position).ToListAsync(cancellationToken)).ToLookup(x => x.VehicleId);
+        var chargers = (await Rows<SiteVehicleChargerRecord>(id).OrderBy(x => x.Position).ToListAsync(cancellationToken)).ToLookup(x => x.VehicleId);
+
+        var configuration = new SiteConfiguration
+        {
+            Site = version.Site,
+            Description = version.Description,
+            Parameters = version.Parameters,
+            Projects = await Rows<SiteProjectRecord>(id).OrderBy(x => x.Position).Select(x => new Project(x.Code, x.Name)).ToListAsync(cancellationToken),
+            Zones = await Rows<SiteZoneRecord>(id).OrderBy(x => x.Position)
+                .Select(x => new DispatchZone(x.Code, x.Name, x.Project, x.DemandOrder, x.WaitCap)).ToListAsync(cancellationToken),
+            Areas = await Rows<SiteAreaRecord>(id).OrderBy(x => x.Position)
+                .Select(x => new AreaSetting(x.Area, x.Zone, x.DoorSide, x.NotServed)).ToListAsync(cancellationToken),
+            TaskTypes = await Rows<SiteTaskTypeRecord>(id).OrderBy(x => x.Position)
+                .Select(x => new TaskType(x.Code, x.Name, x.Pickup, x.Unload)).ToListAsync(cancellationToken),
+            FixedStations = await Rows<SiteFixedStationRecord>(id).OrderBy(x => x.Position)
+                .Select(x => new FixedStation(x.Project, x.TaskType, new StationRef(x.Map, x.Station), x.AllLoaded)).ToListAsync(cancellationToken),
+            Vehicles =
+            [
+                .. vehicles.Select(v => new Vehicle(
+                    v.VehicleId,
+                    v.RiotDeviceKey,
+                    v.Project,
+                    v.Zone,
+                    [.. vehicleTaskTypes[v.VehicleId].Select(t => t.TaskType)],
+                    [.. groups[v.VehicleId].Select(g => new SlotGroup(g.Name, [.. slots[v.VehicleId].Where(s => s.Group == g.Name).Select(s => s.Slot)]))],
+                    [.. chargers[v.VehicleId].Select(c => new StationRef(c.Map, c.Station))],
+                    new StationRef(v.WaitingMap, v.WaitingStation),
+                    [.. slots[v.VehicleId].OrderBy(s => s.Slot).Select(s => new SlotIo(s.Slot, Point(s.Lock), Point(s.LightCurtain), Point(s.Unlock)))])),
+            ],
+        };
+        // Switches in the order of their projects, then of their task types.
+        var switches = await Rows<SiteTaskTypeSwitchRecord>(id).Select(x => new TaskTypeSwitch(x.Project, x.TaskType, x.Enabled)).ToListAsync(cancellationToken);
+        var projectOrder = configuration.Projects.Select((p, i) => (p.Code, i)).ToDictionary(x => x.Code, x => x.i);
+        var taskTypeOrder = configuration.TaskTypes.Select((t, i) => (t.Code, i)).ToDictionary(x => x.Code, x => x.i);
+        configuration = configuration with
+        {
+            TaskTypeSwitches = [.. switches.OrderBy(s => projectOrder.GetValueOrDefault(s.Project)).ThenBy(s => taskTypeOrder.GetValueOrDefault(s.TaskType))],
+        };
+        return new SiteVersion(version.Version, version.CreatedAt, version.Source, configuration);
+    }
+
+    /// <summary>
+    /// Stores a configuration as the next version, if the current version is
+    /// still <paramref name="basedOn"/> (0: there is none yet); otherwise
+    /// stores nothing and returns null. In one transaction, under a lock that
+    /// serializes every write of the configuration: the version number is the
+    /// current one plus one, so versions count 1, 2, 3 without gaps, and
+    /// <paramref name="alsoInTransaction"/> (for example the event record's
+    /// entry) commits with it. After the commit the server's in-memory current
+    /// version (<see cref="CurrentSiteVersion"/>) is the new one. The
+    /// configuration must be valid (<see cref="SiteValidator"/>): every slot
+    /// has exactly one row of the IO point map, which is stored with it.
+    /// </summary>
+    public async Task<SiteVersionSummary?> AddAsync(
+        SiteConfiguration configuration,
+        string source,
+        DateTimeOffset createdAt,
+        int basedOn,
+        Func<SiteVersionSummary, Task>? alsoInTransaction,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.Database.ExecuteSqlRawAsync(
+            $"""
+            DECLARE @result int;
+            EXEC @result = sp_getapplock @Resource = N'{WriteLock}', @LockMode = 'Exclusive', @LockOwner = 'Transaction';
+            IF @result < 0 THROW 50003, 'Could not take the site configuration write lock.', 1;
+            """,
+            cancellationToken);
+        var newest = await db.SiteVersions.MaxAsync(v => (int?)v.Version, cancellationToken) ?? 0;
+        if (newest != basedOn)
+        {
+            return null;
+        }
+
+        var version = new SiteVersionRecord
+        {
+            Version = newest + 1,
+            CreatedAt = createdAt,
+            Site = configuration.Site,
+            Description = configuration.Description,
+            Source = source,
+            // A copy: EF Core tracks an owned object per row, and two versions may share one.
+            Parameters = configuration.Parameters with { },
+        };
+        db.SiteVersions.Add(version);
+        await db.SaveChangesAsync(cancellationToken);
+
+        var id = version.Id;
+        db.AddRange(configuration.Projects.Select((p, i) => new SiteProjectRecord { VersionId = id, Position = i, Code = p.Code, Name = p.Name }));
+        db.AddRange(configuration.Zones.Select((z, i) => new SiteZoneRecord
+        {
+            VersionId = id, Position = i, Code = z.Code, Name = z.Name, Project = z.Project, DemandOrder = z.DemandOrder, WaitCap = z.WaitCap,
+        }));
+        db.AddRange(configuration.Areas.Select((a, i) => new SiteAreaRecord
+        {
+            VersionId = id, Position = i, Area = a.Area, Zone = a.Zone, DoorSide = a.DoorSide, NotServed = a.NotServed,
+        }));
+        db.AddRange(configuration.TaskTypes.Select((t, i) => new SiteTaskTypeRecord
+        {
+            VersionId = id, Position = i, Code = t.Code, Name = t.Name, Pickup = t.Pickup, Unload = t.Unload,
+        }));
+        db.AddRange(configuration.TaskTypeSwitches.Select(s => new SiteTaskTypeSwitchRecord
+        {
+            VersionId = id, Project = s.Project, TaskType = s.TaskType, Enabled = s.Enabled,
+        }));
+        db.AddRange(configuration.FixedStations.Select((f, i) => new SiteFixedStationRecord
+        {
+            VersionId = id, Position = i, Project = f.Project, TaskType = f.TaskType, Map = f.Station.Map, Station = f.Station.Station, AllLoaded = f.AllLoaded,
+        }));
+        foreach (var (v, i) in configuration.Vehicles.Select((v, i) => (v, i)))
+        {
+            db.Add(new SiteVehicleRecord
+            {
+                VersionId = id,
+                Position = i,
+                VehicleId = v.Id,
+                RiotDeviceKey = v.RiotDeviceKey,
+                Project = v.Project,
+                Zone = v.Zone,
+                WaitingMap = v.WaitingPoint.Map,
+                WaitingStation = v.WaitingPoint.Station,
+            });
+            db.AddRange(v.TaskTypes.Select((t, j) => new SiteVehicleTaskTypeRecord { VersionId = id, VehicleId = v.Id, Position = j, TaskType = t }));
+            db.AddRange(v.SlotGroups.Select((g, j) => new SiteVehicleSlotGroupRecord { VersionId = id, VehicleId = v.Id, Position = j, Name = g.Name }));
+            var io = v.IoPoints.ToDictionary(x => x.Slot);
+            db.AddRange(v.SlotGroups.SelectMany(g => g.Slots.Select((slot, j) => new SiteVehicleSlotRecord
+            {
+                VersionId = id,
+                VehicleId = v.Id,
+                Slot = slot,
+                Group = g.Name,
+                Position = j,
+                Lock = io[slot].Lock.ToString(),
+                LightCurtain = io[slot].LightCurtain.ToString(),
+                Unlock = io[slot].Unlock.ToString(),
+            })));
+            db.AddRange(v.Chargers.Select((c, j) => new SiteVehicleChargerRecord { VersionId = id, VehicleId = v.Id, Position = j, Map = c.Map, Station = c.Station }));
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        var summary = new SiteVersionSummary(version.Version, version.Site, version.CreatedAt, version.Source);
+        if (alsoInTransaction is not null)
+        {
+            await alsoInTransaction(summary);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        current.Set(summary);
+        return summary;
+    }
+
+    private IQueryable<T> Rows<T>(int version)
+        where T : class =>
+        db.Set<T>().AsNoTracking().Where(x => EF.Property<int>(x, "VersionId") == version);
+
+    private static IoPoint Point(string text) =>
+        IoPoint.Parse(text) ?? throw new InvalidDataException($"The IO point '{text}' in the database is not DI<n> or DO<n>.");
+}

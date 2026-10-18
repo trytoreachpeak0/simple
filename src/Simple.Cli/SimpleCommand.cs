@@ -3,6 +3,7 @@ using System.CommandLine.Parsing;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using Simple.Cli.Instances;
+using Simple.Cli.Scenarios;
 
 namespace Simple.Cli;
 
@@ -13,6 +14,7 @@ public static partial class SimpleCommand
     public const string JsonOption = "--json";
     public const string BreakAwayOption = "--break-away";
     public const string ServerKeyStoreOption = "--server-key-store";
+    public const string SiteOption = "--site";
 
     /// <summary>
     /// The exit codes each command can end with, listed in its help. Every
@@ -71,6 +73,12 @@ public static partial class SimpleCommand
                 result.AddError("--terminals must be 0 or more.");
             }
         });
+
+        var site = new Option<string>(SiteOption)
+        {
+            Description = "The site whose starting configuration the server imports at first start: sites/<site>/site.yaml in this clone.",
+            DefaultValueFactory = _ => Site.Default,
+        };
 
         var timeout = new Option<int>("--timeout")
         {
@@ -141,6 +149,7 @@ public static partial class SimpleCommand
             + "Running it again while the instance is up starts nothing. " + ExitCodesOf("up"))
         {
             terminals,
+            site,
             timeout,
             breakAway,
             keyStore,
@@ -316,7 +325,8 @@ public static partial class SimpleCommand
         return new UpOptions(
             parse.GetValue<int>("--terminals"),
             parse.GetValue<bool>(BreakAwayOption),
-            ServerKey.TryParse(text, out var store) ? store : throw new ArgumentException($"'{text}' is neither User nor Machine.", nameof(parse)));
+            ServerKey.TryParse(text, out var store) ? store : throw new ArgumentException($"'{text}' is neither User nor Machine.", nameof(parse)),
+            Site: parse.GetValue<string>(SiteOption) ?? Site.Default);
     }
 
     public static string ExitCodesOf(string command) => $"Exit codes {string.Join(", ", CommandExitCodes[command])}.";

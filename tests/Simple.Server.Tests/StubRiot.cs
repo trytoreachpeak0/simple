@@ -1,12 +1,15 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
+using Simple.Server.Riot;
 
 namespace Simple.Server.Tests;
 
 /// <summary>
 /// Stands in for RIoT inside the server's <c>riot</c> HTTP client: answers
-/// the map list in RIoT's envelope for the right call key, or fails the way
-/// a test asks.
+/// the map list and each map's stations in RIoT's envelope for the right call
+/// key, or fails the way a test asks. Its maps are two without stations until
+/// a test gives it others (<see cref="SetMaps"/>).
 /// </summary>
 public sealed class StubRiot
 {
@@ -16,6 +19,7 @@ public sealed class StubRiot
     private string? unreachable;
     private bool cutOff;
     private bool businessFailure;
+    private FleetMaps? maps;
 
     public int Calls { get; private set; }
 
@@ -23,6 +27,9 @@ public sealed class StubRiot
 
     /// <summary>RIoT answers again.</summary>
     public void Answer() => Set(() => (unreachable, cutOff, businessFailure) = (null, false, false));
+
+    /// <summary>The maps and stations it answers from now on; a station's name is what it is called in RIoT.</summary>
+    public void SetMaps(FleetMaps given) => Set(() => maps = given);
 
     /// <summary>Every call fails like a refused connection.</summary>
     public void BeUnreachable(string error = "stub: RIoT refused the connection") => Set(() => unreachable = error);
@@ -54,7 +61,9 @@ public sealed class StubRiot
                 throw new HttpRequestException(unreachable);
             }
 
-            if (request.RequestUri?.AbsolutePath != "/api/imap/v1/mapInfo/getALLMapInfoExcludeMapJson")
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            const string stationsOf = "/api/imap/v1/mapInfo/stations/";
+            if (path != "/api/imap/v1/mapInfo/getALLMapInfoExcludeMapJson" && !path.StartsWith(stationsOf, StringComparison.Ordinal))
             {
                 return new HttpResponseMessage(HttpStatusCode.NotFound);
             }
@@ -64,18 +73,30 @@ public sealed class StubRiot
                 return Json(HttpStatusCode.Unauthorized, """{"code":"401","message":"暂未登录或token已经过期","msgDetail":"","tid":""}""");
             }
 
-            const string maps = """{"code":"0","message":"成功","msgDetail":"","result":[{"id":25,"name":"老厂前线new"},{"id":26,"name":"老厂前线new_wk"}],"tid":""}""";
+            if (path.StartsWith(stationsOf, StringComparison.Ordinal))
+            {
+                var map = maps?.Map(int.Parse(path[stationsOf.Length..], System.Globalization.CultureInfo.InvariantCulture));
+                var stations = (map?.Stations ?? []).Select(s => new { id = s.Id, name = s.Name, type = 1 });
+                return Json(HttpStatusCode.OK, Envelope(stations));
+            }
+
+            var list = maps is null
+                ? """{"code":"0","message":"成功","msgDetail":"","result":[{"id":25,"name":"老厂前线new"},{"id":26,"name":"老厂前线new_wk"}],"tid":""}"""
+                : Envelope(maps.Maps.Select(m => new { id = m.Id, name = m.Name }));
             if (cutOff)
             {
-                var bytes = Encoding.UTF8.GetBytes(maps);
+                var bytes = Encoding.UTF8.GetBytes(list);
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new EndsPrematurely(bytes[..(bytes.Length / 2)])) };
             }
 
             return businessFailure
                 ? Json(HttpStatusCode.OK, """{"code":"00002","message":"内部错误","msgDetail":"java.lang.NullPointerException","tid":""}""")
-                : Json(HttpStatusCode.OK, maps);
+                : Json(HttpStatusCode.OK, list);
         }
     }
+
+    private static string Envelope(object result) =>
+        JsonSerializer.Serialize(new { code = "0", message = "成功", msgDetail = "", result, tid = "" });
 
     private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
         new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };

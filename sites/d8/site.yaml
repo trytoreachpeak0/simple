@@ -1,0 +1,412 @@
+# D8 的起始业务配置（sites/d8/README.md）；格式见 sites/README.md。
+# 照 v2 线 2026-10-14 切换、10-17 重新部署的生产配置整理（只读 v2 仓库：
+# 8005-agv-control-server 的 fp/v2-impl 分支，切换证据
+# evidence/field/20261014-cs564-production-cutover/），
+# v2 里没有的值标"待定"，汇总在 sites/d8/README.md。
+# 这里只放业务配置，不放端点和凭据。
+name: d8
+description: D8 厂区，RIoT 地图 26（老厂前线new_wk），三台八仓位车
+
+projects:
+  # 待定：项目编号和中文名。v2 线只有一个项目（一批班组长和工程师），这里先叫 D8。
+  - code: D8
+    name: D8
+    zones:
+      # 两区自 2026-10-12 起（N 开头的区域号归焊线区，T 开头的归装片区）。
+      # 需求先后策略不写，用 ADR 0036 的默认值"最近优先"。
+      - { code: WIRE_BONDING, name: 焊线区 }
+      # 待定：中文名"装片区"是照任务类型的中文名拟的，v2 线只有编号。
+      - { code: DIE_ATTACH, name: 装片区 }
+    # 地图 26 上的固定站点（v2 task-type-stations.map-26.settings.json，2026-10-11 对过 RIoT）。
+    # 待定：WIRE_TO_FULL_INSPECTION（焊线送全检）的固定站点，地图 26 上还没有全检站。
+    fixed-stations:
+      - { task-type: WIRE_TO_GATE, map: 26, station: 210 }               # 关卡
+      - { task-type: WIRE_TO_OPTICAL, map: 26, station: 219 }            # 三光
+      - { task-type: WIRE_TO_NITROGEN, map: 26, station: 221 }           # 焊线氮气柜
+      - { task-type: STAGING_TO_WIRE, map: 26, station: 217, all-loaded: 10m }   # 派工待送取货；10 分钟见 ADR 0035
+      - { task-type: DIE_TO_WIRE_STAGING, map: 26, station: 220 }        # 装片氮气柜
+      - { task-type: DIE_TO_OVEN, map: 26, station: 218 }                # 烘箱
+
+# 编号和中文名见 ADR 0038（产品负责人 2026-10-18 确认）。
+task-types:
+  - { code: STAGING_TO_WIRE, name: 待送区送焊线, pickup: fixed-station, unload: machine }
+  - { code: WIRE_TO_GATE, name: 焊线送关卡, pickup: machine, unload: fixed-station }
+  - { code: WIRE_TO_OPTICAL, name: 焊线送三光, pickup: machine, unload: fixed-station }
+  - { code: DIE_TO_WIRE_STAGING, name: 装片送待送区, pickup: machine, unload: fixed-station }
+  - { code: DIE_TO_OVEN, name: 装片送烘箱, pickup: machine, unload: fixed-station }
+  - { code: WIRE_TO_NITROGEN, name: 焊线送氮气柜, pickup: machine, unload: fixed-station }
+  - { code: WIRE_TO_FULL_INSPECTION, name: 焊线送全检, pickup: machine, unload: fixed-station }
+
+# v2 线生产用的区域号表（area-merged-N-T.csv，316 行；FRONT 是 1～4 号仓、REAR 是 5～8 号仓）。
+# 待定：T8-8。v2 线 10-17 起导入时去掉了它（MES 里还挂着一条 09-02 的陈旧需求），
+# 这里照此设为不服务；以后要不要送由产品负责人定。
+areas:
+  - { area: N1-1, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-2, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-3, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-4, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-5, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-6, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-7, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-8, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-9, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-10, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-11, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-12, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-13, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-14, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-15, zone: WIRE_BONDING, door-side: front }
+  - { area: N1-16, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-1, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-2, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-3, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-4, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-5, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-6, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-7, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-8, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-9, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-10, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-11, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-12, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-13, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-14, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-15, zone: WIRE_BONDING, door-side: rear }
+  - { area: N2-16, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-1, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-2, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-3, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-4, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-5, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-6, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-7, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-8, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-9, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-10, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-11, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-12, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-13, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-14, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-15, zone: WIRE_BONDING, door-side: rear }
+  - { area: N3-16, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-1, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-2, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-3, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-4, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-5, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-6, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-7, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-8, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-9, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-10, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-11, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-12, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-13, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-14, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-15, zone: WIRE_BONDING, door-side: front }
+  - { area: N4-16, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-1, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-2, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-3, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-4, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-5, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-6, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-7, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-8, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-9, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-10, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-11, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-12, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-13, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-14, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-15, zone: WIRE_BONDING, door-side: front }
+  - { area: N5-16, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-1, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-2, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-3, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-4, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-5, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-6, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-7, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-8, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-9, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-10, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-11, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-12, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-13, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-14, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-15, zone: WIRE_BONDING, door-side: rear }
+  - { area: N6-16, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-1, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-2, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-3, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-4, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-5, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-6, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-7, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-8, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-9, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-10, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-11, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-12, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-13, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-14, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-15, zone: WIRE_BONDING, door-side: rear }
+  - { area: N7-16, zone: WIRE_BONDING, door-side: front }
+  - { area: N11-1, zone: WIRE_BONDING, door-side: front }
+  - { area: N11-2, zone: WIRE_BONDING, door-side: front }
+  - { area: N11-3, zone: WIRE_BONDING, door-side: front }
+  - { area: N11-4, zone: WIRE_BONDING, door-side: front }
+  - { area: N11-5, zone: WIRE_BONDING, door-side: front }
+  - { area: N11-6, zone: WIRE_BONDING, door-side: front }
+  - { area: N11-7, zone: WIRE_BONDING, door-side: front }
+  - { area: N11-8, zone: WIRE_BONDING, door-side: front }
+  - { area: N11-9, zone: WIRE_BONDING, door-side: front }
+  - { area: N12-1, zone: WIRE_BONDING, door-side: front }
+  - { area: N12-2, zone: WIRE_BONDING, door-side: front }
+  - { area: N12-3, zone: WIRE_BONDING, door-side: front }
+  - { area: N12-4, zone: WIRE_BONDING, door-side: front }
+  - { area: N12-5, zone: WIRE_BONDING, door-side: front }
+  - { area: N12-6, zone: WIRE_BONDING, door-side: front }
+  - { area: N12-7, zone: WIRE_BONDING, door-side: front }
+  - { area: N12-8, zone: WIRE_BONDING, door-side: front }
+  - { area: N12-9, zone: WIRE_BONDING, door-side: rear }
+  - { area: N13-1, zone: WIRE_BONDING, door-side: rear }
+  - { area: N13-2, zone: WIRE_BONDING, door-side: rear }
+  - { area: N13-3, zone: WIRE_BONDING, door-side: rear }
+  - { area: N13-4, zone: WIRE_BONDING, door-side: rear }
+  - { area: N13-5, zone: WIRE_BONDING, door-side: rear }
+  - { area: N13-6, zone: WIRE_BONDING, door-side: rear }
+  - { area: N13-7, zone: WIRE_BONDING, door-side: rear }
+  - { area: N13-8, zone: WIRE_BONDING, door-side: rear }
+  - { area: N14-1, zone: WIRE_BONDING, door-side: rear }
+  - { area: N14-2, zone: WIRE_BONDING, door-side: rear }
+  - { area: N14-3, zone: WIRE_BONDING, door-side: rear }
+  - { area: N14-4, zone: WIRE_BONDING, door-side: rear }
+  - { area: N14-5, zone: WIRE_BONDING, door-side: rear }
+  - { area: N14-6, zone: WIRE_BONDING, door-side: rear }
+  - { area: N14-7, zone: WIRE_BONDING, door-side: rear }
+  - { area: N14-8, zone: WIRE_BONDING, door-side: front }
+  - { area: N15-1, zone: WIRE_BONDING, door-side: front }
+  - { area: N15-2, zone: WIRE_BONDING, door-side: front }
+  - { area: N15-3, zone: WIRE_BONDING, door-side: front }
+  - { area: N15-4, zone: WIRE_BONDING, door-side: front }
+  - { area: N15-5, zone: WIRE_BONDING, door-side: front }
+  - { area: N15-6, zone: WIRE_BONDING, door-side: front }
+  - { area: N15-7, zone: WIRE_BONDING, door-side: front }
+  - { area: N15-8, zone: WIRE_BONDING, door-side: front }
+  - { area: N16-1, zone: WIRE_BONDING, door-side: front }
+  - { area: N16-2, zone: WIRE_BONDING, door-side: front }
+  - { area: N16-3, zone: WIRE_BONDING, door-side: front }
+  - { area: N16-4, zone: WIRE_BONDING, door-side: front }
+  - { area: N16-5, zone: WIRE_BONDING, door-side: front }
+  - { area: N16-6, zone: WIRE_BONDING, door-side: front }
+  - { area: N16-7, zone: WIRE_BONDING, door-side: front }
+  - { area: N16-8, zone: WIRE_BONDING, door-side: rear }
+  - { area: N17-1, zone: WIRE_BONDING, door-side: rear }
+  - { area: N17-2, zone: WIRE_BONDING, door-side: rear }
+  - { area: N17-3, zone: WIRE_BONDING, door-side: rear }
+  - { area: N17-4, zone: WIRE_BONDING, door-side: rear }
+  - { area: N17-5, zone: WIRE_BONDING, door-side: rear }
+  - { area: N17-6, zone: WIRE_BONDING, door-side: rear }
+  - { area: N17-7, zone: WIRE_BONDING, door-side: rear }
+  - { area: N17-8, zone: WIRE_BONDING, door-side: rear }
+  - { area: N18-1, zone: WIRE_BONDING, door-side: rear }
+  - { area: N18-2, zone: WIRE_BONDING, door-side: rear }
+  - { area: N18-3, zone: WIRE_BONDING, door-side: rear }
+  - { area: N18-4, zone: WIRE_BONDING, door-side: rear }
+  - { area: N18-5, zone: WIRE_BONDING, door-side: rear }
+  - { area: N18-6, zone: WIRE_BONDING, door-side: rear }
+  - { area: N18-7, zone: WIRE_BONDING, door-side: rear }
+  - { area: N18-8, zone: WIRE_BONDING, door-side: front }
+  - { area: N19-1, zone: WIRE_BONDING, door-side: front }
+  - { area: N19-2, zone: WIRE_BONDING, door-side: front }
+  - { area: N19-3, zone: WIRE_BONDING, door-side: front }
+  - { area: N19-4, zone: WIRE_BONDING, door-side: front }
+  - { area: N19-5, zone: WIRE_BONDING, door-side: front }
+  - { area: N19-6, zone: WIRE_BONDING, door-side: front }
+  - { area: N19-7, zone: WIRE_BONDING, door-side: front }
+  - { area: N19-8, zone: WIRE_BONDING, door-side: front }
+  - { area: N20-1, zone: WIRE_BONDING, door-side: front }
+  - { area: N20-2, zone: WIRE_BONDING, door-side: front }
+  - { area: N20-3, zone: WIRE_BONDING, door-side: front }
+  - { area: N20-4, zone: WIRE_BONDING, door-side: front }
+  - { area: N20-5, zone: WIRE_BONDING, door-side: front }
+  - { area: N20-6, zone: WIRE_BONDING, door-side: front }
+  - { area: N20-7, zone: WIRE_BONDING, door-side: front }
+  - { area: N20-8, zone: WIRE_BONDING, door-side: rear }
+  - { area: N21-1, zone: WIRE_BONDING, door-side: rear }
+  - { area: N21-2, zone: WIRE_BONDING, door-side: rear }
+  - { area: N21-3, zone: WIRE_BONDING, door-side: rear }
+  - { area: N21-4, zone: WIRE_BONDING, door-side: rear }
+  - { area: N21-5, zone: WIRE_BONDING, door-side: rear }
+  - { area: N21-6, zone: WIRE_BONDING, door-side: rear }
+  - { area: N21-7, zone: WIRE_BONDING, door-side: rear }
+  - { area: N21-8, zone: WIRE_BONDING, door-side: rear }
+  - { area: N22-1, zone: WIRE_BONDING, door-side: rear }
+  - { area: N22-2, zone: WIRE_BONDING, door-side: rear }
+  - { area: N22-3, zone: WIRE_BONDING, door-side: rear }
+  - { area: N22-4, zone: WIRE_BONDING, door-side: rear }
+  - { area: N22-5, zone: WIRE_BONDING, door-side: rear }
+  - { area: N22-6, zone: WIRE_BONDING, door-side: rear }
+  - { area: N22-7, zone: WIRE_BONDING, door-side: rear }
+  - { area: N22-8, zone: WIRE_BONDING, door-side: front }
+  - { area: N23-1, zone: WIRE_BONDING, door-side: front }
+  - { area: N23-2, zone: WIRE_BONDING, door-side: front }
+  - { area: N23-3, zone: WIRE_BONDING, door-side: front }
+  - { area: N23-4, zone: WIRE_BONDING, door-side: front }
+  - { area: N23-5, zone: WIRE_BONDING, door-side: front }
+  - { area: N23-6, zone: WIRE_BONDING, door-side: front }
+  - { area: N23-7, zone: WIRE_BONDING, door-side: front }
+  - { area: T1-1, zone: DIE_ATTACH, door-side: front }
+  - { area: T1-2, zone: DIE_ATTACH, door-side: front }
+  - { area: T1-3, zone: DIE_ATTACH, door-side: front }
+  - { area: T1-4, zone: DIE_ATTACH, door-side: front }
+  - { area: T1-5, zone: DIE_ATTACH, door-side: front }
+  - { area: T1-6, zone: DIE_ATTACH, door-side: front }
+  - { area: T1-7, zone: DIE_ATTACH, door-side: front }
+  - { area: T2-1, zone: DIE_ATTACH, door-side: front }
+  - { area: T2-2, zone: DIE_ATTACH, door-side: rear }
+  - { area: T2-3, zone: DIE_ATTACH, door-side: rear }
+  - { area: T2-4, zone: DIE_ATTACH, door-side: rear }
+  - { area: T2-5, zone: DIE_ATTACH, door-side: rear }
+  - { area: T2-6, zone: DIE_ATTACH, door-side: rear }
+  - { area: T2-7, zone: DIE_ATTACH, door-side: rear }
+  - { area: T2-8, zone: DIE_ATTACH, door-side: rear }
+  - { area: T2-9, zone: DIE_ATTACH, door-side: rear }
+  - { area: T3-1, zone: DIE_ATTACH, door-side: rear }
+  - { area: T3-2, zone: DIE_ATTACH, door-side: rear }
+  - { area: T3-3, zone: DIE_ATTACH, door-side: rear }
+  - { area: T3-4, zone: DIE_ATTACH, door-side: rear }
+  - { area: T3-5, zone: DIE_ATTACH, door-side: rear }
+  - { area: T3-6, zone: DIE_ATTACH, door-side: rear }
+  - { area: T3-7, zone: DIE_ATTACH, door-side: rear }
+  - { area: T3-8, zone: DIE_ATTACH, door-side: rear }
+  - { area: T4-1, zone: DIE_ATTACH, door-side: front }
+  - { area: T4-2, zone: DIE_ATTACH, door-side: front }
+  - { area: T4-3, zone: DIE_ATTACH, door-side: front }
+  - { area: T4-4, zone: DIE_ATTACH, door-side: front }
+  - { area: T4-5, zone: DIE_ATTACH, door-side: front }
+  - { area: T4-6, zone: DIE_ATTACH, door-side: front }
+  - { area: T4-7, zone: DIE_ATTACH, door-side: front }
+  - { area: T4-8, zone: DIE_ATTACH, door-side: front }
+  - { area: T5-1, zone: DIE_ATTACH, door-side: front }
+  - { area: T5-2, zone: DIE_ATTACH, door-side: front }
+  - { area: T5-3, zone: DIE_ATTACH, door-side: front }
+  - { area: T5-4, zone: DIE_ATTACH, door-side: front }
+  - { area: T5-5, zone: DIE_ATTACH, door-side: front }
+  - { area: T5-6, zone: DIE_ATTACH, door-side: front }
+  - { area: T5-7, zone: DIE_ATTACH, door-side: front }
+  - { area: T5-8, zone: DIE_ATTACH, door-side: front }
+  - { area: T6-1, zone: DIE_ATTACH, door-side: front }
+  - { area: T6-2, zone: DIE_ATTACH, door-side: rear }
+  - { area: T6-3, zone: DIE_ATTACH, door-side: rear }
+  - { area: T6-4, zone: DIE_ATTACH, door-side: rear }
+  - { area: T6-5, zone: DIE_ATTACH, door-side: rear }
+  - { area: T6-6, zone: DIE_ATTACH, door-side: rear }
+  - { area: T6-7, zone: DIE_ATTACH, door-side: rear }
+  - { area: T6-8, zone: DIE_ATTACH, door-side: rear }
+  - { area: T7-1, zone: DIE_ATTACH, door-side: rear }
+  - { area: T7-2, zone: DIE_ATTACH, door-side: rear }
+  - { area: T7-3, zone: DIE_ATTACH, door-side: rear }
+  - { area: T7-4, zone: DIE_ATTACH, door-side: rear }
+  - { area: T7-5, zone: DIE_ATTACH, door-side: rear }
+  - { area: T7-6, zone: DIE_ATTACH, door-side: rear }
+  - { area: T7-7, zone: DIE_ATTACH, door-side: rear }
+  - { area: T8-1, zone: DIE_ATTACH, door-side: rear }
+  - { area: T8-2, zone: DIE_ATTACH, door-side: front }
+  - { area: T8-3, zone: DIE_ATTACH, door-side: front }
+  - { area: T8-4, zone: DIE_ATTACH, door-side: front }
+  - { area: T8-5, zone: DIE_ATTACH, door-side: front }
+  - { area: T8-6, zone: DIE_ATTACH, door-side: front }
+  - { area: T8-7, zone: DIE_ATTACH, door-side: front }
+  - { area: T8-8, zone: DIE_ATTACH, door-side: front, not-served: true }
+  - { area: T8-9, zone: DIE_ATTACH, door-side: front }
+  - { area: T8-10, zone: DIE_ATTACH, door-side: front }
+  - { area: T8-11, zone: DIE_ATTACH, door-side: front }
+  - { area: T11-1, zone: DIE_ATTACH, door-side: rear }
+  - { area: T11-2, zone: DIE_ATTACH, door-side: rear }
+  - { area: T11-3, zone: DIE_ATTACH, door-side: rear }
+  - { area: T11-4, zone: DIE_ATTACH, door-side: rear }
+  - { area: T11-5, zone: DIE_ATTACH, door-side: rear }
+  - { area: T11-6, zone: DIE_ATTACH, door-side: rear }
+  - { area: T11-7, zone: DIE_ATTACH, door-side: rear }
+  - { area: T11-8, zone: DIE_ATTACH, door-side: rear }
+  - { area: T12-1, zone: DIE_ATTACH, door-side: rear }
+  - { area: T12-2, zone: DIE_ATTACH, door-side: front }
+  - { area: T12-3, zone: DIE_ATTACH, door-side: front }
+  - { area: T12-4, zone: DIE_ATTACH, door-side: front }
+  - { area: T12-5, zone: DIE_ATTACH, door-side: front }
+  - { area: T12-6, zone: DIE_ATTACH, door-side: front }
+  - { area: T12-7, zone: DIE_ATTACH, door-side: front }
+  - { area: T12-8, zone: DIE_ATTACH, door-side: front }
+  - { area: T12-9, zone: DIE_ATTACH, door-side: front }
+  - { area: T12-10, zone: DIE_ATTACH, door-side: front }
+  - { area: T13-1, zone: DIE_ATTACH, door-side: front }
+  - { area: T13-2, zone: DIE_ATTACH, door-side: front }
+  - { area: T13-3, zone: DIE_ATTACH, door-side: front }
+  - { area: T13-4, zone: DIE_ATTACH, door-side: front }
+  - { area: T13-5, zone: DIE_ATTACH, door-side: front }
+  - { area: T13-6, zone: DIE_ATTACH, door-side: front }
+  - { area: T13-7, zone: DIE_ATTACH, door-side: front }
+  - { area: T14-1, zone: DIE_ATTACH, door-side: front }
+  - { area: T14-2, zone: DIE_ATTACH, door-side: rear }
+  - { area: T14-3, zone: DIE_ATTACH, door-side: rear }
+  - { area: T14-4, zone: DIE_ATTACH, door-side: rear }
+  - { area: T14-5, zone: DIE_ATTACH, door-side: rear }
+  - { area: T14-6, zone: DIE_ATTACH, door-side: rear }
+  - { area: T14-7, zone: DIE_ATTACH, door-side: rear }
+  - { area: T14-8, zone: DIE_ATTACH, door-side: rear }
+
+# 车辆标识用现场的叫法 agv01～agv03；RIoT deviceKey 见 remote-ops/fleet.md（2026-09-03 对过 RIoT）。
+# 三台车同一车型、同一接线：第 n 仓锁反馈 DI n（1 = 锁着）、光幕 DI n+8（0 = 有货）、开锁 DO n（脉冲）。
+# 充电桩：地图 26 只有 211 号一个桩（充电点1），三台车共用。
+# 待定：等待点。v2 线的 214～216 三个等待点不分车、谁空去谁，而且生产上没开"没活回等待点"；
+# SIMPLE 每台车要有自己的等待点（ADR 0021），这里按顺序先各给一个。
+vehicles:
+  - id: agv01
+    riot-device-key: BROKERX-0c20ff0600d644869a6a80c186065d85   # RIoT 车名 老厂前线新多仓位1
+    project: D8
+    zone: WIRE_BONDING
+    # 待定：WIRE_TO_FULL_INSPECTION 照 v2 的 s3 定义给 agv01，v2 生产上还没开这一类。
+    task-types: [WIRE_TO_GATE, WIRE_TO_OPTICAL, WIRE_TO_NITROGEN, WIRE_TO_FULL_INSPECTION]
+    slot-groups: &slot-groups
+      - { name: front, slots: [1, 2, 3, 4] }
+      - { name: rear, slots: [5, 6, 7, 8] }
+    chargers: [{ map: 26, station: 211 }]
+    waiting-point: { map: 26, station: 214 }   # 等待点1
+    io-points: &io-points
+      - { slot: 1, lock: DI1, light-curtain: DI9, unlock: DO1 }
+      - { slot: 2, lock: DI2, light-curtain: DI10, unlock: DO2 }
+      - { slot: 3, lock: DI3, light-curtain: DI11, unlock: DO3 }
+      - { slot: 4, lock: DI4, light-curtain: DI12, unlock: DO4 }
+      - { slot: 5, lock: DI5, light-curtain: DI13, unlock: DO5 }
+      - { slot: 6, lock: DI6, light-curtain: DI14, unlock: DO6 }
+      - { slot: 7, lock: DI7, light-curtain: DI15, unlock: DO7 }
+      - { slot: 8, lock: DI8, light-curtain: DI16, unlock: DO8 }
+  - id: agv02
+    riot-device-key: BROKERX-f38975561adf46ccb1d2f23833c7d0e4   # 老厂前线新多仓位2
+    project: D8
+    zone: WIRE_BONDING
+    task-types: [STAGING_TO_WIRE]
+    slot-groups: *slot-groups
+    chargers: [{ map: 26, station: 211 }]
+    waiting-point: { map: 26, station: 215 }   # 等待点2
+    io-points: *io-points
+  - id: agv03
+    riot-device-key: BROKERX-7daca4ee91da498d8026c68b7b941127   # 老厂前线新多仓位3
+    project: D8
+    zone: DIE_ATTACH
+    task-types: [DIE_TO_OVEN, DIE_TO_WIRE_STAGING]
+    slot-groups: *slot-groups
+    chargers: [{ map: 26, station: 211 }]
+    waiting-point: { map: 26, station: 216 }   # 等待点3
+    io-points: *io-points
+
+# 不写的参数用汇总表二的默认值（docs/rules-overview.md）。
+# 下面两条电量线取 v2 线的生产值（docs/field/charging-policy-map26.json，2026-10-18 的 version 2）：
+# v2 的"强制充电线"40%（三台车约 25% 会突然掉电，10-18 从 30% 调到 40%）对应去充电线，
+# v2 的"完成充电"80% 对应充满线。待定：这样对应是否合适，紧急充电线、可接活线 v2 没有对应值，用默认 20%、60%。
+parameters:
+  charge-needed-level: 40
+  full-level: 80
