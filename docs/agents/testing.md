@@ -49,7 +49,9 @@ What `simple remote` does and what its exit codes mean:
     names the holder). Run the same command again later; never loop on it.
 - Output and results come back to `artifacts/remote/<instance>/<time>-<commit>/`,
   whose path the last line prints (`output and results in …`): `output.log`,
-  TRX files under `TestResults/`, a scenario's evidence directory.
+  TRX files under `TestResults/`, a scenario's evidence directory, and when a
+  test's `simple up` failed, that instance's console output and program logs
+  under `test-evidence/` (on CI they are in the uploaded test results).
 - Before you delete a clone or worktree, run `./simple remote forget`: it stops
   and drops what this clone left on the remote machine.
 
