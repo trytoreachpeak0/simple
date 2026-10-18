@@ -130,6 +130,11 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
             }
         }
 
+        if (plan.Forget && await ForgetScenariosAsync(cancellationToken) is { } kept)
+        {
+            return kept;
+        }
+
         StreamWriter? log = null;
         if (run is not null)
         {
@@ -231,6 +236,31 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         }
 
         return Outcome.Fail(exitCode, footer, report);
+    }
+
+    /// <summary>
+    /// Resets the instance scenario runs used there, before forget removes
+    /// the worktree it runs from. Null when that is done or there is nothing
+    /// there; otherwise why forget stops, with the instance still there.
+    /// </summary>
+    private async Task<Outcome?> ForgetScenariosAsync(CancellationToken cancellationToken)
+    {
+        var plan = RemotePlan.ForgetScenarios(instance);
+        var result = await AgentAsync(Request("run", plan, null, null, null), PassOn, PassOn, cancellationToken);
+        var exitCode = Status(result) == "ran" ? result.GetProperty("exitCode").GetInt32() : 0;
+        return Status(result) switch
+        {
+            // Never set up there: the forget itself has nothing to remove either.
+            "noWorktree" => null,
+            "ran" when exitCode == 0 => null,
+            "ran" => Outcome.Fail(
+                exitCode,
+                $"simple remote: forget stopped on {machine.Name}: simple down --reset --instance {Scenarios.ScenarioRunner.InstanceFor(instance)} "
+                + $"ended with {exitCode}, so instance {instance} is kept there. Run simple remote forget again."),
+            "busy" => Outcome.Fail(ExitCodes.RemoteBusy, $"simple remote: {result.GetProperty("error").GetString()}"),
+            "failed" => Outcome.Fail(ExitCodes.RemoteFailed, $"simple remote: forget did not run on {machine.Name}: {result.GetProperty("error").GetString()}"),
+            _ => Outcome.Fail(ExitCodes.RemoteFailed, $"simple remote: forget did not run on {machine.Name}: {result.GetRawText()}"),
+        };
     }
 
     private string Where(Snapshot? snapshot) =>

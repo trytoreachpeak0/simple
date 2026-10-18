@@ -142,6 +142,58 @@ public sealed class RemoteRunTests
     }
 
     [Fact]
+    public async Task AScenarioRunEndsWithItsVerdictAndItsEvidenceComesBack()
+    {
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+        // A remote simple that writes its evidence where it is told and ends with "does not hold".
+        sandbox.Write(
+            "simple.ps1",
+            """
+            #Requires -Version 7
+            $evidence = $args[[array]::IndexOf($args, '--evidence') + 1]
+            $run = New-Item -ItemType Directory -Force -Path (Join-Path $evidence 'run-1')
+            Set-Content (Join-Path $run 'result.json') '{"verdict":"does-not-hold"}'
+            "fake simple $args"
+            exit 10
+            """);
+        sandbox.Write("scenarios/new.yaml", "title: new\n");
+
+        var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "scenario", "run", Path.Combine(sandbox.Clone, "scenarios", "new.yaml"));
+
+        Assert.True(exitCode == ExitCodes.DoesNotHold, $"exit code {exitCode}: {stderr}");
+        var line = Assert.Single(Lines(stdout));
+        Assert.StartsWith("fake simple scenario run --server-key-store Machine --evidence ", line, StringComparison.Ordinal);
+        Assert.EndsWith(" scenarios/new.yaml", line, StringComparison.Ordinal);
+        var run = Assert.Single(Directory.GetDirectories(Path.Combine(sandbox.Clone, "artifacts", "remote", sandbox.Instance)));
+        Assert.Contains("does-not-hold", ReadShared(Path.Combine(run, "run-1", "result.json")), StringComparison.Ordinal);
+        Assert.Contains("scenario exited with 10", stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ForgetKeepsTheInstanceWhenTheScenarioInstanceCannotBeReset()
+    {
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+        sandbox.Write(
+            "simple.ps1",
+            """
+            #Requires -Version 7
+            if ($args -contains '--instance') { 'database not dropped'; exit 9 }
+            "fake simple $args"
+            exit 0
+            """);
+        await RunOkAsync(sandbox, machine);
+
+        var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "forget");
+
+        Assert.Equal(ExitCodes.DatabaseFailed, exitCode);
+        Assert.Empty(Lines(stdout));
+        Assert.Contains($"--instance {sandbox.Instance}-scenario ended with 9", stderr, StringComparison.Ordinal);
+        Assert.True(Directory.Exists(sandbox.RemoteWorktree()));
+    }
+
+    [Fact]
     public async Task TheRemoteWorktreeIsExactlyTheSnapshotButKeepsIgnoredFiles()
     {
         await using var sandbox = await GitSandbox.CreateAsync(Cancel);
@@ -328,6 +380,8 @@ public sealed class RemoteRunTests
 
         Assert.True(exitCode == 0, stderr);
         Assert.Equal(["fake simple down --reset"], Lines(stdout));
+        // First the instance the scenario runs there used, its output not mixed into forget's own.
+        Assert.Contains($"fake simple down --reset --instance {sandbox.Instance}-scenario", stderr, StringComparison.Ordinal);
         // Removing the directories must not show up as serialized progress.
         Assert.DoesNotContain("CLIXML", stderr, StringComparison.Ordinal);
         Assert.False(Directory.Exists(sandbox.RemoteWorktree()));

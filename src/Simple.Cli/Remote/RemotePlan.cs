@@ -6,7 +6,7 @@ namespace Simple.Cli.Remote;
 /// </summary>
 /// <param name="Checkout">Sends the working tree and checks it out first.</param>
 /// <param name="Slot">Takes one of the machine's slots for heavy work while it runs.</param>
-/// <param name="KeepsResults">Gets a run directory, whose contents (test results) come back.</param>
+/// <param name="KeepsResults">Gets a run directory, whose contents (test results, scenario evidence) come back.</param>
 /// <param name="RunsSimple">Runs the remote <c>simple</c>; with --json its JSON is kept in the result.</param>
 /// <param name="Forget">Removes the instance from the remote machine once the command has succeeded.</param>
 public sealed record RemotePlan(
@@ -18,7 +18,10 @@ public sealed record RemotePlan(
     bool RunsSimple,
     bool Forget = false)
 {
-    public static readonly IReadOnlyList<string> Commands = ["build", "test", "exec", "up", "down", "status", "events", "logs", "forget"];
+    public static readonly IReadOnlyList<string> Commands = ["build", "test", "scenario", "exec", "up", "down", "status", "events", "logs", "forget"];
+
+    /// <summary>What simple remote scenario passes on itself; the caller may not.</summary>
+    public static readonly IReadOnlyList<string> ScenarioOwnOptions = ["--evidence", global::Simple.Cli.SimpleCommand.ServerKeyStoreOption, "--keep-up"];
 
     /// <param name="runDirectory">Where the run's results go on the remote machine (build, test, exec).</param>
     public static RemotePlan For(string command, IReadOnlyList<string> arguments, string runDirectory, bool json)
@@ -30,6 +33,16 @@ public sealed record RemotePlan(
             "build" => new("dotnet", ["build", "simple.slnx", "-nologo", .. arguments], Checkout: true, Slot: true, KeepsResults: true, RunsSimple: false),
             // --project (RemoteCommand) runs one project in place of the solution.
             "test" => new("dotnet", ["test", .. Target(arguments), .. ResultsArguments(arguments, runDirectory), .. arguments], true, true, true, false),
+            // A scenario run builds and brings a system up, so it takes a slot
+            // like up. Its server cannot use the user's key store over SSH,
+            // and its evidence goes into the run directory to come back.
+            "scenario" when arguments is ["run", ..] => SimpleCli(
+                ["scenario", "run", global::Simple.Cli.SimpleCommand.ServerKeyStoreOption, nameof(ServerKeyStore.Machine), "--evidence", runDirectory, .. arguments.Skip(1), .. jsonFlag],
+                checkout: true,
+                slot: true) with { KeepsResults = true },
+            // Checked out, so a scenario written here and not committed is the one checked there.
+            "scenario" when arguments is ["list" or "validate", ..] => SimpleCli(["scenario", .. arguments, .. jsonFlag], checkout: true, slot: false),
+            "scenario" => throw new RemoteException(ExitCodes.Usage, "simple remote scenario needs run, list or validate: simple remote scenario run <scenario>."),
             "exec" when arguments.Count > 0 => new(arguments[0], arguments.Skip(1).ToList(), true, true, true, false),
             "exec" => throw new RemoteException(ExitCodes.Usage, "simple remote exec needs a command: simple remote exec -- <command> [arguments]."),
             // up builds, so it takes a slot like the other heavy commands; the
@@ -46,6 +59,14 @@ public sealed record RemotePlan(
             _ => throw new ArgumentException($"Unknown remote command '{command}'.", nameof(command)),
         };
     }
+
+    /// <summary>
+    /// What simple remote forget runs first: scenario runs there use an
+    /// instance of their own (<see cref="global::Simple.Cli.Scenarios.ScenarioRunner.InstanceFor"/>),
+    /// whose database and server key would otherwise outlive the worktree.
+    /// </summary>
+    public static RemotePlan ForgetScenarios(string instance) =>
+        SimpleCli(["down", "--reset", global::Simple.Cli.SimpleCommand.InstanceOption, global::Simple.Cli.Scenarios.ScenarioRunner.InstanceFor(instance)], checkout: false, slot: false);
 
     /// <summary>The command line the remote side starts the program with.</summary>
     public string CommandLine => Processes.CommandLine.Join(Arguments);

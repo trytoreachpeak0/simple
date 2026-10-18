@@ -12,6 +12,12 @@ public static class RemoteCommand
             + "To run one class, also name its project, or every other project ends with 8: "
             + "simple remote test --project tests/Simple.Cli.Tests --filter-class \"*CommandLineTests\". "
             + "TRX results come back unless --results-directory is given.",
+        ["scenario"] = "Run, list or validate scenarios there (simple scenario run|list|validate), against this clone's working tree: "
+            + "simple remote scenario run infrastructure-up. A scenario given as a path must be a .yaml file inside the clone that .gitignore does not exclude. "
+            + "run takes a slot, keeps its server's key in the machine's store and ends with the verdict: 0 holds, 10 does not hold, 11 cannot tell, 12 not applicable "
+            + "(1 when its system could not be stopped, 2 when the file is not valid, 7 when another run holds the instance). "
+            + "Its evidence comes back with the run's output. simple remote sets --evidence and --server-key-store itself and refuses them, and --keep-up, "
+            + "since a system kept up there would end with the SSH session.",
         ["exec"] = "Run any command there in the instance's worktree: simple remote exec -- <command> [arguments]. "
             + "Files it writes to %SIMPLE_REMOTE_RUN% come back.",
         ["up"] = "Bring the instance's system up there (simple up); it keeps running after this returns. Further arguments go to simple up.",
@@ -19,7 +25,8 @@ public static class RemoteCommand
         ["status"] = "Show the instance's system there (simple status). Sends nothing.",
         ["events"] = "Read the server's event record there (simple events). Sends nothing.",
         ["logs"] = "Print a process's log there (simple logs <name>). Sends nothing.",
-        ["forget"] = "Stop the instance there, drop its database and delete its worktree and runs (simple down --reset, then remove). "
+        ["forget"] = "Stop the instance there, drop its database and delete its worktree and runs (simple down --reset, then remove); "
+            + "the instance its scenario runs used is reset too. "
             + "Use it before deleting the worktree here.",
     };
 
@@ -51,12 +58,73 @@ public static class RemoteCommand
         return Path.GetRelativePath(root, full).Replace('\\', '/');
     }
 
+    /// <summary>
+    /// A scenario as the remote side gets it. A name (infrastructure-up)
+    /// stays as it is; a path to a .yaml file, relative to the current
+    /// directory as for simple scenario, becomes a path relative to the clone
+    /// with forward slashes, since the command runs there at the worktree's
+    /// root. Null when the file does not exist or is outside the clone.
+    /// </summary>
+    public static string? ScenarioPath(string repository, string reference)
+    {
+        ArgumentNullException.ThrowIfNull(repository);
+        ArgumentNullException.ThrowIfNull(reference);
+        if (!reference.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
+        {
+            return reference;
+        }
+
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repository));
+        var full = Path.GetFullPath(reference);
+        return full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) && File.Exists(full)
+            ? Path.GetRelativePath(root, full).Replace('\\', '/')
+            : null;
+    }
+
     /// <summary>Whether a passed-through argument would pick what dotnet test runs.</summary>
-    private static bool TargetsItself(string argument) =>
-        new[] { ProjectOption, "--solution" }.Any(option =>
+    private static bool TargetsItself(string argument) => IsOption(argument, ProjectOption, "--solution");
+
+    private static bool IsOption(string argument, params string[] options) =>
+        options.Any(option =>
             argument.Equals(option, StringComparison.OrdinalIgnoreCase)
             || argument.StartsWith(option + "=", StringComparison.OrdinalIgnoreCase)
             || argument.StartsWith(option + ":", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Why simple remote scenario does not run these arguments; null when it does, with paths made relative to the clone.</summary>
+    private static async Task<string?> ScenarioRefusalAsync(string repository, List<string> arguments, CancellationToken cancellationToken)
+    {
+        if (arguments is not ["run" or "list" or "validate", ..])
+        {
+            return "simple remote scenario needs run, list or validate: simple remote scenario run <scenario>.";
+        }
+
+        if (arguments.FirstOrDefault(a => IsOption(a, [.. RemotePlan.ScenarioOwnOptions])) is { } own)
+        {
+            return $"'{own}' is not passed through: simple remote scenario sets where the evidence goes and the key store itself, "
+                + "and a system kept up there would end with the SSH session.";
+        }
+
+        for (var i = 1; i < arguments.Count; i++)
+        {
+            if (ScenarioPath(repository, arguments[i]) is not { } path)
+            {
+                return $"'{arguments[i]}' is not a .yaml file inside this clone ({repository}): the remote machine gets this clone's working tree and nothing else.";
+            }
+
+            if (arguments[i].EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
+            {
+                // git check-ignore exits 0 when the path is ignored.
+                if ((await Git.TryAsync(repository, ["check-ignore", "--quiet", "--", path], cancellationToken)).ExitCode == 0)
+                {
+                    return $"'{arguments[i]}' is excluded by .gitignore, so the snapshot the remote machine gets does not have it. Put the scenario under scenarios/.";
+                }
+
+                arguments[i] = path;
+            }
+        }
+
+        return null;
+    }
 
     public static Command Create(CliEnvironment environment)
     {
@@ -93,11 +161,11 @@ public static class RemoteCommand
         var json = parse.GetValue<bool>(SimpleCommand.JsonOption);
         var arguments = parse.UnmatchedTokens.ToList();
         Outcome outcome;
-        string? projectRefusal = null;
+        string? argumentRefusal = null;
         if (command == "test" && arguments.FirstOrDefault(TargetsItself) is { } passed)
         {
             // Passed through after --, it would get past the check below.
-            projectRefusal = $"'{passed}' is not passed through: the run picks its target itself; name a project with {ProjectOption} <path> before any --.";
+            argumentRefusal = $"'{passed}' is not passed through: the run picks its target itself; name a project with {ProjectOption} <path> before any --.";
         }
         else if (command == "test" && parse.GetValue<string?>(ProjectOption) is { } project)
         {
@@ -107,8 +175,13 @@ public static class RemoteCommand
             }
             else
             {
-                projectRefusal = $"{ProjectOption} '{project}' is not a test project or a project file inside this clone ({environment.Repository}).";
+                argumentRefusal = $"{ProjectOption} '{project}' is not a test project or a project file inside this clone ({environment.Repository}).";
             }
+        }
+
+        else if (command == "scenario")
+        {
+            argumentRefusal = await ScenarioRefusalAsync(environment.Repository, arguments, cancellationToken);
         }
 
         var machine = environment.RemoteMachine;
@@ -118,9 +191,9 @@ public static class RemoteCommand
                 ExitCodes.Usage,
                 environment.RemoteAlias is null ? $"{SshMachine.Variable} is not set: set it to the alias of the remote machine in your SSH configuration (Host <alias> in ~/.ssh/config)." : refusal);
         }
-        else if (projectRefusal is not null)
+        else if (argumentRefusal is not null)
         {
-            outcome = Outcome.Fail(ExitCodes.Usage, projectRefusal);
+            outcome = Outcome.Fail(ExitCodes.Usage, argumentRefusal);
         }
         else if (command == "exec" && arguments.Count == 0)
         {
