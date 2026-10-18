@@ -11,9 +11,15 @@
 
   <!-- On CI (GitHub Actions sets CI=true) restore must match the committed
        packages.lock.json exactly: a dependency change without its lock file
-       fails restore with NU1004 instead of silently resolving anew. -->
+       fails restore with NU1004 instead of silently resolving anew.
+       NU1900 says only that NuGet's audit could not read the vulnerability
+       data (nuget.org unreachable from CI, run 39062968120), not that a
+       package is vulnerable, so on CI it stays a warning. A vulnerability
+       found (NU1901-NU1904) still fails restore there, as warnings as errors
+       make it everywhere (tests/Simple.Cli.Tests/NuGetAuditTests.cs). -->
   <PropertyGroup Condition="'$(CI)' == 'true'">
     <RestoreLockedMode>true</RestoreLockedMode>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1900</WarningsNotAsErrors>
   </PropertyGroup>
 
   <!-- Test projects run on Microsoft Testing Platform v2 (xunit.v3 4.x), which

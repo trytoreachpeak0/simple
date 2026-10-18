@@ -109,7 +109,9 @@ and has exactly one expectation.
 
 `simple scenario run` (here) and `simple remote scenario run` (there) run the
 same thing: reset the scenario's own instance (`<instance>-scenario`, apart from
-the clone's `simple up`), bring the system up in the scenario's initial state,
+the clone's `simple up`; so a clone's own instance never ends in `-scenario`,
+and in a folder named that way every command ends with 2 until you rename the
+folder or pass `--instance`), bring the system up in the scenario's initial state,
 drive its events, judge every expectation on the server's API and event record,
 write the evidence and stop the system. When the runner fails, or a local run
 gets Ctrl+C, it still stops the system and writes the result, with the verdict
@@ -168,7 +170,10 @@ starts, its command `import-site` imports a site's starting configuration
 checked against the fake RIoT's maps; once the database has one it imports
 nothing, and when the file is not valid `up` fails with the problems listed
 (`sites/README.md`). `./simple down` stops it,
-`--reset` also drops its database. `./simple remote up` and the other remote
+`--reset` also drops its database and server key, and those of
+`<instance>-scenario`, the instance its scenario runs used. Run
+`./simple down --reset` before you delete a clone or worktree, as you run
+`./simple remote forget` for what it left on the remote machine. `./simple remote up` and the other remote
 commands do the same on the remote machine, where it keeps running until
 `./simple remote down`.
 

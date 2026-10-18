@@ -240,7 +240,9 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
 
     /// <summary>
     /// Resets the instance scenario runs used there, before forget removes
-    /// the worktree it runs from. Null when that is done or there is nothing
+    /// the worktree it runs from. The down --reset of the forget itself does
+    /// that too, but forget runs the simple the worktree there last checked
+    /// out, which may be older than that. Null when that is done or there is nothing
     /// there; otherwise why forget stops, with the instance still there.
     /// </summary>
     private async Task<Outcome?> ForgetScenariosAsync(CancellationToken cancellationToken)
@@ -338,6 +340,9 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         KeepRuns,
         KeepAgentDays = KeepAgents.TotalDays,
         machine.Sweep,
+        // The command line's own directories forget removes there once down --reset has run;
+        // without a worktree there, only those that record nothing down --reset would need (#88).
+        ForgetInstances = plan.Forget ? new[] { instance, Scenarios.ScenarioRunner.InstanceFor(instance) } : null,
     };
 
     /// <summary>Set for every command run on <paramref name="machine"/>, on top of the machine's own.</summary>
