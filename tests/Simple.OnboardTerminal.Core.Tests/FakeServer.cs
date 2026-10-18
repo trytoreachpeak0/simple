@@ -16,9 +16,10 @@ namespace Simple.OnboardTerminal.Core.Tests;
 
 /// <summary>
 /// A stand-in for the server's terminal endpoint: TLS 1.2, HTTP/2, a
-/// certificate from a named persisted key (as the real server's), a desired
-/// state every <see cref="StateInterval"/>, and every report kept for the
-/// test to look at. It can
+/// certificate from a named persisted key (as the real server's), a client
+/// certificate required (any one, as the real server's), a desired state
+/// every <see cref="StateInterval"/>, and every report and every client
+/// key's pin kept for the test to look at. It can
 /// be stopped and started again on the same port, or refuse the stream as a
 /// server of other protocol majors would.
 /// </summary>
@@ -60,6 +61,9 @@ public sealed class FakeServer : IAsyncDisposable
 
     public ConcurrentQueue<string?> MajorsAsked { get; } = new();
 
+    /// <summary>The pin of the certificate each stream's terminal presented.</summary>
+    public ConcurrentQueue<string> ClientPins { get; } = new();
+
     public async Task StartAsync()
     {
         var builder = WebApplication.CreateSlimBuilder();
@@ -73,6 +77,8 @@ public sealed class FakeServer : IAsyncDisposable
             {
                 https.ServerCertificate = certificate;
                 https.SslProtocols = SslProtocols.Tls12;
+                https.ClientCertificateMode = Microsoft.AspNetCore.Server.Kestrel.Https.ClientCertificateMode.RequireCertificate;
+                https.AllowAnyClientCertificate();
             });
         }));
         app = builder.Build();
@@ -106,6 +112,7 @@ public sealed class FakeServer : IAsyncDisposable
         public override async Task Connect(IAsyncStreamReader<OnboardReport> requestStream, IServerStreamWriter<DesiredState> responseStream, ServerCallContext context)
         {
             server.MajorsAsked.Enqueue(context.RequestHeaders.GetValue(ProtocolVersion.MajorHeader));
+            server.ClientPins.Enqueue(CertificatePin.Of(context.GetHttpContext().Connection.ClientCertificate!));
             if (server.RefuseServingMajors is { } majors)
             {
                 throw new RpcException(new Status(StatusCode.FailedPrecondition, "not served"), new Metadata { { ProtocolVersion.SupportedMajorsTrailer, majors } });

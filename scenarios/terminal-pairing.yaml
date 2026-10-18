@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=scenario.schema.json
+title: 新车载终端进待确认，经接口确认后上报被采用
+description: >
+  一台从没被确认过的车载终端连上服务端。服务端不认识它的钥匙，所以它进"待确认"：
+  待确认列表里列出它自称的车和一个配对码，它的上报不被采用（状态里没有车的终端）。
+  三秒后车旁的工程师核对终端屏上的配对码和待确认列表里的一致，经接口确认（不一致时
+  这个动作失败，场景判不了）。服务端从此采用它的上报：记下 onboard.confirmed，待确认
+  列表空了，状态里 vehicle-1 的终端在线、读得到 IO 模块。它进待确认时记下的
+  onboard.pending 在系统起来的过程中、场景开始之前，所以这里不看它。
+site: sample
+
+initial:
+  terminals: 1
+  confirm-terminals: false
+
+events:
+  - id: confirm
+    at: 3s
+    confirm-terminal: { terminal: 1 }
+
+expectations:
+  - id: listed-as-waiting
+    title: 待确认列表里有它，连着
+    eventually: { status: "pendingOnboardTerminals[vehicleId=vehicle-1].connected", equals: true }
+    within: 3s
+  - id: reports-unused-before
+    title: 确认前不采用它的上报
+    never: { status: onboardTerminals.count, at-least: 1 }
+    for: 2500ms
+  - id: confirmed-recorded
+    after: confirm
+    eventually: { event: onboard.confirmed, data: { vehicleId: vehicle-1 } }
+    within: 15s
+  - id: no-longer-waiting
+    after: confirm
+    eventually: { status: pendingOnboardTerminals.count, equals: 0 }
+    within: 15s
+  - id: reports-used-after
+    title: 确认后采用它的上报：在线，读得到 IO 模块
+    after: confirm
+    eventually: { status: "onboardTerminals[vehicleId=vehicle-1].ioModuleReadable", equals: true }
+    within: 15s

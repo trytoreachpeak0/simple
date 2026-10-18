@@ -44,7 +44,9 @@ public sealed class RemoteLeftoversTests
 
         Assert.Matches(RemoteSweep.TestDatabases, SqlServerTarget.DatabaseName(instance));
         Assert.Matches(RemoteSweep.TestKeys, Components.ServerKeyName(instance));
-        // As the onboard terminal tests' FakeServer names its key.
+        Assert.Matches(RemoteSweep.TestKeys, Components.TerminalKeyName(instance, 1));
+        Assert.Matches(RemoteSweep.TestKeys, Components.TerminalKeyName(instance, 12));
+        // As the onboard terminal tests' FakeServer and test terminals name their keys.
         Assert.Matches(RemoteSweep.TestKeys, $"Simple-Test-{Guid.NewGuid():N}");
     }
 
@@ -52,6 +54,10 @@ public sealed class RemoteLeftoversTests
     [InlineData("Simple-Server-63-chores")]
     [InlineData("Simple-Server-main")]
     [InlineData("Simple-Server-test_0123456789ab-extra")]
+    [InlineData("Simple-Terminal-92-terminal-pairing-1")]
+    [InlineData("Simple-Terminal-test_0123456789ab-scenario-1")]
+    [InlineData("Simple-Terminal-test_0123456789ab-")]
+    [InlineData("Simple-OnboardTerminal")]
     [InlineData("Simple-Test-0123")]
     [InlineData("Simple-Other-0123456789abcdef0123456789abcdef")]
     [InlineData("simple-server-test_0123456789ab")]

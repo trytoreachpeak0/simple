@@ -190,6 +190,45 @@ namespace Simple.Server.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Simple.Server.OnboardTerminals.OnboardTerminalKey", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("ConfirmedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ConfirmedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("KeyPin")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)")
+                        .UseCollation("Latin1_General_BIN2");
+
+                    b.Property<string>("VehicleId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .UseCollation("Latin1_General_BIN2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("KeyPin")
+                        .IsUnique();
+
+                    b.HasIndex("VehicleId")
+                        .IsUnique();
+
+                    b.ToTable("OnboardTerminalKeys");
+                });
+
             modelBuilder.Entity("Simple.Server.Accounts.LoginRecord", b =>
                 {
                     b.HasOne("Simple.Server.Accounts.Account", null)

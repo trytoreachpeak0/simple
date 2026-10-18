@@ -9,9 +9,10 @@ namespace Simple.Cli.Tests;
 
 /// <summary>
 /// A local system with onboard terminals, brought up and down through the
-/// built command line (#32): the terminals connect and report fresh, a scan
-/// typed into one reaches the event record, a killed one is seen going stale,
-/// and down leaves nothing running.
+/// built command line (#32): the terminals connect, are confirmed by up and
+/// report fresh, a scan typed into one reaches the event record, a killed one
+/// is seen going stale, down leaves nothing running and down --reset deletes
+/// the keys.
 /// </summary>
 [Trait("Category", "Smoke")]
 public sealed class TerminalSmokeTests
@@ -131,13 +132,18 @@ public sealed class TerminalSmokeTests
             Assert.Null(left);
         }
 
-        // In the store the tests were told to use, and not quietly in the other one.
+        // In the store the tests were told to use, and not quietly in the
+        // other one: the server's key and each terminal's own (ADR 0025).
+        int[] terminalNumbers = [1, 2, 3];
         Assert.True(ServerKey.Exists(Components.ServerKeyName(instance), TestKeyStore.Store));
         Assert.False(ServerKey.Exists(Components.ServerKeyName(instance), TestKeyStore.Other));
+        Assert.All(terminalNumbers, i => Assert.True(ServerKey.Exists(Components.TerminalKeyName(instance, i), TestKeyStore.Store)));
+        Assert.All(terminalNumbers, i => Assert.False(ServerKey.Exists(Components.TerminalKeyName(instance, i), TestKeyStore.Other)));
         var reset = await cli.RunJsonAsync("down", "--reset", "--instance", instance);
         Assert.True(reset.ExitCode == ExitCodes.Success, $"down --reset exited with {reset.ExitCode}: {reset.Output}{Environment.NewLine}{reset.Error}");
         Assert.True(reset.Output.GetProperty("result").GetProperty("serverKeyDeleted").GetBoolean());
         Assert.False(ServerKey.Exists(Components.ServerKeyName(instance), TestKeyStore.Store));
+        Assert.All(terminalNumbers, i => Assert.False(ServerKey.Exists(Components.TerminalKeyName(instance, i), TestKeyStore.Store)));
     }
 
     private static string Url(List<JsonElement> processes, string name) =>

@@ -101,8 +101,13 @@ public sealed partial class OnboardEndpoint(IOptions<ServerSettings> settings, I
                     // PCs (Windows 10) have TLS 1.3, so it is 1.2 everywhere,
                     // also on machines that would offer 1.3.
                     SslProtocols = SslProtocols.Tls12,
-                    // Terminal keys and pairing are a later ticket (ADR 0025).
-                    ClientCertificateMode = ClientCertificateMode.NoCertificate,
+                    // Every terminal presents a certificate made from its own
+                    // key (ADR 0025). Any self-signed one gets through the
+                    // handshake: which key it is, and whether its reports are
+                    // used, is the registry's call (OnboardTerminalRegistry).
+                    ClientCertificateMode = ClientCertificateMode.RequireCertificate,
+                    ClientCertificateValidation = (_, _, _) => true,
+                    CheckCertificateRevocation = false,
                 });
             });
         }

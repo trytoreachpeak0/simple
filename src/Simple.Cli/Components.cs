@@ -128,7 +128,10 @@ public static class Components
             IsReady: (context, http, cancellationToken) =>
                 Readiness.HttpOkAsync(http, new Uri(context.Url(), "/test/ready"), cancellationToken),
             ApiPort: 0,
-            Prepare: OnboardTerminalSettings.WriteAsync),
+            Prepare: OnboardTerminalSettings.WriteAsync,
+            // A new terminal waits for confirmation (ADR 0025): up confirms
+            // its own, as an engineer at the vehicle would, unless told not to.
+            AfterReady: OnboardTerminalSettings.ConfirmAsync),
     ];
 
     /// <summary>Password attempts per minute the local system's server allows one computer: the command line's own logins, all from loopback.</summary>
@@ -150,6 +153,15 @@ public static class Components
     /// down --reset deletes it.
     /// </summary>
     public static string ServerKeyName(string instance) => $"Simple-Server-{instance}";
+
+    /// <summary>
+    /// The key of the instance's terminal <paramref name="index"/>, its own as
+    /// a vehicle PC's is (ADR 0025), in the same key store as the server's.
+    /// Like the server's it outlives down, so the server knows the terminal
+    /// from one up to the next; down --reset deletes it.
+    /// </summary>
+    public static string TerminalKeyName(string instance, int index) =>
+        $"Simple-Terminal-{instance}-{index.ToString(CultureInfo.InvariantCulture)}";
 
     /// <summary>Which database the server uses, and where it logs: the server and its server commands alike.</summary>
     private static IEnumerable<string> ServerDatabaseArguments(ComponentContext context) =>
@@ -186,6 +198,11 @@ public static class Components
 /// of its processes starts, with the instance's administrator password on
 /// standard input; null for components without one.
 /// </param>
+/// <param name="AfterReady">
+/// Runs for each of its processes once all of them are ready, before the
+/// next component starts: what makes the process part of the system, for
+/// example confirming a terminal. A failure is the process not getting ready.
+/// </param>
 public sealed record Component(
     string Name,
     string Project,
@@ -195,7 +212,8 @@ public sealed record Component(
     Func<ComponentContext, HttpClient, CancellationToken, Task<bool>> IsReady,
     int? ApiPort,
     Func<ComponentContext, HttpClient, CancellationToken, Task>? Prepare = null,
-    Func<ComponentContext, IReadOnlyList<string>>? SetAdminPassword = null);
+    Func<ComponentContext, IReadOnlyList<string>>? SetAdminPassword = null,
+    Func<ComponentContext, HttpClient, CancellationToken, Task>? AfterReady = null);
 
 /// <summary>What <c>up</c> was asked for.</summary>
 /// <param name="BreakAway">Start the components outside the caller's job (<see cref="Processes.ChildProcess.Start"/>); only simple remote up asks for it.</param>
@@ -203,13 +221,15 @@ public sealed record Component(
 /// <param name="FakeRiotSpeedup">The fake fleet manager's FakeRiot:Timing:Speedup; null for its own default. Only scenarios ask for it.</param>
 /// <param name="FakeMesSeedFile">The rows the fake MES starts with; null for the gateway's seed rows. Only scenarios ask for it.</param>
 /// <param name="Cargo">The slots holding cargo when each terminal's IO simulator starts, by terminal number. Only scenarios ask for it.</param>
+/// <param name="ConfirmTerminals">Confirm each terminal once it is up, so that the server uses its reports; false leaves them waiting for confirmation. Only scenarios ask for false.</param>
 public sealed record UpOptions(
     int Terminals,
     bool BreakAway = false,
     ServerKeyStore KeyStore = ServerKeyStore.User,
     double? FakeRiotSpeedup = null,
     string? FakeMesSeedFile = null,
-    IReadOnlyDictionary<int, IReadOnlyList<int>>? Cargo = null);
+    IReadOnlyDictionary<int, IReadOnlyList<int>>? Cargo = null,
+    bool ConfirmTerminals = true);
 
 /// <summary>What one process of a component is started with.</summary>
 /// <param name="Index">1-based among the processes of its component.</param>

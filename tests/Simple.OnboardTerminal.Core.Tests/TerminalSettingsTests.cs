@@ -19,10 +19,24 @@ public sealed class TerminalSettingsTests
 
             Assert.Null(loaded.IoModule);
 
-            var other = loaded with { Server = "https://172.19.205.222:5181", IoModule = "192.168.71.150:502" };
+            // Its own key: by default the one of this computer, in the user's store, in the TPM if there is one.
+            Assert.Equal(TerminalSettings.DefaultKeyName, loaded.EffectiveKeyName);
+            Assert.False(loaded.MachineKey);
+            Assert.True(loaded.TryTpm);
+
+            var other = loaded with
+            {
+                Server = "https://172.19.205.222:5181",
+                IoModule = "192.168.71.150:502",
+                KeyName = "Simple-Terminal-dev-1",
+                KeyStore = "machine",
+                KeyProvider = "software",
+            };
             other.Save(path);
             Assert.Equal(other, TerminalSettings.Load(path));
             Assert.Equal(IPEndPoint.Parse("192.168.71.150:502"), other.IoModuleEndpoint);
+            Assert.Equal(("Simple-Terminal-dev-1", true, false), (other.EffectiveKeyName, other.MachineKey, other.TryTpm));
+            Assert.Empty(other.Problems());
         }
         finally
         {
@@ -38,6 +52,17 @@ public sealed class TerminalSettingsTests
     public void WhatKeepsTheTerminalFromStartingIsNamed(string? vehicle, string server, string? pin, string problem)
     {
         var settings = new TerminalSettings(vehicle, server, pin == "aa" ? Pin : pin);
+
+        Assert.Contains(problem, Assert.Single(settings.Problems()), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("a key", null, null, "keyName 'a key'")]
+    [InlineData(null, "system", null, "keyStore 'system'")]
+    [InlineData(null, null, "tpm", "keyProvider 'tpm'")]
+    public void WhereTheKeyIsMustBeSaidPlainly(string? name, string? store, string? provider, string problem)
+    {
+        var settings = new TerminalSettings("vehicle-1", TerminalSettings.DefaultServer, Pin, KeyName: name, KeyStore: store, KeyProvider: provider);
 
         Assert.Contains(problem, Assert.Single(settings.Problems()), StringComparison.Ordinal);
     }

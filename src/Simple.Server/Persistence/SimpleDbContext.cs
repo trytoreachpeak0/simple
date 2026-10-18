@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Simple.Server.Accounts;
 using Simple.Server.Events;
 using Simple.Server.Listeners;
+using Simple.Server.OnboardTerminals;
 
 namespace Simple.Server.Persistence;
 
@@ -34,6 +35,9 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
 
     /// <summary>The console's certificate, once made (ADR 0046); its key is in the Windows key store.</summary>
     public DbSet<ConsoleCertificateRecord> ConsoleCertificates => Set<ConsoleCertificateRecord>();
+
+    /// <summary>The terminal key confirmed for each vehicle (ADR 0025).</summary>
+    public DbSet<OnboardTerminalKey> OnboardTerminalKeys => Set<OnboardTerminalKey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -69,6 +73,18 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedNever();
             e.ToTable("ConsoleCertificates", t => t.HasCheckConstraint("CK_ConsoleCertificates_TheOne", $"[Id] = {ConsoleCertificateRecord.TheOne}"));
+        });
+        modelBuilder.Entity<OnboardTerminalKey>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).UseIdentityColumn();
+            // One key per vehicle, one vehicle per key.
+            // Compared exactly, as the registry compares them (ordinal).
+            e.Property(x => x.VehicleId).HasMaxLength(OnboardTerminalRegistry.MaxVehicleIdLength).UseCollation("Latin1_General_BIN2");
+            e.HasIndex(x => x.VehicleId).IsUnique();
+            e.Property(x => x.KeyPin).HasMaxLength(64).IsUnicode(false).UseCollation("Latin1_General_BIN2");
+            e.HasIndex(x => x.KeyPin).IsUnique();
+            e.Property(x => x.ConfirmedBy).HasMaxLength(Account.NameMaxLength);
         });
         modelBuilder.Entity<LoginRecord>(e =>
         {

@@ -91,6 +91,12 @@ builder.Services.AddHostedService<MesGatewayPoller>();
 builder.Services.AddRiotConnection();
 builder.Services.AddSingleton<OnboardEndpoint>();
 builder.Services.AddSingleton<OnboardTerminalRegistry>();
+builder.Services.AddScoped<IOnboardTerminalKeyStore, OnboardTerminalKeyStore>();
+// Until the vehicle list is in the server (#91), every vehicle id counts as listed.
+builder.Services.AddSingleton<IVehicleList, AnyVehicle>();
+// After the recorder, which migrates the database; before Kestrel, so the
+// first stream already finds the registered keys.
+builder.Services.AddHostedService<OnboardTerminalKeyLoader>();
 // No catch-all "unimplemented" endpoints: they would answer without login
 // and are not the terminal protocol (Access.OnboardTerminal).
 builder.Services.AddGrpc(options => options.IgnoreUnknownServices = true);
@@ -139,6 +145,7 @@ try
     app.MapLoginEndpoints();
     app.MapAccountEndpoints();
     app.MapStatusEndpoints();
+    app.MapOnboardTerminalEndpoints();
     app.MapEventEndpoints();
 
     // Builds every endpoint now, so that a misuse caught while they are built

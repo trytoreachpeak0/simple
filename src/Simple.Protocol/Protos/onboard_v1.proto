@@ -5,6 +5,11 @@
 // heartbeat, handshake, acknowledgement, resend or deduplication table: the
 // first report and the first desired state are the handshake.
 //
+// The terminal presents a certificate made from its own key (ADR 0025); the
+// server knows the terminal by that key's pin (CertificatePin) and uses its
+// reports only once an engineer has confirmed the key for the vehicle it
+// claims. Until then the screen shows a pairing code.
+//
 // Within major 1 only optional content is added. Existing fields never
 // change meaning, a removed field's number is reserved and never reused, and
 // a receiver ignores fields it does not know. Anything else is major 2, in a
@@ -56,6 +61,11 @@ message OnboardReport {
   // since it started. A reading's age on the server's clock is this report's
   // bound plus this (ADR 0009, 0024).
   optional uint64 io_read_age_ms = 9;
+  // Random, made once when the terminal program starts, the same on every
+  // stream of that run. The server tells two computers that share one key (a
+  // cloned disk) from one computer that reconnects by it (ADR 0025); empty
+  // from a terminal that does not send it, which the server cannot tell apart.
+  string run_id = 10;
 }
 
 // One IO point's raw value, as the IO module reads it. Which slot it belongs

@@ -280,10 +280,16 @@ single-context layout). Do not start a parallel set of these by hand.
   the onboard terminal endpoint, `Simple:OnboardTerminals:Url`) listens on
   the address of one named network interface, never a wildcard, and
   answers only its own part. The terminal endpoint serves only the
-  terminal protocol over TLS 1.2 with the certificate the terminals pin
-  (ADR 0025). Until the per-terminal keys (the other half of ADR 0025) are
-  in place, it accepts any client, so the server must not base any
-  decision on onboard reports.
+  terminal protocol, over mutual TLS 1.2: the server presents the
+  certificate the terminals pin, and every terminal presents one made from
+  its own key (ADR 0025). The server uses a terminal's reports, and sends
+  it unlock requests and questions, only while that key is registered for
+  the vehicle the terminal claims, which an engineer confirms with the
+  pairing code shown on the terminal's screen; every other key waits for
+  confirmation and nothing it reports is used. No decision may rest on
+  onboard reports except through that registration. A key outside a TPM
+  can be copied with the disk: two copies running at once are caught and
+  both refused, a copy running alone is not (ADR 0025's accepted risk).
 - None of these addresses points off loopback by default: the console's
   and the overview's are not configured at all, and the onboard terminal
   endpoint's default is on loopback, so development and CI listen on

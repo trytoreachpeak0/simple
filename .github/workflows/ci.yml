@@ -208,7 +208,8 @@ jobs:
       # that account is shared with the other runners there (see Record
       # machine load), so only keys in the tests' own naming are deleted, the
       # formats of RemoteSweep.TestKeys in src/Simple.Cli/Remote/RemoteSweep.cs:
-      # Simple-Server-test_ and 12 hex digits, Simple-Test- and 32 ($tests
+      # Simple-Server-test_ and 12 hex digits, Simple-Terminal-test_ and 12
+      # hex digits, a dash and a number, Simple-Test- and 32 ($tests
       # below; RemoteLeftoversTests checks the two are the same). Any other
       # Simple-* key is no test's leftover and may be another runner's: it is
       # left alone and only warned about, with how to delete it, since a
@@ -271,7 +272,7 @@ jobs:
               }
           }
           '@
-          $tests = '\ASimple-(Server-test_[0-9a-f]{12}|Test-[0-9a-f]{32})\z'
+          $tests = '\ASimple-(Server-test_[0-9a-f]{12}|Terminal-test_[0-9a-f]{12}-[0-9]+|Test-[0-9a-f]{32})\z'
           $simple = @([UserKeyNames]::List() | Where-Object { $_ -like 'Simple-*' } | Sort-Object)
           $left = @($simple | Where-Object { [regex]::IsMatch($_, $tests) })
           $other = @($simple | Where-Object { -not [regex]::IsMatch($_, $tests) })

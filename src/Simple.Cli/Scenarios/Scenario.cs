@@ -23,12 +23,14 @@ public sealed record Scenario(
 /// <param name="FakeRiotSpeedup">FakeRiot:Timing:Speedup, or null for the fake's own default.</param>
 /// <param name="FakeMesRows">The rows the fake MES starts with, or null for the gateway's seed rows.</param>
 /// <param name="Cargo">Slots holding cargo when each terminal's IO simulator starts, by terminal number.</param>
+/// <param name="ConfirmTerminals">Whether the terminals start confirmed (the default) or waiting for confirmation (ADR 0025).</param>
 public sealed record InitialState(
     int Terminals,
     double? FakeRiotSpeedup,
     IReadOnlyList<RiotVehicleChange> FakeRiotVehicles,
     IReadOnlyList<JsonObject>? FakeMesRows,
-    IReadOnlyDictionary<int, IReadOnlyList<int>> Cargo);
+    IReadOnlyDictionary<int, IReadOnlyList<int>> Cargo,
+    bool ConfirmTerminals = true);
 
 /// <summary>A change to a vehicle on the fake RIoT, as its control API takes it; only the values given change.</summary>
 public sealed record RiotVehicleChange(string DeviceKey, int? Battery, bool? BrakeReleased, string? Mode, bool? ManualCharger, bool? EmergencyButtonPressed);

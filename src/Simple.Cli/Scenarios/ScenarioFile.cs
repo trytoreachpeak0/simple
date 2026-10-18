@@ -31,7 +31,7 @@ public static partial class ScenarioFile
     [
         "add-mes-row", "remove-mes-row", "fail-mes-reads", "malform-mes-reads",
         "set-riot-vehicle", "fail-riot-creates",
-        "scan", "press",
+        "scan", "press", "confirm-terminal",
         "fault-io-module", "auto-respond",
         "stop-process",
     ];
@@ -374,7 +374,7 @@ public static partial class ScenarioFile
                 }
             }
 
-            return new InitialState(terminals, (double?)initial?["fake-riot"]?["speedup"], vehicles, rows, cargo);
+            return new InitialState(terminals, (double?)initial?["fake-riot"]?["speedup"], vehicles, rows, cargo, (bool?)initial?["confirm-terminals"] ?? true);
         }
 
         private List<ScenarioEvent> Events(JsonArray? events, int terminals)
@@ -443,7 +443,7 @@ public static partial class ScenarioFile
                 case "set-riot-vehicle":
                     Vehicle(arguments, at);
                     break;
-                case "scan" or "press" or "fault-io-module" or "auto-respond":
+                case "scan" or "press" or "confirm-terminal" or "fault-io-module" or "auto-respond":
                     Terminal(arguments, at, terminals);
                     break;
                 case "stop-process" when !processes.Contains((string)arguments["process"]!):

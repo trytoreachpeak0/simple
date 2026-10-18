@@ -9,7 +9,7 @@ namespace Simple.Server.OnboardTerminals;
 /// The server's end of a terminal's stream (ADR 0024): a desired state at
 /// once, then once a second; every report goes to the registry. The stream
 /// ends when the terminal ends it, the connection is lost, a newer stream
-/// from the same vehicle replaces it, or the server stops.
+/// with the same key replaces it, or the server stops.
 /// </summary>
 public sealed partial class OnboardLinkService(
     OnboardTerminalRegistry terminals,
@@ -46,7 +46,14 @@ public sealed partial class OnboardLinkService(
                 new Metadata { { ProtocolVersion.SupportedMajorsTrailer, string.Join(',', SupportedMajors) } });
         }
 
-        using var link = terminals.Open(remote);
+        // The terminal endpoint requires a certificate (OnboardEndpoint), so
+        // there is one; a stream without one never reaches here.
+        if (http.Connection.ClientCertificate is not { } certificate)
+        {
+            throw new RpcException(new Grpc.Core.Status(StatusCode.Unauthenticated, "the terminal presented no certificate."));
+        }
+
+        using var link = terminals.Open(remote, CertificatePin.Of(certificate));
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, lifetime.ApplicationStopping, link.Stopped);
         var sending = SendAsync(link, responseStream, stop.Token);
         var closeReason = "the terminal ended the stream";
@@ -94,16 +101,30 @@ public sealed partial class OnboardLinkService(
         }
     }
 
+    /// <summary>A desired state once a second, and at once when it changes (ADR 0024), for example when the terminal's key is confirmed.</summary>
     private async Task SendAsync(TerminalLink link, IServerStreamWriter<DesiredState> responseStream, CancellationToken cancellationToken)
     {
-        // Nothing on the screen changes in this version, so only the
-        // once-a-second state is sent; a change will also send at once.
         using var timer = new PeriodicTimer(DesiredStateInterval, time);
-        do
+        Task<bool>? tick = null;
+        // A write with a cancelled token resets the stream (gRPC aborts the
+        // call), so a stopping stream never gets one: the terminal's own end
+        // of the stream, or the refusal, closes it as it should.
+        while (!cancellationToken.IsCancellationRequested)
         {
+            var changed = link.Changed;
             await responseStream.WriteAsync(terminals.NextDesiredState(link), cancellationToken);
+            tick ??= timer.WaitForNextTickAsync(cancellationToken).AsTask();
+            // The tick also ends the wait when the stream stops: it is cancelled.
+            if (await Task.WhenAny(tick, changed) == tick)
+            {
+                if (!await tick)
+                {
+                    return;
+                }
+
+                tick = null;
+            }
         }
-        while (await timer.WaitForNextTickAsync(cancellationToken));
     }
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Refused a terminal stream from {Remote}: {Reason}")]
