@@ -63,7 +63,8 @@ public static class EventTypes
     /// A terminal key started waiting for confirmation (ADR 0025, 0029):
     /// data.vehicleId (the vehicle it claims), data.keyPin, data.inVehicleList,
     /// data.vehicleOnlineWithAnotherKey, data.registeredForVehicle,
-    /// data.cloneSuspected. Its reports are not used. The pairing code is not
+    /// data.cloneSuspected; data.inVehicleList is null when the vehicle list
+    /// could not be read. Its reports are not used. The pairing code is not
     /// recorded (a credential, ADR 0034); the status shows it while it waits.
     /// </summary>
     public const string OnboardPending = "onboard.pending";

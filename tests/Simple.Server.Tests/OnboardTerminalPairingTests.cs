@@ -324,6 +324,35 @@ public sealed class OnboardTerminalPairingTests
     }
 
     [Fact]
+    public async Task AVehicleListThatFailsIsAskedOnceForTheWholePendingList()
+    {
+        // A database that hangs costs one timeout, not one per waiting terminal.
+        var failing = new FailingVehicles();
+        using var setup = new Setup(vehicleList: failing);
+        setup.Connect(KeyA, "vehicle-1", run: "run-a");
+        setup.Connect(KeyB, "vehicle-2", run: "run-b");
+        await setup.Registry.FlushAsync(Cancel);
+        failing.Calls = 0;
+
+        var pending = await setup.Registry.PendingAsync(withCodes: true, Cancel);
+
+        Assert.Equal(2, pending.Count);
+        Assert.All(pending, p => Assert.Null(p.InVehicleList));
+        Assert.Equal(1, failing.Calls);
+    }
+
+    private sealed class FailingVehicles : IVehicleList
+    {
+        public int Calls { get; set; }
+
+        public Task<bool> ContainsAsync(string vehicleId, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromException<bool>(new TimeoutException("the database does not answer (test)"));
+        }
+    }
+
+    [Fact]
     public async Task ARegisteredKeyIsKnownFromTheStoreAfterARestart()
     {
         using var keys = new InMemoryTerminalKeys();
@@ -393,7 +422,7 @@ public sealed class OnboardTerminalPairingTests
         private readonly ServiceProvider services;
         private readonly bool ownKeys;
 
-        public Setup(IReadOnlyList<string>? vehicles = null, InMemoryTerminalKeys? keys = null)
+        public Setup(IReadOnlyList<string>? vehicles = null, InMemoryTerminalKeys? keys = null, IVehicleList? vehicleList = null)
         {
             ownKeys = keys is null;
             Keys = keys ?? new InMemoryTerminalKeys();
@@ -402,7 +431,7 @@ public sealed class OnboardTerminalPairingTests
                 Time,
                 services.GetRequiredService<IServiceScopeFactory>(),
                 NullLogger<OnboardTerminalRegistry>.Instance,
-                new TestVehicles(vehicles));
+                vehicleList ?? new TestVehicles(vehicles));
         }
 
         public FakeTimeProvider Time { get; } = new(Start);

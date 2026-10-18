@@ -166,6 +166,70 @@ public sealed class RemoteLeftoversTests
         Assert.Contains("::warning::The TPM's key store", step, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task CiFailsOnATestKeyLeftInTheSoftwareStoreWhateverTheTpmHolds()
+    {
+        // The step "No test keys left behind" as ci.yml runs it, its pattern
+        // narrowed to one key of this test's own, so that it touches no other
+        // test's key. That key is left in the software store; the TPM (where
+        // it can be listed) holds none: the step must fail all the same.
+        if (Environment.GetEnvironmentVariable("SSH_CONNECTION") is { Length: > 0 })
+        {
+            Assert.Skip("The step looks at the user's key store, which an SSH key logon cannot write.");
+        }
+
+        var name = $"Simple-Test-{Guid.NewGuid():N}";
+        var ci = File.ReadAllText(Path.Combine(CliEnvironment.FindRepository(AppContext.BaseDirectory), ".github", "workflows", "ci.yml"));
+        var script = Regex.Replace(CiStep(ci, "No test keys left behind"), @"^\$tests = '[^']*'$", $"$tests = '\\A{name}\\z'", RegexOptions.Multiline);
+        Assert.Contains(name, script, StringComparison.Ordinal);
+        var file = Path.Combine(Directory.CreateTempSubdirectory("simple-ci-step-").FullName, "step.ps1");
+        await File.WriteAllTextAsync(file, script, Cancel);
+        using (CngKey.Create(CngAlgorithm.ECDsaP256, name, new CngKeyCreationParameters { Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider }))
+        {
+        }
+
+        try
+        {
+            var start = new System.Diagnostics.ProcessStartInfo("pwsh", ["-NoProfile", "-File", file]) { RedirectStandardOutput = true, RedirectStandardError = true };
+            using var step = System.Diagnostics.Process.Start(start)!;
+            var output = await step.StandardOutput.ReadToEndAsync(Cancel) + await step.StandardError.ReadToEndAsync(Cancel);
+            await step.WaitForExitAsync(Cancel);
+
+            Assert.True(step.ExitCode != 0, $"The step passed with a test key left behind: {output}");
+            Assert.Contains($"::error::Test keys left behind in Microsoft Software Key Storage Provider (now deleted): {name}", output, StringComparison.Ordinal);
+            Assert.False(ServerKey.Exists(name, ServerKeyStore.User), output);
+        }
+        finally
+        {
+            ServerKey.Delete(name, ServerKeyStore.User);
+        }
+    }
+
+    /// <summary>The script of a step of ci.yml (its <c>run: |</c> block), unindented.</summary>
+    private static string CiStep(string ci, string step)
+    {
+        var lines = ci[ci.IndexOf($"- name: {step}", StringComparison.Ordinal)..].Split('\n');
+        var body = new List<string>();
+        foreach (var line in lines.SkipWhile(l => !l.Trim().StartsWith("run: |", StringComparison.Ordinal)).Skip(1))
+        {
+            var text = line.TrimEnd('\r');
+            if (text.Trim().Length == 0)
+            {
+                body.Add(string.Empty);
+            }
+            else if (text.StartsWith("          ", StringComparison.Ordinal))
+            {
+                body.Add(text[10..]);
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return string.Join('\n', body);
+    }
+
     [Theory]
     [InlineData(0)]
     // A slot beyond those this client counts: a client of another version

@@ -277,6 +277,9 @@ jobs:
           }
           '@
           $tests = '\ASimple-(Server-test_[0-9a-f]{12}|Terminal-test_[0-9a-f]{12}-[0-9]+|Test-[0-9a-f]{32})\z'
+          # Decided after every provider: a leftover in any of them fails the step.
+          $anyLeft = $false
+          $anyOther = $false
           foreach ($provider in 'Microsoft Software Key Storage Provider', 'Microsoft Platform Crypto Provider') {
             try {
               $listed = @([UserKeyNames]::List($provider))
@@ -296,19 +299,21 @@ jobs:
               $key.Delete()
             }
             if ($left) {
+              $anyLeft = $true
               Write-Output "::error::Test keys left behind in $provider (now deleted): $($left -join ', ')"
             }
             if ($other) {
+              $anyOther = $true
               Write-Output "::warning::Simple-* keys in $provider not named like a test's, left alone: $($other -join ', '). They are in the user key store of the runner account, $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name), so only a process running as that account can delete one, for example a one-off scheduled task on this machine running pwsh as that account with the lines below in this step's log. Ask the product owner (through the coordinator) before touching the runner machine."
               foreach ($name in $other) {
                 Write-Output "  [System.Security.Cryptography.CngKey]::Open('$name', [System.Security.Cryptography.CngProvider]::new('$provider')).Delete()"
               }
             }
           }
-          if ($left) {
+          if ($anyLeft) {
             exit 1
           }
-          Write-Output ($other ? 'No test keys left behind.' : 'No Simple-* keys left behind.')
+          Write-Output ($anyOther ? 'No test keys left behind.' : 'No Simple-* keys left behind.')
 
       # Tests and the local system give every program a log directory of its
       # own (a temp folder, or %LOCALAPPDATA%\simple through simple up), so a

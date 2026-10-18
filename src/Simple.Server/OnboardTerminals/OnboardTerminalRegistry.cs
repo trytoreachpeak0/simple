@@ -538,9 +538,18 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
         // The vehicle list is in the database: asked outside the lock, once
         // per vehicle. With the database unreachable the status still answers
         // (that is when it matters): whether a vehicle is listed is unknown.
+        // After one failure the rest are not asked: a database that hangs
+        // costs one timeout, not one per waiting terminal.
         var listed = new Dictionary<string, bool?>(StringComparer.Ordinal);
+        var unreadable = false;
         foreach (var vehicle in waiting.Select(p => p.VehicleId).Distinct(StringComparer.Ordinal))
         {
+            if (unreadable)
+            {
+                listed[vehicle] = null;
+                continue;
+            }
+
             try
             {
                 listed[vehicle] = await vehicles.ContainsAsync(vehicle, cancellationToken);
@@ -549,6 +558,7 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
             {
                 LogVehicleListUnreadable(logger, e, vehicle);
                 listed[vehicle] = null;
+                unreadable = true;
             }
         }
 
