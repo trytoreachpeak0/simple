@@ -327,9 +327,13 @@ public static partial class Redaction
     // stay. The password may hold / and @ and runs to the @ before the database: a
     // descriptor "(DESCRIPTION=...", or //host, host or [address], then a port, a /service
     // or the word's end. A login starts only at the start of a word (after a space, a quote
-    // or a parenthesis) or after thin:, and the password stops at those same characters,
-    // so no part of a long line is scanned by more than one try.
-    [GeneratedRegex(@"(?<name>(?:(?<=^|[\s""'(])|(?<=thin:))[A-Za-z][\w$#]{0,127}/)(?>[^\s@""'(]{1,200})(?:@(?>[^\s@""'(]{1,200})){0,4}?(?=@(?:\(|(?://)?(?:[\w.-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])(?::\d{1,5})?(?:[/\s;,)""'?]|$)))", Options, TimeoutMilliseconds)]
+    // or a parenthesis), after thin:, or after a parameter Oracle's tools take it in
+    // (userid=, target=, auxiliary=, catalog=, conn=, connect=), and the password stops at
+    // space, quote and parenthesis, so a long line is scanned at most a few times over.
+    // Not taken out: a login right after any other = or , (allowing those made a dense
+    // line run into the time limit), a password with a quote, a parenthesis or more than
+    // four @ in it, and a database name in quotes (@"db").
+    [GeneratedRegex(@"(?<name>(?:(?<=^|[\s""'(])|(?<=thin:)|(?<=\b(?:userid|target|auxiliary|catalog|conn|connect)=))[A-Za-z][\w$#]{0,127}/)(?>[^\s@""'(]{1,200})(?:@(?>[^\s@""'(]{1,200})){0,4}?(?=@(?:\(|(?://)?(?:[\w.-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])(?::\d{1,5})?(?:[/\s;,)""'?]|$)))", Options, TimeoutMilliseconds)]
     private static partial Regex OracleLogin();
 
     // A name followed by = or :, a --option followed by a space, or a word with colons and

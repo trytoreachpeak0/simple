@@ -47,7 +47,7 @@ MES 网关是一个单独的小进程，是 SIMPLE 里唯一和客户 MES 打交
 
 ### 凭据
 
-地址和账号只从仓库外来，由人为那一次运行选定；仓库里的 `appsettings*.json` 不带任何 `Simple:Mes:Oracle` 设置（`GatewaySettingsTests` 检查）。快照里的失败原因和程序日志都经过 `Simple.Logging` 的脱敏：连接串里的 `Password=…`、`Simple__Mes__Oracle__Password=…`、Oracle 工具常用的 `user/password@库` 写法（库写成 `host:port/service`、`//host:port/service`、TNS 别名或 `(DESCRIPTION=…)` 都算，也包括 `jdbc:oracle:thin:user/password@…`，密码里带 `/` 或 `@` 也一样），密码都只留下 `***`。
+地址和账号只从仓库外来，由人为那一次运行选定；仓库里的 `appsettings*.json` 不带任何 `Simple:Mes:Oracle` 设置（`GatewaySettingsTests` 检查）。快照里的失败原因和程序日志都经过 `Simple.Logging` 的脱敏：连接串里的 `Password=…`、`Simple__Mes__Oracle__Password=…`、Oracle 工具常用的 `user/password@库` 写法（库写成 `host:port/service`、`//host:port/service`、TNS 别名或 `(DESCRIPTION=…)` 都算，也包括 `jdbc:oracle:thin:user/password@…` 和 Oracle 工具的 `userid=`、`target=`、`auxiliary=`、`catalog=`、`conn=`、`connect=` 参数，密码里带 `/` 或 `@` 也一样），密码都只留下 `***`。遮不住的几种：登录紧跟在别的 `=` 或 `,` 后面，密码里有引号、括号或超过 4 个 `@`，库名写在引号里（`@"db"`）。网关自己不会写出这些写法。
 
 ## 对真 MES 跑一次只读读取
 

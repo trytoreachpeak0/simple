@@ -38,6 +38,7 @@ public sealed class RedactionTimeTests
     [InlineData("colon-slash-at")]
     [InlineData("space-slash")]
     [InlineData("quote-slash-at")]
+    [InlineData("conn-slash-at")]
     public void AMegabyteLongValueIsRedactedInLinearTime(string shape)
     {
         var text = shape switch
@@ -56,6 +57,7 @@ public sealed class RedactionTimeTests
             "colon-slash-at" => string.Concat(Enumerable.Repeat("a:b/", 262_144)) + "@ ",
             "space-slash" => " a/" + new string('b', 1024 * 1024) + "@ ",
             "quote-slash-at" => string.Concat(Enumerable.Repeat("\"a/b", 262_144)) + "@ ",
+            "conn-slash-at" => string.Concat(Enumerable.Repeat("conn=a/b", 131_072)) + "@ ",
             _ => string.Concat(Enumerable.Repeat("pass word token key ", 52_000)),
         };
 

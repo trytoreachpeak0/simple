@@ -98,6 +98,14 @@ public sealed partial class RedactionTests
     [InlineData("sqlplus simple_reader/EzSlashes-secret@//127.0.0.1:1521/MES", "EzSlashes-secret", "sqlplus simple_reader/***@//127.0.0.1:1521/MES")]
     [InlineData("sqlplus simple_reader/Desc-secret@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=127.0.0.1)(PORT=1521)))", "Desc-secret", "sqlplus simple_reader/***@(DESCRIPTION=(ADDRESS=")]
     [InlineData("url jdbc:oracle:thin:simple_reader/Jdbc-secret@127.0.0.1:1521/MES", "Jdbc-secret", "url jdbc:oracle:thin:simple_reader/***@127.0.0.1:1521/MES")]
+    // Oracle's tools take the login as a parameter too.
+    [InlineData("exp userid=simple_reader/Exp-secret@MESDB file=mes.dmp", "Exp-secret", "exp userid=simple_reader/***@MESDB file=mes.dmp")]
+    [InlineData("sqlldr USERID=simple_reader/Ldr-secret@//127.0.0.1:1521/MES control=x.ctl", "Ldr-secret", "sqlldr USERID=simple_reader/***@//127.0.0.1:1521/MES control=x.ctl")]
+    [InlineData("rman target=sys/Rman-secret@MESDB", "Rman-secret", "rman target=sys/***@MESDB")]
+    [InlineData("rman auxiliary=sys/Aux-secret@AUXDB", "Aux-secret", "rman auxiliary=sys/***@AUXDB")]
+    [InlineData("rman catalog=rco/Cat-secret@RCAT", "Cat-secret", "rman catalog=rco/***@RCAT")]
+    [InlineData("CONN=simple_reader/Conn-secret@MESDB", "Conn-secret", "CONN=simple_reader/***@MESDB")]
+    [InlineData("connect=simple_reader/Connect-secret@MESDB", "Connect-secret", "connect=simple_reader/***@MESDB")]
     public void ACredentialInFreeTextIsNotWritten(string message, string secret, string kept)
     {
         using var log = new TestLog();
