@@ -90,7 +90,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         originUrl = (await Git.TryAsync(repository, ["remote", "get-url", "origin"], cancellationToken)) is { ExitCode: 0 } origin
             ? WithoutCredentials(origin.Output.Trim())
             : string.Empty;
-        var checkout = RemotePlan.For(command, arguments, string.Empty, json).Checkout;
+        var checkout = RemotePlan.For(command, arguments, string.Empty, json, instance).Checkout;
         Snapshot? snapshot = null;
         string? baseRef = null;
         string? run = null;

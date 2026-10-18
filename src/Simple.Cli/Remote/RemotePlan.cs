@@ -77,7 +77,10 @@ public sealed record RemotePlan(
     public static RemotePlan ForgetScenarios(string instance) =>
         SimpleCli(["down", "--reset", global::Simple.Cli.SimpleCommand.InstanceOption, ScenarioInstance(instance)], checkout: false, slot: false);
 
-    private static string ScenarioInstance(string instance) => global::Simple.Cli.Scenarios.ScenarioRunner.InstanceFor(instance);
+    private static string ScenarioInstance(string instance) =>
+        instance.Length > 0
+            ? global::Simple.Cli.Scenarios.ScenarioRunner.InstanceFor(instance)
+            : throw new ArgumentException("A scenario run there needs the instance it belongs to.", nameof(instance));
 
     /// <summary>The command line the remote side starts the program with.</summary>
     public string CommandLine => Processes.CommandLine.Join(Arguments);

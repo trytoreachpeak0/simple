@@ -37,7 +37,7 @@
 4. 每 250 毫秒看一次系统：服务端的 `GET /api/v1/status` 和事件记录 `GET /api/v1/events`。按顺序做事件，判每个期望，直到所有事件做完、所有期望都有了判定。
 5. 导出事件记录和最后的状态，再拿最后这份事件记录把事件类期望复核一遍（见下文），停掉系统（`--keep-up` 时不停，可以接着用 `simple status/events/logs --instance <实例>` 看），收集各部件日志，写 `result.json` 和校验清单。系统停了以后实例的数据库还在，下一次跑这个实例时才重置。
 
-中途按 Ctrl+C，或者运行器自己出了异常，也照样停掉系统、收集证据、写 `result.json`，判定是"判不了"，原因写在 `driveFailure` 里。停系统有自己的 5 分钟时限，不受 Ctrl+C 影响。系统没能停掉时，`result.json` 的 `teardown` 写明原因，命令以退出码 1 结束（不管判定是什么），因为留着一套没停的系统本身就是运行失败；`dotnet test` 里这个用例也算失败。所以看 `result.json` 判断一次运行是否成功，除了 `verdict`（或 `asExpected`），还要看 `teardown.stopped`：`verdict` 只说场景本身，不说系统停没停。证据文件（时间线也算）写不进去（例如磁盘满）时，不影响判定和停系统，只列在 `evidenceMissing` 里。
+中途按 Ctrl+C，或者运行器自己出了异常，也照样停掉系统、收集证据、写 `result.json`，判定是"判不了"，原因写在 `driveFailure` 里。停系统有自己的 5 分钟时限，不受 Ctrl+C 影响。系统没能停掉时，`result.json` 的 `teardown` 写明原因，命令以退出码 1 结束（不管判定是什么），因为留着一套没停的系统本身就是运行失败；`dotnet test` 里这个用例也算失败。所以看 `result.json` 判断一次运行是否成功，除了 `verdict`（或 `asExpected`），还要看 `teardown.stopped`：`verdict` 只说场景本身，不说系统停没停（带 `--keep-up` 时 `stopped` 为 `false`、`kept` 为 `true`，系统本来就该留着，不算失败）。证据文件（时间线也算）写不进去（例如磁盘满）时，不影响判定和停系统，只列在 `evidenceMissing` 里。
 
 ## 四种判定和退出码
 

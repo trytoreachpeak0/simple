@@ -101,7 +101,7 @@ public static class RemoteCommand
         if (arguments.FirstOrDefault(a => IsOption(a, [.. RemotePlan.ScenarioOwnOptions])) is { } own)
         {
             return $"'{own}' is not passed through: simple remote scenario sets the instance, where the evidence goes and the key store itself, "
-                + "and a system kept up there would end with the SSH session. Give --instance before scenario.";
+                + "and a system kept up there would end with the SSH session. Give --instance before --: it is simple remote's own option.";
         }
 
         // Refused here, before anything is sent and a slot is waited for.
