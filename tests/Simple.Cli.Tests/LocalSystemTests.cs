@@ -201,6 +201,154 @@ public sealed class LocalSystemTests : IDisposable
         Assert.Equal(ServerKeyStore.Machine, store.ReadServerKeyStore(instance));
     }
 
+    /// <summary>
+    /// simple down --reset, the clean-up of a worktree, also resets the
+    /// instance its scenario runs used: their database and server key
+    /// outlived the worktree before (#88).
+    /// </summary>
+    [Fact]
+    public async Task DownResetAlsoDropsTheDatabaseOfTheInstanceTheClonesScenarioRunsUse()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var scenario = Scenarios.ScenarioRunner.InstanceFor(instance);
+        await ExecuteOnMasterAsync($"CREATE DATABASE [{SqlServerTarget.DatabaseName(scenario)}]");
+        try
+        {
+            store.WriteSqlServer(scenario, CliRunner.SqlServer);
+            using var stdout = new StringWriter();
+            var environment = new CliEnvironment(@"F:\simple\repo", store.Home, CliRunner.SqlServer, stdout, TextWriter.Null);
+
+            var exitCode = await SimpleCommand.InvokeAsync(["down", "--reset", "--instance", instance, "--json"], environment, Cancel);
+
+            Assert.True(exitCode == ExitCodes.Success, stdout.ToString());
+            Assert.Equal(0, await ExecuteOnMasterAsync($"SELECT COUNT(*) FROM sys.databases WHERE name = N'{SqlServerTarget.DatabaseName(scenario)}'"));
+            Assert.Null(store.ReadSqlServer(scenario));
+            using var output = JsonDocument.Parse(stdout.ToString());
+            var result = output.RootElement.GetProperty("result");
+            Assert.Equal(instance, result.GetProperty("instance").GetString());
+            Assert.Equal(scenario, result.GetProperty("scenarioInstance").GetProperty("instance").GetString());
+            Assert.True(result.GetProperty("scenarioInstance").GetProperty("databaseDropped").GetBoolean());
+        }
+        finally
+        {
+            await SqlServerTarget.DropDatabaseAsync(CliRunner.SqlServer, scenario, CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task ResetDeletesTheServerKeysOfTheInstanceAndOfItsScenarioInstance()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var scenario = Scenarios.ScenarioRunner.InstanceFor(instance);
+        store.WriteSqlServer(instance, CliRunner.SqlServer);
+        store.WriteSqlServer(scenario, CliRunner.SqlServer);
+        store.WriteServerKeyStore(instance, ServerKeyStore.User);
+        store.WriteServerKeyStore(scenario, ServerKeyStore.Machine);
+        var asked = new List<(string Name, ServerKeyStore Store)>();
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null, deleteServerKey: (name, keyStore) =>
+        {
+            asked.Add((name, keyStore));
+            return true;
+        });
+
+        var outcome = await system.ResetAsync(instance, CliRunner.SqlServer, Cancel);
+
+        Assert.True(outcome.ExitCode == ExitCodes.Success, outcome.Error);
+        Assert.Equal([(Components.ServerKeyName(scenario), ServerKeyStore.Machine), (Components.ServerKeyName(instance), ServerKeyStore.User)], asked);
+        Assert.Contains($"Deleted the server key {Components.ServerKeyName(scenario)} from the Machine key store.", outcome.Lines);
+        Assert.Contains($"Deleted the server key {Components.ServerKeyName(instance)} from the User key store.", outcome.Lines);
+    }
+
+    /// <summary>
+    /// Every scenario run makes its instance's directory first; without one
+    /// nothing ran as it here, and reset makes none (review of #90: removing a
+    /// directory made only for the locks raced with a run starting meanwhile).
+    /// </summary>
+    [Fact]
+    public async Task ResetLeavesAScenarioInstanceThatNeverRanHereAlone()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var scenario = Scenarios.ScenarioRunner.InstanceFor(instance);
+        store.WriteSqlServer(instance, CliRunner.SqlServer);
+        var asked = new List<string>();
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null, deleteServerKey: (name, _) =>
+        {
+            asked.Add(name);
+            return false;
+        });
+
+        var outcome = await system.ResetAsync(instance, CliRunner.SqlServer, Cancel);
+
+        Assert.True(outcome.ExitCode == ExitCodes.Success, outcome.Error);
+        Assert.False(Directory.Exists(store.InstanceDirectory(scenario)));
+        Assert.DoesNotContain(Components.ServerKeyName(scenario), asked);
+        var result = JsonSerializer.SerializeToElement(outcome.Result, Outcome.JsonOptions);
+        Assert.Equal(JsonValueKind.Null, result.GetProperty("scenarioInstance").ValueKind);
+    }
+
+    [Fact]
+    public async Task ResetKeepsTheLogsOfTheScenarioInstance()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var scenario = Scenarios.ScenarioRunner.InstanceFor(instance);
+        var log = store.LogPath(scenario, "server");
+        Directory.CreateDirectory(Path.GetDirectoryName(log)!);
+        File.WriteAllText(log, "the last run\n");
+        store.WriteSqlServer(scenario, CliRunner.SqlServer);
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null, deleteServerKey: (_, _) => false);
+
+        var outcome = await system.ResetAsync(instance, CliRunner.SqlServer, Cancel);
+
+        Assert.True(outcome.ExitCode == ExitCodes.Success, outcome.Error);
+        Assert.Equal("the last run\n", File.ReadAllText(log));
+    }
+
+    [Fact]
+    public async Task ResetOfAScenarioInstanceResetsOnlyIt()
+    {
+        var scenario = Scenarios.ScenarioRunner.InstanceFor($"test_{Guid.NewGuid():N}"[..17]);
+        store.WriteSqlServer(scenario, CliRunner.SqlServer);
+        var asked = new List<string>();
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null, deleteServerKey: (name, _) =>
+        {
+            asked.Add(name);
+            return false;
+        });
+
+        var outcome = await system.ResetAsync(scenario, CliRunner.SqlServer, Cancel);
+
+        Assert.True(outcome.ExitCode == ExitCodes.Success, outcome.Error);
+        Assert.All(asked, name => Assert.Equal(Components.ServerKeyName(scenario), name));
+    }
+
+    [Fact]
+    public async Task ResetLeavesTheInstanceAloneWhileAScenarioRunHoldsItsScenarioInstance()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var scenario = Scenarios.ScenarioRunner.InstanceFor(instance);
+        store.WriteSqlServer(instance, CliRunner.SqlServer);
+        store.WriteSqlServer(scenario, CliRunner.SqlServer);
+        using var run = await store.LockScenarioAsync(scenario, TimeSpan.Zero, Cancel);
+        var asked = new List<string>();
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null, deleteServerKey: (name, _) =>
+        {
+            asked.Add(name);
+            return true;
+        })
+        {
+            ScenarioWait = TimeSpan.FromMilliseconds(300),
+        };
+
+        var outcome = await system.ResetAsync(instance, CliRunner.SqlServer, Cancel);
+
+        Assert.Equal(ExitCodes.Busy, outcome.ExitCode);
+        Assert.Contains($"scenario run is using instance {scenario}", outcome.Error, StringComparison.Ordinal);
+        Assert.Contains($"Instance {instance} is kept", outcome.Error, StringComparison.Ordinal);
+        Assert.Empty(asked);
+        Assert.Equal(CliRunner.SqlServer, store.ReadSqlServer(instance));
+        Assert.Equal(CliRunner.SqlServer, store.ReadSqlServer(scenario));
+    }
+
     [Fact]
     public async Task UpRefusesAnotherKeyStoreThanTheInstanceRecorded()
     {

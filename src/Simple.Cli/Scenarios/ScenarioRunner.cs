@@ -21,11 +21,21 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(5) };
 
+    /// <summary>What the instance a scenario runs as ends in; a clone's own instance never does (<see cref="SimpleCommand.InstanceRefusal"/>).</summary>
+    public const string InstanceSuffix = "-scenario";
+
     /// <summary>The instance a scenario runs as: the clone's own instance name with -scenario, so it never meets the clone's simple up.</summary>
     public static string InstanceFor(string cloneInstance)
     {
-        const string suffix = "-scenario";
-        return (cloneInstance.Length + suffix.Length > 50 ? cloneInstance[..(50 - suffix.Length)] : cloneInstance) + suffix;
+        ArgumentNullException.ThrowIfNull(cloneInstance);
+        return (cloneInstance.Length + InstanceSuffix.Length > 50 ? cloneInstance[..(50 - InstanceSuffix.Length)] : cloneInstance) + InstanceSuffix;
+    }
+
+    /// <summary>Whether the name is one scenario runs use; instance names are compared without case, as their databases and directories are.</summary>
+    public static bool IsScenarioInstance(string instance)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        return instance.EndsWith(InstanceSuffix, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Where the evidence of every run goes by default: outside the clone, under the command line's home.</summary>

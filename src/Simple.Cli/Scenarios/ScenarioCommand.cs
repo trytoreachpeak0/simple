@@ -72,6 +72,11 @@ public static class ScenarioCommand
             {
                 outcome = Outcome.Fail(ExitCodes.Usage, refusal);
             }
+            else if (SimpleCommand.InstanceRefusal(parse, environment.Repository, starts: false) is { } refused)
+            {
+                // --instance names the run's own instance; only the default derives it from the clone's.
+                outcome = Outcome.Fail(ExitCodes.Usage, refused);
+            }
             else if (ScenarioFile.Find(environment.Repository, parse.GetValue(name)!) is not { } found)
             {
                 outcome = Outcome.Fail(ExitCodes.Usage, $"No scenario '{parse.GetValue(name)}': neither a .yaml file nor a name under {Path.Combine(environment.Repository, ScenarioFile.Directory)}. simple scenario list shows them.");
