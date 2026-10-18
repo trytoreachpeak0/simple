@@ -139,6 +139,75 @@ public sealed class CommandLineTests
         Assert.Subset(SimpleCommand.CommandExitCodes[command].ToHashSet(), new HashSet<int> { ExitCodes.Unexpected, ExitCodes.Usage });
     }
 
+    /// <summary>
+    /// A clone in a folder named foo-scenario would get the instance scenario
+    /// runs of the clone foo use, and share its database and server key (#88).
+    /// </summary>
+    [Theory]
+    [InlineData("up")]
+    [InlineData("down", "--reset")]
+    [InlineData("status")]
+    [InlineData("events")]
+    [InlineData("logs", "server")]
+    [InlineData("scenario", "run", "infrastructure-up")]
+    [InlineData("remote", "status")]
+    public async Task ACloneFolderEndingInScenarioIsRefusedBeforeAnythingIsTouched(params string[] args)
+    {
+        var (exitCode, error, touched) = await RunRefusedAsync(@"C:\clones\foo-scenario", [.. args, "--json"]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("instance 'foo-scenario'", error, StringComparison.Ordinal);
+        Assert.Contains("--instance", error, StringComparison.Ordinal);
+        Assert.False(touched);
+    }
+
+    [Theory]
+    [InlineData("up")]
+    [InlineData("remote", "status")]
+    public async Task AnInstanceNamedLikeAScenarioInstanceIsNotStartedAsAClonesOwn(params string[] args)
+    {
+        var (exitCode, error, touched) = await RunRefusedAsync(Environment.Repository, [.. args, "--instance", "foo-Scenario", "--json"]);
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("--instance 'foo-Scenario' ends in -scenario", error, StringComparison.Ordinal);
+        Assert.False(touched);
+    }
+
+    /// <summary>Runs a command that should be refused, with a home and a remote machine of its own; touched when either was created.</summary>
+    private static async Task<(int ExitCode, string? Error, bool Touched)> RunRefusedAsync(string repository, string[] args)
+    {
+        using var stdout = new StringWriter();
+        var home = Path.Combine(Path.GetTempPath(), $"simple-cli-tests-{Guid.NewGuid():N}");
+        var environment = Environment with
+        {
+            Repository = repository,
+            Home = home,
+            Out = stdout,
+            RemoteMachine = new Remote.DirectoryMachine(Path.Combine(home, "remote")),
+        };
+        try
+        {
+            var exitCode = await SimpleCommand.InvokeAsync(args, environment, TestContext.Current.CancellationToken);
+            using var output = JsonDocument.Parse(stdout.ToString());
+            return (exitCode, output.RootElement.GetProperty("error").GetString(), Directory.Exists(home));
+        }
+        finally
+        {
+            if (Directory.Exists(home))
+            {
+                Directory.Delete(home, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AScenarioInstanceCanStillBeLookedIntoByName()
+    {
+        var exitCode = await SimpleCommand.InvokeAsync(["status", "--instance", "29-simple-cli-scenario"], Environment, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExitCodes.NotRunning, exitCode);
+    }
+
     [Fact]
     public async Task HelpListsEveryExitCode()
     {
