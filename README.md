@@ -102,17 +102,17 @@ dotnet test --solution simple.slnx
 ./simple logs server --tail 50   # 服务端自己写的程序日志
 ./simple logs server --output    # 服务端打到控制台上的输出（启动被拒的原因、崩溃时运行时打印的内容）
 ./simple down        # 正常停止本实例起的进程
-./simple down --reset   # 再删掉本实例的库
+./simple down --reset   # 再删掉本实例和它的场景实例的库与钥匙；删 clone 或 worktree 之前跑它
 ```
 
 从别的 shell 调用写成 `pwsh -File <clone>/simple.ps1 up`。每个命令都接受 `--json`：标准输出上只有一个 JSON 对象 `{exitCode, error, result}`，进度提示写在标准错误上。退出码是固定的，`./simple --help` 列出全表：0 成功；1 意外错误；`down` 之后仍有进程在跑；或进程停后程序目录里仍有文件被占用（`up`、`down`，state 文件保留，再跑一次即可）；2 参数或设置不对；3 编译失败；4 有部件没就绪（已起的会被停掉）；5 实例没在运行（`logs`：没有这份日志，或还没有程序日志）；6 实例不健康、只起了一半，或是从另一个 clone 起的；7 另一条 simple 命令正在操作这个实例；8 有进程超时没停下、被强杀；9 连不上 SQL Server，或删库、删服务端钥匙失败。
 
 目前系统里有五种部件，按这个顺序起：假 RIoT、MES 网关（背后接假 MES）、服务端（启动参数里带上假 RIoT 和网关的地址）、IO 模拟器（每个车载终端配一个）、无界面车载终端（`--terminals N` 个，默认 0）。`simple status` 除了列出每个进程，还有一行写服务端最近从网关看到了什么（网关通不通、最近一轮是第几轮、几点读的、多少行），一行写服务端连不连得上 RIoT，以及服务端看到的每台车载终端。每个部件在 `src/Simple.Cli/Components.cs` 里登记一项：从哪个项目编译、起几个进程、给哪些参数、怎么判就绪，以及起之前要准备什么；以后加部件，也是往这里加一项。部件按登记的顺序一个一个起，前一个全部就绪才起下一个，因为后面的部件可能要用前面的：服务端第一次去网关取数时网关已经在了，车载终端要先从服务端的状态接口读到证书指纹。
 
-- **实例**：不写 `--instance` 时，实例名取 clone 所在文件夹的名字（例如 `29-simple-cli`），所以两个 worktree 各起一套互不干扰。库名是 `Simple_<实例名>`；端口按实例名在 20000～29999 之间选一段，被占用就往后挪，同一个实例每次拿到的端口一般不变。
+- **实例**：不写 `--instance` 时，实例名取 clone 所在文件夹的名字（例如 `29-simple-cli`），所以两个 worktree 各起一套互不干扰。`simple scenario run` 用的是另一个实例 `<实例名>-scenario`，所以 clone 自己的实例名不能以 `-scenario` 结尾：文件夹叫 `foo-scenario` 时，它会和 `foo` 的场景实例共用一个库和一把钥匙，因此每个命令都以 2 拒绝，提示改文件夹名或用 `--instance` 另起一个名字；`up` 和 `simple remote` 也拒绝以 `-scenario` 结尾的 `--instance`。`status`、`events`、`logs`、`down` 仍然可以用 `--instance <实例名>-scenario` 查看或停下场景实例。库名是 `Simple_<实例名>`；端口按实例名在 20000～29999 之间选一段，被占用就往后挪，同一个实例每次拿到的端口一般不变。
 - **起**：`up` 先 `dotnet build` 各部件的项目，再把编译输出复制到 `artifacts/simple/<实例名>/` 下运行，所以系统起着的时候照样可以重新编译、跑测试，不会碰到文件被占用。部件是独立的进程，命令行返回后它们继续运行；每个进程都被告知自己的程序日志目录（`--Simple:Logs:Directory`，见"程序日志"一节），打到控制台上的输出另外写进一个文件。重复执行 `up` 不会起第二套。
 - **停**：`down` 只停本实例的状态文件里记下的进程（按进程号和进程启动时间核对，绝不按进程名），用 Ctrl+Break 让它们正常退出，服务端因此会在事件记录里留下 `server.stopped`；30 秒还没退出才强杀，并以退出码 8 报告。
-- **库**：默认用本机 LocalDB `(localdb)\MSSQLLocalDB`。要用本机别的命名实例（CI 用 `.\SQLEXPRESS`），把不带库名的连接串放进 `SIMPLE_SQLSERVER`。命令行拒绝别的机器上的 SQL Server、本机的默认实例（`.`、`localhost`、`MSSQLSERVER`）、带端口的写法（带端口时 SqlClient 不看实例名，本机 1433 上通常是默认实例）、故障转移伙伴，以及带 SQL 登录用户名或密码的连接串（连接串会记在状态文件里，所以本机只用 Windows 集成认证）；起服务端和删库之前，还会连上去问服务器自己是谁（`SERVERPROPERTY` 的 `IsLocalDB`、`InstanceName`、`MachineName`），只接受 LocalDB，或本机上名字不是 `MSSQLSERVER` 的命名实例，这样别名和端口转发也绕不过去。`down --reset` 只删 `Simple_<实例名>` 这一个库，删在 `up` 当时用的那个 SQL Server 上。
+- **库**：默认用本机 LocalDB `(localdb)\MSSQLLocalDB`。要用本机别的命名实例（CI 用 `.\SQLEXPRESS`），把不带库名的连接串放进 `SIMPLE_SQLSERVER`。命令行拒绝别的机器上的 SQL Server、本机的默认实例（`.`、`localhost`、`MSSQLSERVER`）、带端口的写法（带端口时 SqlClient 不看实例名，本机 1433 上通常是默认实例）、故障转移伙伴，以及带 SQL 登录用户名或密码的连接串（连接串会记在状态文件里，所以本机只用 Windows 集成认证）；起服务端和删库之前，还会连上去问服务器自己是谁（`SERVERPROPERTY` 的 `IsLocalDB`、`InstanceName`、`MachineName`），只接受 LocalDB，或本机上名字不是 `MSSQLSERVER` 的命名实例，这样别名和端口转发也绕不过去。`down --reset` 只删 `Simple_<实例名>` 和它的场景实例的库 `Simple_<实例名>-scenario`，删在 `up` 当时用的那个 SQL Server 上。
 - **只起本机的假系统**：命令行没有任何指向真实系统的开关。起部件时会去掉环境里以 `Simple__`、`ConnectionStrings__`、`ASPNETCORE_`、`Kestrel__` 开头的变量和 `DOTNET_ENVIRONMENT`，免得外面设好的真实地址、连接串、监听地址或运行环境被带进本机系统；部件总是以 Production 运行。
 - **管理员密码**：服务端的接口要登录（见"只运行服务端"一节的"登录"）。第一次 `up` 给这个实例随机生成一个管理员密码，存在 clone 之外的 `%LOCALAPPDATA%\simple\instances\<实例名>\admin-password.txt`；每次起服务端之前，`up` 先用服务端命令 `set-admin-password` 把它设进库里。`status`、`events`、判服务端就绪、给车载终端写配置时，命令行都用它经控制台入口登录，用完退出。`down --reset` 删库时一起删掉它，下次 `up` 再生成新的。自己调接口时也用这个密码登录（账号名 `admin`）。
 - **文件放在哪**：状态文件和日志在 `%LOCALAPPDATA%\simple\instances\<实例名>\`（可用环境变量 `SIMPLE_HOME` 换位置）。每个进程的程序日志在 `logs\<进程名>\`，由程序自己限制大小，跨多次 `up` 保留，`simple logs <进程名>` 显示它（还没有程序日志或日志是空的，例如进程在日志起来之前就拒绝启动了，命令以退出码 5 说明这一点，并提示改用 `--output`）；控制台输出在 `logs\<进程名>.log`，`down` 之后保留，下次 `up` 时覆盖，`simple logs <进程名> --output` 显示它（`simple logs build --output` 是最近一次编译的输出）。`simple status` 每个进程一行的末尾两样都写：`log` 后面是程序日志目录，`output` 后面是控制台输出文件。每个车载终端的本机配置在同一目录的 `processes\terminal-<n>\terminal.json`，`up` 时按服务端的状态重新写。
@@ -127,7 +127,7 @@ dotnet test --solution simple.slnx
   - `PUT /api/v1/slots/{n}/lock-feedback`、`/light-curtain`，正文 `{"value": 0}`、`{"value": 1}` 或 `{"value": null}`：把锁反馈或光幕固定成某个读数，不管门和货实际怎样，`null` 取消；
   - `PUT /api/v1/modbus-fault`，正文 `{"mode": "no-response"}`、`{"mode": "disconnect"}`、`{"mode": "delay", "delayMs": 300}` 或 `{"mode": "none"}`：通信故障，分别是连着但不回应、断开并拒绝新连接、每个请求晚回、恢复；
   - `POST /api/v1/auto-responder`，正文例如 `{"action": "load", "doors": 3, "actSeconds": 4, "closeSeconds": 4, "withinSeconds": 300}`：接下来开的 3 扇门，每扇开后 4 秒放一件货（`unload` 则取一件），再过 4 秒关门。门在动作前被人关了、往有货的仓放、从空仓取、到期没处理完，都算失败并停下；`POST /api/v1/auto-responder/wait?timeoutSeconds=60` 一直等到做完才返回 200，失败、被取消或等到超时都返回 409，并带上原因，脚本和场景据此判成败。`GET` 看进度，`DELETE` 停下。
-- **服务端钥匙**：本实例服务端的证书钥匙放在当前 Windows 用户的密钥存储里，名字是 `Simple-Server-<实例名>`。`down` 不动它，下次 `up` 指纹不变；`down --reset` 连库一起删掉它。`up` 把钥匙放在哪个存储记在实例目录的 `serverkey.txt` 里，`down --reset` 只按这份记录去删；没有记录时两种存储都查，删掉存在的那一把；删不掉就以退出码 9 报错并保留记录，下次还能再删。
+- **服务端钥匙**：本实例服务端的证书钥匙放在当前 Windows 用户的密钥存储里，名字是 `Simple-Server-<实例名>`。`down` 不动它，下次 `up` 指纹不变；`down --reset` 连库一起删掉它，也删掉场景实例的钥匙 `Simple-Server-<实例名>-scenario`：先重置场景实例，再重置本实例；场景实例重置失败（例如有场景正在跑它）时，本实例原样保留，再跑一次即可。`up` 把钥匙放在哪个存储记在实例目录的 `serverkey.txt` 里，`down --reset` 只按这份记录去删；没有记录时两种存储都查，删掉存在的那一把；删不掉就以退出码 9 报错并保留记录，下次还能再删。
 
 `Simple.Cli.Tests` 里的冒烟测试经编译好的命令行真起真停随机名字的实例：两套只有服务端的实例互不干扰；一套带 3 个车载终端的实例里，终端上报新鲜、经测试输入扫的码进了事件记录、被杀掉的终端 10 秒内记成上报过期、`down` 后不留进程；一套带 2 个车载终端的实例里，服务端看到的每台终端的 16 路输入与它配对的模拟器一致，经控制接口固定一个光幕 2 秒内传到服务端、变化次数加 1，让模拟器不回应后 10 秒内终端报读不到 IO 模块、服务端记下 `onboard.io-unreadable`。`dotnet test` 时随其他测试一起跑，CI 上也跑。
 
@@ -160,7 +160,7 @@ dotnet test --solution simple.slnx
 
   `up` 已经成功返回之后再断开不影响它起的系统：部件脱离 SSH 会话继续运行，用 `simple remote down` 停。
 - **残留自动清理**：被断线结束的运行来不及让测试收尾，会在远端留下测试库（`.\SIMPLE_DEV` 上的 `Simple_test_<12 位十六进制>`）和本机级存储里的测试钥匙（`Simple-Server-test_<12 位十六进制>`、`Simple-Test-<32 位十六进制>`）。`build`、`test`、`scenario run`、`exec`、`up` 开跑之前，远端先看整机 4 个名额是不是都空着：都空着说明没有别的测试在跑，就占住全部名额，删掉名字恰好是上面这几种格式的库和钥匙，逐个打印删了什么，再放开名额照常排队；有名额被占就这次不清，留给下一次。只认这几种测试命名；worktree 实例自己的库 `Simple_<实例名>` 和钥匙 `Simple-Server-<实例名>` 一般不是这种格式，即使实例名恰好像测试实例（例如 `--instance test_0123456789ab`），只要远端有这个实例的检出目录 `wt\<实例名>`，它的库和钥匙也不删。清理出错只打印一行，不影响这次运行。所以那台机器的 `.\SIMPLE_DEV` 和本机级钥匙存储只给 `simple remote` 用：不经 `simple remote`、直接 SSH 上去跑测试，它的库和钥匙可能被当成残留删掉。另外，每次运行（任何命令）取得实例锁后，还删掉 7 天没有被任何运行用过的旧版 agent 脚本（`bin\agent-*.ps1`，每个版本的命令行装一份自己的；还在用旧版的 clone 下次会自动再拷一份）和一天以前没导入完的 bundle（`incoming\*.bundle`）。
-- **远端的服务端钥匙在本机级存储里**：经 SSH 密钥登录的会话用不了按用户加密的 Windows 存储（DPAPI），所以 `simple remote up` 让服务端把钥匙放在那台机器的本机级密钥存储里。**本机级的钥匙只有管理员能建、能删**，所以远端的 SSH 账户必须是那台机器的本机管理员。`simple remote down --reset` 和 `forget` 按 `up` 时的记录把它删掉；`simple remote scenario run` 的服务端也一样放在本机级存储里，`forget` 连场景用的实例 `<实例名>-scenario` 一起重置，删掉它的库和钥匙。
+- **远端的服务端钥匙在本机级存储里**：经 SSH 密钥登录的会话用不了按用户加密的 Windows 存储（DPAPI），所以 `simple remote up` 让服务端把钥匙放在那台机器的本机级密钥存储里。**本机级的钥匙只有管理员能建、能删**，所以远端的 SSH 账户必须是那台机器的本机管理员。`simple remote down --reset` 和 `forget` 按 `up` 时的记录把它删掉；`simple remote scenario run` 的服务端也一样放在本机级存储里，`forget` 连场景用的实例 `<实例名>-scenario` 一起重置，删掉它的库和钥匙，最后删掉远端命令行自己的这两个实例目录（`instances\<实例名>` 和 `instances\<实例名>-scenario`，里面是锁文件和日志）。
 
 为什么手写这一层：现成的同步工具（Mutagen、Syncthing 等）都是持续同步型的，说不出某一次运行看到的是哪个状态的树，"同步到一半就开跑"正是要避免的；`simple remote` 只是 git、ssh、scp 之上的一层薄胶水，"这次跑的是哪棵树"由提交号保证。
 

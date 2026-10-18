@@ -343,6 +343,32 @@ function Remove-Instance {
     foreach ($ref in $spec.ref, $spec.originRef) {
         [void](Start-Git @('-C', $repo, 'update-ref', '-d', $ref))
     }
+
+    # The command line's own directories of the instance and of the one its
+    # scenario runs used (InstanceStore.InstanceDirectory): down --reset
+    # leaves their lock files and logs there (#88). They are under the home
+    # the command saw: SIMPLE_HOME as the request or this machine sets it,
+    # else %LOCALAPPDATA%\simple (InstanceStore.DefaultHome).
+    $simpleHome = @($spec.environment['SIMPLE_HOME'], $env:SIMPLE_HOME) | Where-Object { $_ } | Select-Object -First 1
+    $simpleHome ??= Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'simple'
+    $simpleHome = [IO.Path]::GetFullPath($simpleHome, $worktree)
+    foreach ($name in $spec.forgetInstances) {
+        # An instance name, never a path (SqlServerTarget.IsValidInstanceName).
+        if ($name -cnotmatch '\A[A-Za-z0-9_-]{1,50}\z') {
+            Say "not removing the directory of '$name': not an instance name"
+            continue
+        }
+
+        $directory = Join-Path $simpleHome "instances/$name"
+        if (Test-Path -LiteralPath $directory) {
+            try {
+                Remove-Item -LiteralPath $directory -Recurse -Force
+            }
+            catch {
+                Say "could not remove $($directory): $_ Run simple remote forget again."
+            }
+        }
+    }
 }
 
 # Files no run needs any more. Every version of the command line installs an

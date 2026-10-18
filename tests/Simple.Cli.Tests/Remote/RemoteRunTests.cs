@@ -404,6 +404,70 @@ public sealed class RemoteRunTests
         Assert.Null(await RemoteRefAsync(sandbox, Snapshot.OriginRef(sandbox.Instance)));
     }
 
+    /// <summary>
+    /// down --reset leaves the command line's own directory of an instance
+    /// there (its lock files, its logs); forget removes it, and that of the
+    /// instance the scenario runs there used, and no other (#88).
+    /// </summary>
+    [Fact]
+    public async Task ForgetRemovesTheCommandLinesDirectoriesOfTheInstanceAndOfItsScenarioInstanceThere()
+    {
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var home = Path.Combine(sandbox.RemoteRoot, "home");
+        var machine = new DirectoryMachine(sandbox.RemoteRoot) { Environment = new Dictionary<string, string> { [Instances.InstanceStore.HomeVariable] = home } };
+        await RunOkAsync(sandbox, machine);
+        var (own, scenario, other) = LeaveInstanceDirectories(sandbox, home);
+
+        var (exitCode, _, stderr) = await RunAsync(sandbox, machine, "forget");
+
+        Assert.True(exitCode == 0, stderr);
+        Assert.False(Directory.Exists(own), $"{own} is still there");
+        Assert.False(Directory.Exists(scenario), $"{scenario} is still there");
+        Assert.True(File.Exists(Path.Combine(other, "lock")));
+    }
+
+    [Fact]
+    public async Task ForgetKeepsTheCommandLinesDirectoriesWhenDownFailsThere()
+    {
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var home = Path.Combine(sandbox.RemoteRoot, "home");
+        var machine = new DirectoryMachine(sandbox.RemoteRoot) { Environment = new Dictionary<string, string> { [Instances.InstanceStore.HomeVariable] = home } };
+        sandbox.Write(
+            "simple.ps1",
+            """
+            #Requires -Version 7
+            if ($args -notcontains '--instance') { 'database not dropped'; exit 9 }
+            "fake simple $args"
+            exit 0
+            """);
+        await RunOkAsync(sandbox, machine);
+        var (own, scenario, _) = LeaveInstanceDirectories(sandbox, home);
+
+        var (exitCode, _, _) = await RunAsync(sandbox, machine, "forget");
+
+        Assert.Equal(ExitCodes.DatabaseFailed, exitCode);
+        Assert.True(File.Exists(Path.Combine(own, "lock")));
+        Assert.True(File.Exists(Path.Combine(scenario, "lock")));
+    }
+
+    /// <summary>What down --reset leaves under the remote command line's home: lock files and logs, for the instance, its scenario instance and another clone's.</summary>
+    private static (string Own, string Scenario, string Other) LeaveInstanceDirectories(GitSandbox sandbox, string home)
+    {
+        var instances = Path.Combine(home, "instances");
+        var own = Path.Combine(instances, sandbox.Instance);
+        var scenario = Path.Combine(instances, Scenarios.ScenarioRunner.InstanceFor(sandbox.Instance));
+        var other = Path.Combine(instances, $"{sandbox.Instance}x");
+        foreach (var directory in new[] { own, scenario, other })
+        {
+            Directory.CreateDirectory(Path.Combine(directory, "logs", "server"));
+            File.WriteAllText(Path.Combine(directory, "lock"), string.Empty);
+            File.WriteAllText(Path.Combine(directory, "logs", "server", "server.log"), "logged\n");
+        }
+
+        File.WriteAllText(Path.Combine(scenario, "scenario.lock"), string.Empty);
+        return (own, scenario, other);
+    }
+
     [Fact]
     public async Task AFetchLockLeftBehindDoesNotStopLaterFetchesOfTheOrigin()
     {

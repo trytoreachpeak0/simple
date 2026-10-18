@@ -87,7 +87,8 @@ public static partial class SimpleCommand
 
         var reset = new Option<bool>("--reset")
         {
-            Description = "Also drop this instance's database, Simple_<instance>. No other database is touched.",
+            Description = "Also drop this instance's database, Simple_<instance>, and delete its server key; first the same for <instance>-scenario, "
+                + "the instance its scenario runs use, unless the instance is itself one. No other database is touched.",
         };
 
         var since = new Option<DateTimeOffset?>("--since")
@@ -144,13 +145,16 @@ public static partial class SimpleCommand
             breakAway,
             keyStore,
         };
-        up.SetAction((parse, cancellationToken) => RunAsync(parse, environment, (system, instance) =>
-            system.UpAsync(
+        up.SetAction((parse, cancellationToken) => RunAsync(
+            parse,
+            environment,
+            (system, instance) => system.UpAsync(
                 instance,
                 environment.SqlServer,
                 UpOptionsOf(parse),
                 TimeSpan.FromSeconds(parse.GetValue(timeout)),
-                cancellationToken)));
+                cancellationToken),
+            starts: true));
 
         var down = new Command(
             "down",
@@ -160,7 +164,9 @@ public static partial class SimpleCommand
             reset,
         };
         down.SetAction((parse, cancellationToken) => RunAsync(parse, environment, (system, instance) =>
-            system.DownAsync(instance, environment.SqlServer, parse.GetValue(reset), cancellationToken)));
+            parse.GetValue(reset)
+                ? system.ResetAsync(instance, environment.SqlServer, cancellationToken)
+                : system.DownAsync(instance, environment.SqlServer, reset: false, cancellationToken)));
 
         var status = new Command(
             "status",
@@ -246,13 +252,45 @@ public static partial class SimpleCommand
         return parse.GetValue<string?>(InstanceOption) ?? SqlServerTarget.InstanceNameFrom(Path.GetFileName(Path.TrimEndingDirectorySeparator(repository)));
     }
 
-    private static async Task<int> RunAsync(ParseResult parse, CliEnvironment environment, Func<LocalSystem, string, Task<Outcome>> action)
+    /// <summary>
+    /// Why the instance a command acts on may not be used, or null when it may
+    /// (#88). Scenario runs use &lt;instance&gt;-scenario
+    /// (<see cref="Scenarios.ScenarioRunner.InstanceFor"/>), so a clone's own
+    /// instance never ends in -scenario: a clone in a folder named foo-scenario
+    /// would share the database and server key of foo's scenario runs. A
+    /// scenario instance may still be named with --instance to look into it
+    /// or stop it, but not to start it as a clone's own (<paramref name="starts"/>).
+    /// </summary>
+    public static string? InstanceRefusal(ParseResult parse, string repository, bool starts)
+    {
+        ArgumentNullException.ThrowIfNull(parse);
+        if (parse.GetValue<string?>(InstanceOption) is { } named)
+        {
+            return starts && Scenarios.ScenarioRunner.IsScenarioInstance(named)
+                ? $"{InstanceOption} '{named}' ends in {Scenarios.ScenarioRunner.InstanceSuffix}, which only scenario runs use for their own instance (simple scenario run). "
+                    + $"Choose a name that does not end in {Scenarios.ScenarioRunner.InstanceSuffix}."
+                : null;
+        }
+
+        var own = InstanceOf(parse, repository);
+        return Scenarios.ScenarioRunner.IsScenarioInstance(own)
+            ? $"This clone's folder gives instance '{own}', which ends in {Scenarios.ScenarioRunner.InstanceSuffix}: scenario runs of a clone in a folder named "
+                + $"'{own[..^Scenarios.ScenarioRunner.InstanceSuffix.Length]}' use that instance, and the two would share a database and a server key. "
+                + $"Rename the folder, or pass {InstanceOption} with a name that does not end in {Scenarios.ScenarioRunner.InstanceSuffix}."
+            : null;
+    }
+
+    private static async Task<int> RunAsync(ParseResult parse, CliEnvironment environment, Func<LocalSystem, string, Task<Outcome>> action, bool starts = false)
     {
         var json = parse.GetValue<bool>(JsonOption);
         Outcome outcome;
         if (SqlServerTarget.Refusal(environment.SqlServer) is { } refusal)
         {
             outcome = Outcome.Fail(ExitCodes.Usage, refusal);
+        }
+        else if (InstanceRefusal(parse, environment.Repository, starts) is { } refused)
+        {
+            outcome = Outcome.Fail(ExitCodes.Usage, refused);
         }
         else
         {
