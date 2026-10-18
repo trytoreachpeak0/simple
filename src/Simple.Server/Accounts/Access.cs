@@ -87,6 +87,14 @@ public static class AccessExtensions
     }
 
     public static string PolicyName(Access access) => $"simple:{access}";
+
+    /// <summary>Whether the login behind <paramref name="http"/> may use what <paramref name="access"/> admits, for an endpoint that shows more to some of the logins it serves.</summary>
+    public static async Task<bool> MayAsync(this HttpContext http, Access access)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        var authorization = http.RequestServices.GetRequiredService<IAuthorizationService>();
+        return (await authorization.AuthorizeAsync(http.User, PolicyName(access))).Succeeded;
+    }
 }
 
 /// <summary>An access level to check; null for an endpoint that names none, which nobody may use.</summary>

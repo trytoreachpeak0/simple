@@ -215,7 +215,10 @@ jobs:
       # left alone and only warned about, with how to delete it, since a
       # failure here would stay red until a person on the runner machine
       # deleted it. The machine store is not looked at: tests use it only
-      # under simple remote.
+      # under simple remote. Besides the software store, the TPM's provider
+      # (Microsoft Platform Crypto Provider) is looked at: the terminal tests
+      # put a key there where the machine has a TPM; a machine without one
+      # lists nothing there.
       # .NET opens a key by name but cannot list keys, so the names come from
       # NCryptEnumKeys; failing to list fails the step.
       - name: No test keys left behind
@@ -243,10 +246,11 @@ jobs:
               [DllImport("ncrypt.dll")]
               private static extern int NCryptFreeObject(IntPtr handle);
 
-              public static string[] List()
+              public static string[] List(string providerName)
               {
                   IntPtr provider;
-                  int status = NCryptOpenStorageProvider(out provider, "Microsoft Software Key Storage Provider", 0);
+                  int status = NCryptOpenStorageProvider(out provider, providerName, 0);
+                  if (status != 0 && providerName != "Microsoft Software Key Storage Provider") return new string[0];
                   if (status != 0) throw new Win32Exception(status);
                   var names = new List<string>();
                   IntPtr state = IntPtr.Zero;
@@ -273,20 +277,22 @@ jobs:
           }
           '@
           $tests = '\ASimple-(Server-test_[0-9a-f]{12}|Terminal-test_[0-9a-f]{12}-[0-9]+|Test-[0-9a-f]{32})\z'
-          $simple = @([UserKeyNames]::List() | Where-Object { $_ -like 'Simple-*' } | Sort-Object)
-          $left = @($simple | Where-Object { [regex]::IsMatch($_, $tests) })
-          $other = @($simple | Where-Object { -not [regex]::IsMatch($_, $tests) })
-          foreach ($name in $left) {
-            $key = [System.Security.Cryptography.CngKey]::Open($name, [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider)
-            $key.Delete()
-          }
-          if ($left) {
-            Write-Output "::error::Test keys left behind (now deleted): $($left -join ', ')"
-          }
-          if ($other) {
-            Write-Output "::warning::Simple-* keys not named like a test's, left alone: $($other -join ', '). They are in the user key store of the runner account, $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name), so only a process running as that account can delete one, for example a one-off scheduled task on this machine running pwsh as that account with the lines below in this step's log. Ask the product owner (through the coordinator) before touching the runner machine."
-            foreach ($name in $other) {
-              Write-Output "  [System.Security.Cryptography.CngKey]::Open('$name', [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider).Delete()"
+          foreach ($provider in 'Microsoft Software Key Storage Provider', 'Microsoft Platform Crypto Provider') {
+            $simple = @([UserKeyNames]::List($provider) | Where-Object { $_ -like 'Simple-*' } | Sort-Object)
+            $left = @($simple | Where-Object { [regex]::IsMatch($_, $tests) })
+            $other = @($simple | Where-Object { -not [regex]::IsMatch($_, $tests) })
+            foreach ($name in $left) {
+              $key = [System.Security.Cryptography.CngKey]::Open($name, [System.Security.Cryptography.CngProvider]::new($provider))
+              $key.Delete()
+            }
+            if ($left) {
+              Write-Output "::error::Test keys left behind in $provider (now deleted): $($left -join ', ')"
+            }
+            if ($other) {
+              Write-Output "::warning::Simple-* keys in $provider not named like a test's, left alone: $($other -join ', '). They are in the user key store of the runner account, $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name), so only a process running as that account can delete one, for example a one-off scheduled task on this machine running pwsh as that account with the lines below in this step's log. Ask the product owner (through the coordinator) before touching the runner machine."
+              foreach ($name in $other) {
+                Write-Output "  [System.Security.Cryptography.CngKey]::Open('$name', [System.Security.Cryptography.CngProvider]::new('$provider')).Delete()"
+              }
             }
           }
           if ($left) {

@@ -86,7 +86,12 @@ public static class EventTypes
     /// </summary>
     public const string OnboardCloneSuspected = "onboard.clone-suspected";
 
-    /// <summary>A terminal's freshest report has become older than ten seconds (ADR 0009, 0024): its reports are stale.</summary>
+    /// <summary>
+    /// A vehicle's terminal's freshest report has become older than ten
+    /// seconds (ADR 0009, 0024), or the vehicle stopped using that terminal's
+    /// key (revoked, replaced, suspected clone; data.reason says which): its
+    /// reports are stale.
+    /// </summary>
     public const string OnboardStale = "onboard.stale";
 
     /// <summary>A fresh report arrived from a terminal whose reports were stale.</summary>

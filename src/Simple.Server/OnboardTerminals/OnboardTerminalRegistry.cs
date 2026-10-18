@@ -81,6 +81,9 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
     /// <summary>How many replaced runs of a key are remembered for the clone check.</summary>
     public const int MaxReplacedRuns = 16;
 
+    /// <summary>A terminal's run id is a GUID's 32 hex digits; this leaves room.</summary>
+    public const int MaxRunIdLength = 64;
+
     /// <summary>What the screen shows in this version, where the server has nothing else to say yet.</summary>
     public const string ConnectedScreenText = "已连接服务端";
 
@@ -112,12 +115,14 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
     private readonly Task writing;
     private bool disposed;
 
-    public OnboardTerminalRegistry(TimeProvider time, IServiceScopeFactory scopes, ILogger<OnboardTerminalRegistry> logger, IVehicleList? vehicles = null)
+    /// <param name="vehicles">Which vehicle ids may be confirmed; no default, so a server without one does not start.</param>
+    public OnboardTerminalRegistry(TimeProvider time, IServiceScopeFactory scopes, ILogger<OnboardTerminalRegistry> logger, IVehicleList vehicles)
     {
+        ArgumentNullException.ThrowIfNull(vehicles);
         this.time = time;
         this.scopes = scopes;
         this.logger = logger;
-        this.vehicles = vehicles ?? new AnyVehicle();
+        this.vehicles = vehicles;
         writing = Task.Run(WriteAsync);
     }
 
@@ -196,6 +201,20 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
             }
 
             link.Version = report.TerminalVersion;
+            // Every terminal sends one run id on every report of a run (ADR
+            // 0025): without it no clone could be told apart, so only a
+            // changed program would leave it out or change it.
+            if (string.IsNullOrEmpty(report.RunId) || report.RunId.Length > MaxRunIdLength)
+            {
+                return $"the report carries no run id, or one longer than {MaxRunIdLength} characters. Every terminal names its run in every report.";
+            }
+
+            if (link.RunId is { } run && run != report.RunId)
+            {
+                return "the run id changed within one stream. A terminal keeps one run id for as long as its program runs.";
+            }
+
+            link.RunId = report.RunId;
             if (link.Claim is null)
             {
                 if (string.IsNullOrWhiteSpace(report.VehicleId))
@@ -457,7 +476,8 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
     }
 
     /// <summary>Every key waiting for confirmation, the oldest first.</summary>
-    public IReadOnlyList<PendingOnboardTerminalStatus> Pending()
+    /// <param name="withCodes">With each one's pairing code: only for a login that may confirm.</param>
+    public IReadOnlyList<PendingOnboardTerminalStatus> Pending(bool withCodes)
     {
         lock (gate)
         {
@@ -466,7 +486,7 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
                 .Select(p => new PendingOnboardTerminalStatus(
                     p.KeyPin,
                     p.Claim,
-                    p.Code,
+                    withCodes ? p.Code : null,
                     Connected: p.Link is not null,
                     p.Link?.RemoteAddress,
                     p.Link?.Version ?? p.Version,
@@ -602,6 +622,20 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
         }
 
         Record(EventTypes.OnboardDisconnected, EventSources.Server, new { terminal.VehicleId, Connection = link.Id, Reason = reason });
+        // Its last reading came through a key the vehicle no longer has: it
+        // proves nothing from now on, not for the rest of its ten seconds.
+        if (!terminal.Stale)
+        {
+            terminal.Stale = true;
+            Record(EventTypes.OnboardStale, EventSources.Server, new
+            {
+                terminal.VehicleId,
+                LastFreshReportWrittenNoEarlierThan = terminal.FreshWrittenAt,
+                Connected = false,
+                Reason = reason,
+            });
+        }
+
         Wait(link, time.GetUtcNow(), cloneSuspected);
     }
 
@@ -663,7 +697,7 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
     private void Use(TerminalLink link, KnownTerminal terminal, OnboardReport report, DateTimeOffset now)
     {
         var written = link.WrittenNoEarlierThan(report.LastReceivedSeq) is { } at && now - at <= StaleAfter ? at : (DateTimeOffset?)null;
-        if (written is not null && IsClone(link.KeyPin, report.RunId))
+        if (IsClone(link.KeyPin, report.RunId, fresh: written is not null))
         {
             SuspectClone(link, terminal, report.RunId);
             return;
@@ -680,7 +714,9 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
 
         terminal.IoModuleReadable = report.IoModuleReadable;
         terminal.Io = Io(link, report);
-        if (written is { } fresh && (terminal.FreshWrittenAt is null || fresh > terminal.FreshWrittenAt))
+        // Stale since its key changed, a fresh report written as late as the last
+        // one is fresh again too.
+        if (written is { } fresh && (terminal.FreshWrittenAt is not { } last || fresh > last || (terminal.Stale && fresh >= last)))
         {
             terminal.FreshWrittenAt = fresh;
             if (terminal.Stale)
@@ -711,18 +747,14 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
     }
 
     /// <summary>
-    /// Whether a fresh report from <paramref name="run"/> means two computers
-    /// run with <paramref name="keyPin"/>: a run whose stream another run
-    /// replaced is sending again. A terminal that reconnects keeps its run; a
-    /// restarted program starts a new one and its old run never comes back.
+    /// Whether a report from <paramref name="run"/> means two computers run
+    /// with <paramref name="keyPin"/>: a run that another run's fresh reports
+    /// took over from is sending again, fresh or not. A terminal that
+    /// reconnects keeps its run; a restarted program starts a new one and its
+    /// old run never comes back. A run takes over only with a fresh report.
     /// </summary>
-    private bool IsClone(string keyPin, string run)
+    private bool IsClone(string keyPin, string run, bool fresh)
     {
-        if (string.IsNullOrEmpty(run))
-        {
-            return false;
-        }
-
         if (!runs.TryGetValue(keyPin, out var seen))
         {
             seen = new Runs();
@@ -732,6 +764,11 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
         if (seen.Replaced.Contains(run))
         {
             return true;
+        }
+
+        if (!fresh)
+        {
+            return false;
         }
 
         if (seen.Current is { } current && current != run)
@@ -981,6 +1018,9 @@ public sealed class TerminalLink(string id, string remoteAddress, string keyPin,
 
     /// <summary>A newer stream of the same key took over.</summary>
     internal bool Replaced { get; set; }
+
+    /// <summary>The run id of its reports; null before the first.</summary>
+    internal string? RunId { get; set; }
 
     internal Queue<(ulong Seq, DateTimeOffset SentAt)> Sent { get; } = new();
 

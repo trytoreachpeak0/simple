@@ -212,6 +212,31 @@ public sealed class OnboardTerminalPairingApiTests
         Assert.Equal(terminal.Key.Pin, Assert.Single((await Api.StatusAsync(admin)).PendingOnboardTerminals).KeyPin);
     }
 
+    [Fact]
+    public async Task OnlyThoseWhoMayConfirmSeeThePairingCode()
+    {
+        await using var server = new ServerInstance(kestrel: true);
+        using var admin = server.Start();
+        await CreateAccountAsync(admin, "p1-engineer", "engineer");
+        await CreateAccountAsync(admin, "p1-team-leader", "team-leader");
+        await using var terminal = await TestTerminal.ConnectAsync(admin);
+        await terminal.ReceiveAsync();
+        await terminal.ReportAsync();
+        var code = await Api.PairingCodeAsync(admin, terminal.Key.Pin);
+
+        using var engineer = (await server.LogInAsync("p1-engineer", Password)).Client!;
+        using var teamLeader = (await server.LogInAsync("p1-team-leader", Password)).Client!;
+        using var overMcp = (await server.LogInAsync("admin", ServerInstance.AdminPassword, entry: "mcp")).Client!;
+        foreach (var (client, sees) in new[] { (admin, true), (engineer, true), (teamLeader, false), (overMcp, false) })
+        {
+            var pending = Assert.Single((await Api.StatusAsync(client)).PendingOnboardTerminals);
+            Assert.Equal(terminal.Key.Pin, pending.KeyPin);
+            Assert.Equal(sees ? code : null, pending.PairingCode);
+            var list = await client.GetFromJsonAsync<OnboardTerminalKeysResponse>(new Uri("/api/v1/onboard-terminals", UriKind.Relative), Cancel);
+            Assert.Equal(sees ? code : null, Assert.Single(list!.Pending).PairingCode);
+        }
+    }
+
     private static async Task CreateAccountAsync(HttpClient admin, string name, string role)
     {
         using var created = await admin.PostAsJsonAsync(

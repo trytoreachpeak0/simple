@@ -231,7 +231,7 @@ public static class Api
     public static async Task<string> PairingCodeAsync(HttpClient api, string keyPin, string vehicle = "vehicle-1")
     {
         var status = await UntilAsync(() => StatusAsync(api), s => s.PendingOnboardTerminals.Any(p => p.KeyPin == keyPin && p.VehicleId == vehicle));
-        return status.PendingOnboardTerminals.Single(p => p.KeyPin == keyPin && p.VehicleId == vehicle).PairingCode;
+        return status.PendingOnboardTerminals.Single(p => p.KeyPin == keyPin && p.VehicleId == vehicle).PairingCode!;
     }
 
     public static Task<HttpResponseMessage> ConfirmAsync(HttpClient api, string vehicle, string code) =>

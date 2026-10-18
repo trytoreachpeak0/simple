@@ -15,7 +15,7 @@ public sealed class OnboardTerminalRegistryTests
     private static readonly DateTimeOffset Start = new(2026, 10, 17, 8, 0, 0, TimeSpan.Zero);
 
     private static OnboardReport Report(ulong seq, ulong acknowledging, string vehicle = "vehicle-1") =>
-        new() { Seq = seq, LastReceivedSeq = acknowledging, VehicleId = vehicle, TerminalVersion = "t" };
+        new() { Seq = seq, LastReceivedSeq = acknowledging, VehicleId = vehicle, TerminalVersion = "t", RunId = "run-1" };
 
     /// <summary>The key the tests' terminal presents, registered for vehicle-1.</summary>
     private const string Key = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -31,7 +31,8 @@ public sealed class OnboardTerminalRegistryTests
         var registry = new OnboardTerminalRegistry(
             time,
             new ServiceCollection().AddSingleton<IOnboardTerminalKeyStore>(keys).BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
-            NullLogger<OnboardTerminalRegistry>.Instance);
+            NullLogger<OnboardTerminalRegistry>.Instance,
+            new TestVehicles());
         registry.LoadAsync(TestContext.Current.CancellationToken).GetAwaiter().GetResult();
         return registry;
     }
@@ -46,7 +47,7 @@ public sealed class OnboardTerminalRegistryTests
         }
 
         var registry = new OnboardTerminalRegistry(
-            time, server.Services.GetRequiredService<IServiceScopeFactory>(), NullLogger<OnboardTerminalRegistry>.Instance);
+            time, server.Services.GetRequiredService<IServiceScopeFactory>(), NullLogger<OnboardTerminalRegistry>.Instance, new TestVehicles());
         await registry.LoadAsync(TestContext.Current.CancellationToken);
         return registry;
     }

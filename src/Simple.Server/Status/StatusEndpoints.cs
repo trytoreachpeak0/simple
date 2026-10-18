@@ -12,7 +12,7 @@ public static class StatusEndpoints
 {
     public static void MapStatusEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/status", (ServerInfo info, IOptions<ServerSettings> settings, OnboardTerminalRegistry terminals, OnboardEndpoint endpoint, ConsoleEndpoint console, MesGatewayMonitor mes, RiotConnectionMonitor riot) =>
+        app.MapGet("/api/v1/status", async (HttpContext http, ServerInfo info, IOptions<ServerSettings> settings, OnboardTerminalRegistry terminals, OnboardEndpoint endpoint, ConsoleEndpoint console, MesGatewayMonitor mes, RiotConnectionMonitor riot) =>
                 new StatusResponse(
                     info.Version,
                     info.StartedAt,
@@ -20,7 +20,8 @@ public static class StatusEndpoints
                     settings.Value.DatabaseName,
                     endpoint.Describe(),
                     OnboardTerminals: terminals.Snapshot(),
-                    PendingOnboardTerminals: terminals.Pending(),
+                    // The pairing code only to those who may confirm (ADR 0034: a credential).
+                    PendingOnboardTerminals: terminals.Pending(withCodes: await http.MayAsync(Access.Engineer)),
                     Riot: riot.Status(),
                     MesGateway: mes.Status(),
                     ConsoleEndpoint: console.Describe(),
@@ -33,7 +34,7 @@ public static class StatusEndpoints
 
 /// <param name="OnboardTerminalEndpoint">Where onboard terminals connect and the pin they check; null when the server has no terminal endpoint.</param>
 /// <param name="OnboardTerminals">Every vehicle whose onboard terminal's reports the server has used since it started: its key is registered for the vehicle (ADR 0025).</param>
-/// <param name="PendingOnboardTerminals">Every onboard terminal key waiting for confirmation (ADR 0025, 0029); their reports are not used.</param>
+/// <param name="PendingOnboardTerminals">Every onboard terminal key waiting for confirmation (ADR 0025, 0029); their reports are not used. The pairing codes only for a login that may confirm.</param>
 /// <param name="Riot">Whether the server reaches the fleet manager.</param>
 /// <param name="MesGateway">What the server last learned from the MES gateway.</param>
 /// <param name="ConsoleEndpoint">The console's HTTPS address and its certificate, with the expiry warning (ADR 0046); null without one.</param>
@@ -83,7 +84,7 @@ public sealed record OnboardTerminalStatus(
 /// <summary>A terminal key waiting for confirmation (ADR 0025, 0029): unknown to the server, or no longer registered for the vehicle it claims.</summary>
 /// <param name="KeyPin">The pin of the certificate the terminal presents: the SHA-256 of its public key, in hex.</param>
 /// <param name="VehicleId">The vehicle its newest stream claims; an engineer confirms it as this vehicle, never another.</param>
-/// <param name="PairingCode">The six digits its screen shows too.</param>
+/// <param name="PairingCode">The six digits its screen shows too; null for a login that may not confirm (ADR 0034 treats it as a credential).</param>
 /// <param name="Connected">Whether a stream of it is open now.</param>
 /// <param name="RemoteAddress">Where its open stream comes from.</param>
 /// <param name="TerminalVersion">The terminal program's version, from its latest report.</param>
@@ -95,7 +96,7 @@ public sealed record OnboardTerminalStatus(
 public sealed record PendingOnboardTerminalStatus(
     string KeyPin,
     string VehicleId,
-    string PairingCode,
+    string? PairingCode,
     bool Connected,
     string? RemoteAddress,
     string TerminalVersion,

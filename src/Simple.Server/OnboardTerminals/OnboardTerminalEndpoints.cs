@@ -13,11 +13,11 @@ public static class OnboardTerminalEndpoints
 {
     public static void MapOnboardTerminalEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/onboard-terminals", (OnboardTerminalRegistry terminals) =>
-                TypedResults.Ok(new OnboardTerminalKeysResponse(terminals.Registrations(), terminals.Pending())))
+        app.MapGet("/api/v1/onboard-terminals", async (HttpContext http, OnboardTerminalRegistry terminals) =>
+                TypedResults.Ok(new OnboardTerminalKeysResponse(terminals.Registrations(), terminals.Pending(withCodes: await http.MayAsync(Access.Engineer)))))
             .RequireAccess(Access.View)
             .WithName("ListOnboardTerminalKeys")
-            .WithSummary("Every vehicle's registered terminal key, and every terminal key waiting for confirmation with its pairing code.");
+            .WithSummary("Every vehicle's registered terminal key, and every terminal key waiting for confirmation; its pairing code only for an engineer and up, through the console.");
         app.MapPost("/api/v1/onboard-terminals/{vehicleId}/confirm", ConfirmAsync)
             .RequireAccess(Access.Engineer)
             .WithName("ConfirmOnboardTerminal")
