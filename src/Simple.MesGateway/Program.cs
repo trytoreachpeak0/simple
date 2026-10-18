@@ -1,8 +1,11 @@
+using System.Data.Common;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
+using Oracle.ManagedDataAccess.Client;
 using Simple.Logging;
 using Simple.MesGateway.Configuration;
 using Simple.MesGateway.Fake;
+using Simple.MesGateway.Oracle;
 using Simple.MesGateway.Rounds;
 using Simple.MesGateway.Sources;
 
@@ -52,6 +55,11 @@ if (configured.UsesFakeSource)
 {
     builder.Services.AddSingleton<FakeMesSource>();
     builder.Services.AddSingleton<IMesSource>(services => services.GetRequiredService<FakeMesSource>());
+}
+else if (configured.UsesOracleSource)
+{
+    builder.Services.AddSingleton<DbProviderFactory>(OracleClientFactory.Instance);
+    builder.Services.AddSingleton<IMesSource, OracleMesSource>();
 }
 
 builder.Services.AddSingleton<SnapshotStore>();

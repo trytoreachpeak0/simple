@@ -1,0 +1,4 @@
+# The approved MES query is pinned by the SHA-256 of its bytes, taken over
+# CRLF line endings as the previous line approved it. Every checkout gets
+# exactly those bytes, whatever the machine's git settings.
+*.sql text eol=crlf
