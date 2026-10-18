@@ -10,19 +10,21 @@ using Simple.Server.Mes;
 using Simple.Server.OnboardTerminals;
 using Simple.Server.Persistence;
 using Simple.Server.Riot;
+using Simple.Server.Sites;
 using Simple.Server.Status;
 
 // Server commands run with the server's own settings and exit:
 // set-admin-password, the one way to set the administrator's password
 // (ADR 0045); export-console-certificate <file> and
-// discard-console-certificate (ADR 0046).
-string[] commands = [AdminPasswordCommand.Name, ConsoleCertificateCommands.ExportName, ConsoleCertificateCommands.DiscardName];
+// discard-console-certificate (ADR 0046); import-site <file>, the
+// first-install import of a site's starting configuration (ADR 0017).
+string[] commands = [AdminPasswordCommand.Name, ConsoleCertificateCommands.ExportName, ConsoleCertificateCommands.DiscardName, SiteImportCommand.Name];
 var command = commands.Contains(args.FirstOrDefault()) ? args[0] : null;
 string? commandFile = null;
 if (command is not null)
 {
     args = args[1..];
-    if (command == ConsoleCertificateCommands.ExportName && args.Length > 0 && !args[0].StartsWith('-'))
+    if (command is (ConsoleCertificateCommands.ExportName or SiteImportCommand.Name) && args.Length > 0 && !args[0].StartsWith('-'))
     {
         commandFile = args[0];
         args = args[1..];
@@ -79,6 +81,10 @@ builder.Services.AddLogin();
 builder.Services.AddSingleton<ConsoleEndpoint>();
 builder.Services.AddHostedService<ConsoleCertificateLoader>();
 builder.Services.AddScoped<AccountChanges>();
+builder.Services.AddScoped<SiteConfigurationStore>();
+// After the recorder, which migrates the database it is read from.
+builder.Services.AddSingleton<CurrentSiteVersion>();
+builder.Services.AddHostedService<CurrentSiteVersionLoader>();
 builder.Services.AddOptions<MesGatewaySettings>()
     .BindConfiguration(MesGatewaySettings.Section)
     .ValidateOnStart();
@@ -122,6 +128,7 @@ try
         {
             ConsoleCertificateCommands.ExportName => await ConsoleCertificateCommands.ExportAsync(app.Services, commandFile, Console.Out, CancellationToken.None),
             ConsoleCertificateCommands.DiscardName => await ConsoleCertificateCommands.DiscardAsync(app.Services, Console.Out, CancellationToken.None),
+            SiteImportCommand.Name => await SiteImportCommand.RunAsync(app.Services, commandFile, Console.Out, CancellationToken.None),
             _ => await AdminPasswordCommand.RunAsync(app.Services, AdminPasswordCommand.Input(), Console.Out, CancellationToken.None),
         };
     }
@@ -140,6 +147,7 @@ try
     app.MapAccountEndpoints();
     app.MapStatusEndpoints();
     app.MapEventEndpoints();
+    app.MapSiteConfigurationEndpoints();
 
     // Builds every endpoint now, so that a misuse caught while they are built
     // (Access.OnboardTerminal on a non-terminal endpoint, ServedOnOverview on

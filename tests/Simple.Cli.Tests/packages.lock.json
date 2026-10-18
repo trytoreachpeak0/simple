@@ -584,7 +584,8 @@
           "Simple.Logging": "[1.0.0, )",
           "Simple.Protocol": "[1.0.0, )",
           "Simple.Server.Console": "[1.0.0, )",
-          "Simple.Server.Riot": "[1.0.0, )"
+          "Simple.Server.Riot": "[1.0.0, )",
+          "YamlDotNet": "[18.1.0, )"
         }
       },
       "simple.server.console": {

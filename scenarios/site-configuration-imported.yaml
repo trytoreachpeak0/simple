@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=scenario.schema.json
+title: 首次起来时导入 sites/sample/ 的厂区配置，服务端接口读回第 1 版
+description: >
+  simple up 在起服务端之前跑服务端命令 import-site：读 sites/sample/site.yaml，
+  对着假 RIoT 的地图整份校验，存成第 1 版（ADR 0017）。系统起来后，服务端的
+  状态接口报出当前生效的是 sample 厂区的第 1 版、来自导入；整份内容经
+  GET /api/v1/site-configuration 读回，由 Simple.Server.Tests 的 SiteImportTests 核对。
+site: sample
+
+expectations:
+  - id: version-one
+    eventually: { status: siteConfiguration.version, equals: 1 }
+    within: 30s
+  - id: site-sample
+    eventually: { status: siteConfiguration.site, equals: sample }
+    within: 30s
+  - id: from-import
+    eventually: { status: siteConfiguration.source, equals: import }
+    within: 30s
