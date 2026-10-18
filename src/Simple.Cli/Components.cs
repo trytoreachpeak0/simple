@@ -90,7 +90,19 @@ public static class Components
             ApiPort: 0,
             // The server command that sets the administrator's password, the
             // only way there is (ADR 0045); up runs it before every start.
-            SetAdminPassword: context => ["set-admin-password", .. ServerDatabaseArguments(context)]),
+            SetAdminPassword: context => ["set-admin-password", .. ServerDatabaseArguments(context)],
+            // The first-install import of the site's starting configuration
+            // (ADR 0017), checked against the fake RIoT's maps; up runs it
+            // before every start, and once the database has a configuration
+            // it imports nothing.
+            ImportSite: context =>
+            [
+                "import-site",
+                context.SiteFile ?? throw new InvalidOperationException("No site file to import."),
+                .. ServerDatabaseArguments(context),
+                $"--Simple:Riot:Url={context.UrlOf("fake-riot")}",
+                $"--Simple:Riot:CallApiKey={FakeRiotCallApiKey}",
+            ]),
         // One simulated IO module per onboard terminal, started before the
         // terminals: terminal-n reads io-simulator-n over Modbus TCP, and
         // tests and AI sessions play the person at its slots, and its faults,
@@ -198,6 +210,12 @@ public static class Components
 /// of its processes starts, with the instance's administrator password on
 /// standard input; null for components without one.
 /// </param>
+/// <param name="ImportSite">
+/// The command line of a run of its own executable, to the end, before each
+/// of its processes starts and after <paramref name="SetAdminPassword"/>,
+/// that imports the site's starting configuration; null for components
+/// without one.
+/// </param>
 /// <param name="AfterReady">
 /// Runs for each of its processes once all of them are ready, before the
 /// next component starts: what makes the process part of the system, for
@@ -213,6 +231,7 @@ public sealed record Component(
     int? ApiPort,
     Func<ComponentContext, HttpClient, CancellationToken, Task>? Prepare = null,
     Func<ComponentContext, IReadOnlyList<string>>? SetAdminPassword = null,
+    Func<ComponentContext, IReadOnlyList<string>>? ImportSite = null,
     Func<ComponentContext, HttpClient, CancellationToken, Task>? AfterReady = null);
 
 /// <summary>What <c>up</c> was asked for.</summary>
@@ -222,6 +241,7 @@ public sealed record Component(
 /// <param name="FakeMesSeedFile">The rows the fake MES starts with; null for the gateway's seed rows. Only scenarios ask for it.</param>
 /// <param name="Cargo">The slots holding cargo when each terminal's IO simulator starts, by terminal number. Only scenarios ask for it.</param>
 /// <param name="ConfirmTerminals">Confirm each terminal once it is up, so that the server uses its reports; false leaves them waiting for confirmation. Only scenarios ask for false.</param>
+/// <param name="Site">Which site's starting configuration the server imports, <c>sites/&lt;site&gt;/site.yaml</c> in the clone.</param>
 public sealed record UpOptions(
     int Terminals,
     bool BreakAway = false,
@@ -229,7 +249,8 @@ public sealed record UpOptions(
     double? FakeRiotSpeedup = null,
     string? FakeMesSeedFile = null,
     IReadOnlyDictionary<int, IReadOnlyList<int>>? Cargo = null,
-    bool ConfirmTerminals = true);
+    bool ConfirmTerminals = true,
+    string Site = Scenarios.Site.Default);
 
 /// <summary>What one process of a component is started with.</summary>
 /// <param name="Index">1-based among the processes of its component.</param>
@@ -252,6 +273,9 @@ public sealed record ComponentContext(
 {
     /// <summary>What <c>up</c> was asked for.</summary>
     public UpOptions Options { get; init; } = new(0);
+
+    /// <summary>The site file the server imports (<see cref="UpOptions.Site"/> in the clone).</summary>
+    public string? SiteFile { get; init; }
 
     /// <summary>Where the process writes its program log (ADR 0034); every component is given it.</summary>
     public string LogDirectoryArgument => $"--Simple:Logs:Directory={LogDirectory}";

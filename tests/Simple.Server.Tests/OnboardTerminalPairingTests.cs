@@ -22,13 +22,13 @@ public sealed class OnboardTerminalPairingTests
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
     [Fact]
-    public void AnUnknownKeyWaitsForConfirmationWhicheverVehicleItClaimsAndItsReportsAreNotUsed()
+    public async Task AnUnknownKeyWaitsForConfirmationWhicheverVehicleItClaimsAndItsReportsAreNotUsed()
     {
         using var setup = new Setup();
         var link = setup.Connect(KeyA, "vehicle-1", run: "run-a");
 
         Assert.Empty(setup.Registry.Snapshot());
-        var pending = Assert.Single(setup.Registry.Pending(withCodes: true));
+        var pending = Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel)));
         Assert.Equal(KeyA, pending.KeyPin);
         Assert.Equal("vehicle-1", pending.VehicleId);
         Assert.Matches("^[0-9]{6}$", pending.PairingCode!);
@@ -46,7 +46,7 @@ public sealed class OnboardTerminalPairingTests
         // Fresh reports with IO and inputs change nothing: no vehicle's terminal appears.
         setup.Report(link, "run-a", withInput: true);
         Assert.Empty(setup.Registry.Snapshot());
-        Assert.Equal(pending.PairingCode!, Assert.Single(setup.Registry.Pending(withCodes: true)).PairingCode!);
+        Assert.Equal(pending.PairingCode!, Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel))).PairingCode!);
     }
 
     [Fact]
@@ -54,12 +54,12 @@ public sealed class OnboardTerminalPairingTests
     {
         using var setup = new Setup();
         var link = setup.Connect(KeyA, "vehicle-1", run: "run-a");
-        var code = Assert.Single(setup.Registry.Pending(withCodes: true)).PairingCode!;
+        var code = Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel))).PairingCode!;
 
         var outcome = await setup.Registry.ConfirmAsync("vehicle-1", code, Engineer, Cancel);
 
         Assert.Null(outcome.Problem);
-        Assert.Empty(setup.Registry.Pending(withCodes: true));
+        Assert.Empty((await setup.Registry.PendingAsync(withCodes: true, Cancel)));
         var registered = Assert.Single(setup.Keys.Rows.Values);
         Assert.Equal(("vehicle-1", KeyA, "engineer-p1"), (registered.VehicleId, registered.KeyPin, registered.ConfirmedBy));
         Assert.Equal(OnboardTerminalRegistry.ConnectedScreenText, setup.Registry.NextDesiredState(link).Screen.Text);
@@ -76,14 +76,14 @@ public sealed class OnboardTerminalPairingTests
     {
         using var setup = new Setup();
         setup.Connect(KeyA, "vehicle-1", run: "run-a");
-        var code = Assert.Single(setup.Registry.Pending(withCodes: true)).PairingCode!;
+        var code = Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel))).PairingCode!;
         var wrong = code == "000000" ? "000001" : "000000";
 
         Assert.Equal(404, (await setup.Registry.ConfirmAsync("vehicle-1", wrong, Engineer, Cancel)).Status);
         Assert.Equal(404, (await setup.Registry.ConfirmAsync("vehicle-2", code, Engineer, Cancel)).Status);
 
         Assert.Empty(setup.Keys.Rows);
-        Assert.Single(setup.Registry.Pending(withCodes: true));
+        Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel)));
     }
 
     [Fact]
@@ -92,8 +92,8 @@ public sealed class OnboardTerminalPairingTests
         using var setup = new Setup(vehicles: ["vehicle-1"]);
         setup.Connect(KeyA, "vehicle-9", run: "run-a");
         setup.Connect(KeyB, "vehicle-1", run: "run-b");
-        var unlisted = setup.Registry.Pending(withCodes: true).Single(p => p.KeyPin == KeyA);
-        var listed = setup.Registry.Pending(withCodes: true).Single(p => p.KeyPin == KeyB);
+        var unlisted = (await setup.Registry.PendingAsync(withCodes: true, Cancel)).Single(p => p.KeyPin == KeyA);
+        var listed = (await setup.Registry.PendingAsync(withCodes: true, Cancel)).Single(p => p.KeyPin == KeyB);
         Assert.False(unlisted.InVehicleList);
         Assert.True(listed.InVehicleList);
 
@@ -102,11 +102,11 @@ public sealed class OnboardTerminalPairingTests
         Assert.Equal(409, refused.Status);
         Assert.Contains("vehicle list", refused.Problem, StringComparison.Ordinal);
         Assert.Empty(setup.Keys.Rows);
-        Assert.Equal(2, setup.Registry.Pending(withCodes: true).Count);
+        Assert.Equal(2, (await setup.Registry.PendingAsync(withCodes: true, Cancel)).Count);
 
         Assert.Null((await setup.Registry.ConfirmAsync("vehicle-1", listed.PairingCode!, Engineer, Cancel)).Problem);
         Assert.Equal(("vehicle-1", KeyB), (Assert.Single(setup.Keys.Rows.Values).VehicleId, Assert.Single(setup.Keys.Rows.Values).KeyPin));
-        Assert.Equal(KeyA, Assert.Single(setup.Registry.Pending(withCodes: true)).KeyPin);
+        Assert.Equal(KeyA, Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel))).KeyPin);
     }
 
     [Fact]
@@ -118,7 +118,7 @@ public sealed class OnboardTerminalPairingTests
         var b = setup.Connect(KeyB, "vehicle-1", run: "run-b");
         setup.Report(a, "run-a");
 
-        var pending = Assert.Single(setup.Registry.Pending(withCodes: true));
+        var pending = Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel)));
         Assert.Equal(KeyB, pending.KeyPin);
         Assert.True(pending.VehicleOnlineWithAnotherKey);
         var terminal = Assert.Single(setup.Registry.Snapshot());
@@ -136,7 +136,7 @@ public sealed class OnboardTerminalPairingTests
         var a = await setup.ConnectConfirmedAsync(KeyA, "vehicle-1", "run-a");
         var b = setup.Connect(KeyB, "vehicle-1", run: "run-b");
 
-        var outcome = await setup.Registry.ConfirmAsync("vehicle-1", Assert.Single(setup.Registry.Pending(withCodes: true)).PairingCode!, Engineer, Cancel);
+        var outcome = await setup.Registry.ConfirmAsync("vehicle-1", Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel))).PairingCode!, Engineer, Cancel);
 
         Assert.Equal(KeyA, outcome.ReplacedKeyPin);
         Assert.Equal(KeyB, Assert.Single(setup.Keys.Rows.Values).KeyPin);
@@ -144,7 +144,7 @@ public sealed class OnboardTerminalPairingTests
         Assert.Equal(KeyB, Assert.Single(setup.Registry.Snapshot()).KeyPin);
 
         // The old key is unknown now: its stream stays, but it waits for confirmation.
-        var old = Assert.Single(setup.Registry.Pending(withCodes: true));
+        var old = Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel)));
         Assert.Equal(KeyA, old.KeyPin);
         Assert.True(old.VehicleOnlineWithAnotherKey);
         Assert.Contains(old.PairingCode!, setup.Registry.NextDesiredState(a).Screen.Text, StringComparison.Ordinal);
@@ -162,7 +162,7 @@ public sealed class OnboardTerminalPairingTests
         Assert.Empty(setup.Keys.Rows);
         Assert.Empty(setup.Registry.Registrations());
         Assert.False(Assert.Single(setup.Registry.Snapshot()).Connected);
-        Assert.Equal(KeyA, Assert.Single(setup.Registry.Pending(withCodes: true)).KeyPin);
+        Assert.Equal(KeyA, Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel))).KeyPin);
         Assert.NotEqual(OnboardTerminalRegistry.ConnectedScreenText, setup.Registry.NextDesiredState(a).Screen.Text);
         Assert.Equal(404, (await setup.Registry.RevokeAsync("vehicle-1", Engineer, Cancel)).Status);
     }
@@ -183,7 +183,7 @@ public sealed class OnboardTerminalPairingTests
         }
 
         Assert.Single(setup.Keys.Rows);
-        Assert.Empty(setup.Registry.Pending(withCodes: true));
+        Assert.Empty((await setup.Registry.PendingAsync(withCodes: true, Cancel)));
         Assert.True(Assert.Single(setup.Registry.Snapshot()).Connected);
     }
 
@@ -202,7 +202,7 @@ public sealed class OnboardTerminalPairingTests
         }
 
         Assert.Single(setup.Keys.Rows);
-        Assert.Empty(setup.Registry.Pending(withCodes: true));
+        Assert.Empty((await setup.Registry.PendingAsync(withCodes: true, Cancel)));
     }
 
     [Fact]
@@ -226,7 +226,7 @@ public sealed class OnboardTerminalPairingTests
         await setup.Registry.FlushAsync(Cancel);
         Assert.Empty(setup.Keys.Rows);
         Assert.Empty(setup.Registry.Registrations());
-        var pending = Assert.Single(setup.Registry.Pending(withCodes: true));
+        var pending = Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel)));
         Assert.True(pending.CloneSuspected);
         Assert.False(Assert.Single(setup.Registry.Snapshot()).Connected);
         Assert.Contains(pending.PairingCode!, setup.Registry.NextDesiredState(again).Screen.Text, StringComparison.Ordinal);
@@ -256,16 +256,33 @@ public sealed class OnboardTerminalPairingTests
         Assert.Null(setup.Registry.Receive(again, first));
 
         Assert.Empty(setup.Registry.Registrations());
-        Assert.True(Assert.Single(setup.Registry.Pending(withCodes: true)).CloneSuspected);
+        Assert.True(Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel))).CloneSuspected);
         var terminal = Assert.Single(setup.Registry.Snapshot());
         Assert.False(terminal.Connected);
         Assert.DoesNotContain(terminal.Io.Inputs, p => p.Number == 7);
     }
 
     [Theory]
+    [InlineData("vehicle-1 ")]
+    [InlineData(" vehicle-1")]
+    [InlineData("vehicle-\u00001")]
+    public async Task AClaimedVehicleIdWithSpacesAroundItOrControlCharactersIsRefused(string claim)
+    {
+        using var setup = new Setup();
+        var link = setup.Registry.Open("test", KeyA);
+
+        var refusal = setup.Registry.Receive(link, new OnboardReport { Seq = 1, VehicleId = claim, TerminalVersion = "t", RunId = "run-a" });
+
+        Assert.Contains("vehicle id", refusal, StringComparison.Ordinal);
+        Assert.Empty(await setup.Registry.PendingAsync(withCodes: true, Cancel));
+        Assert.Equal(400, (await setup.Registry.ConfirmAsync(claim, "123456", Engineer, Cancel)).Status);
+        Assert.Equal(400, (await setup.Registry.RevokeAsync(claim, Engineer, Cancel)).Status);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData(null)]
-    public void AStreamWhoseReportsCarryNoRunIdIsRefused(string? run)
+    public async Task AStreamWhoseReportsCarryNoRunIdIsRefused(string? run)
     {
         using var setup = new Setup();
         var link = setup.Registry.Open("test", KeyA);
@@ -273,7 +290,7 @@ public sealed class OnboardTerminalPairingTests
         var refusal = setup.Registry.Receive(link, new OnboardReport { Seq = 1, VehicleId = "vehicle-1", TerminalVersion = "t", RunId = run ?? string.Empty });
 
         Assert.Contains("run id", refusal, StringComparison.Ordinal);
-        Assert.Empty(setup.Registry.Pending(withCodes: true));
+        Assert.Empty((await setup.Registry.PendingAsync(withCodes: true, Cancel)));
     }
 
     [Fact]
@@ -297,7 +314,7 @@ public sealed class OnboardTerminalPairingTests
 
         Assert.Null((await setup.Registry.RevokeAsync("vehicle-1", Engineer, Cancel)).Problem);
         var other = setup.Connect("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "vehicle-2", run: "run-d");
-        var code = setup.Registry.Pending(withCodes: true).Single(p => p.KeyPin.StartsWith('d')).PairingCode!;
+        var code = (await setup.Registry.PendingAsync(withCodes: true, Cancel)).Single(p => p.KeyPin.StartsWith('d')).PairingCode!;
         Assert.Null((await setup.Registry.ConfirmAsync("vehicle-2", code, Engineer, Cancel)).Problem);
 
         // No second of grace for the old key's last reading: it is not the vehicle's any more.
@@ -316,7 +333,7 @@ public sealed class OnboardTerminalPairingTests
 
         var link = setup.Connect(KeyA, "vehicle-1", run: "run-a");
 
-        Assert.Empty(setup.Registry.Pending(withCodes: true));
+        Assert.Empty((await setup.Registry.PendingAsync(withCodes: true, Cancel)));
         Assert.Equal(KeyA, Assert.Single(setup.Registry.Snapshot()).KeyPin);
         Assert.Equal(OnboardTerminalRegistry.ConnectedScreenText, setup.Registry.NextDesiredState(link).Screen.Text);
     }
@@ -331,7 +348,7 @@ public sealed class OnboardTerminalPairingTests
         setup.Connect(KeyA, "vehicle-2", run: "run-a");
 
         Assert.True(first.Stopped.IsCancellationRequested);
-        var pending = Assert.Single(setup.Registry.Pending(withCodes: true));
+        var pending = Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel)));
         Assert.Equal(("vehicle-2", "vehicle-1"), (pending.VehicleId, pending.RegisteredForVehicle));
         Assert.Equal(404, (await setup.Registry.RevokeAsync("vehicle-2", Engineer, Cancel)).Status);
 
@@ -345,7 +362,7 @@ public sealed class OnboardTerminalPairingTests
     {
         using var setup = new Setup();
         setup.Connect(KeyA, "vehicle-1", run: "run-a");
-        var code = Assert.Single(setup.Registry.Pending(withCodes: true)).PairingCode!;
+        var code = Assert.Single((await setup.Registry.PendingAsync(withCodes: true, Cancel))).PairingCode!;
         setup.Registry.Dispose();
 
         var outcome = await setup.Registry.ConfirmAsync("vehicle-1", code, Engineer, Cancel).WaitAsync(TimeSpan.FromSeconds(10), Cancel);
@@ -355,19 +372,19 @@ public sealed class OnboardTerminalPairingTests
     }
 
     [Fact]
-    public void PendingCodesDifferAndAKeyKeepsItsCodeWhenItReconnects()
+    public async Task PendingCodesDifferAndAKeyKeepsItsCodeWhenItReconnects()
     {
         using var setup = new Setup();
         var a = setup.Connect(KeyA, "vehicle-1", run: "run-a");
         setup.Connect(KeyB, "vehicle-1", run: "run-b");
-        var codes = setup.Registry.Pending(withCodes: true).ToDictionary(p => p.KeyPin, p => p.PairingCode!);
+        var codes = (await setup.Registry.PendingAsync(withCodes: true, Cancel)).ToDictionary(p => p.KeyPin, p => p.PairingCode!);
         Assert.NotEqual(codes[KeyA], codes[KeyB]);
 
         setup.Registry.Close(a, "the connection was lost");
-        Assert.False(setup.Registry.Pending(withCodes: true).Single(p => p.KeyPin == KeyA).Connected);
+        Assert.False((await setup.Registry.PendingAsync(withCodes: true, Cancel)).Single(p => p.KeyPin == KeyA).Connected);
         setup.Connect(KeyA, "vehicle-1", run: "run-a");
 
-        Assert.Equal(codes[KeyA], setup.Registry.Pending(withCodes: true).Single(p => p.KeyPin == KeyA).PairingCode!);
+        Assert.Equal(codes[KeyA], (await setup.Registry.PendingAsync(withCodes: true, Cancel)).Single(p => p.KeyPin == KeyA).PairingCode!);
     }
 
     /// <summary>A registry with the clock in the test's hand and its registrations in <see cref="Keys"/>; its events go nowhere.</summary>
@@ -428,7 +445,7 @@ public sealed class OnboardTerminalPairingTests
         public async Task<TerminalLink> ConnectConfirmedAsync(string key, string vehicle, string run)
         {
             var link = Connect(key, vehicle, run);
-            var code = Registry.Pending(withCodes: true).Single(p => p.KeyPin == key).PairingCode!;
+            var code = (await Registry.PendingAsync(withCodes: true, Cancel)).Single(p => p.KeyPin == key).PairingCode!;
             Assert.Null((await Registry.ConfirmAsync(vehicle, code, Engineer, Cancel)).Problem);
             Report(link, run);
             return link;
@@ -447,10 +464,11 @@ public sealed class OnboardTerminalPairingTests
 
 }
 
-/// <summary>A vehicle list for tests: exactly these ids, or with none given every id (AnyVehicle is the server's temporary stand-in, not the tests').</summary>
+/// <summary>A vehicle list for tests: exactly these ids, or with none given every id, so that a test about terminals needs no site configuration.</summary>
 public sealed class TestVehicles(IReadOnlyList<string>? listed = null) : IVehicleList
 {
-    public bool Contains(string vehicleId) => listed is null || listed.Contains(vehicleId);
+    public Task<bool> ContainsAsync(string vehicleId, CancellationToken cancellationToken) =>
+        Task.FromResult(listed is null || listed.Contains(vehicleId));
 }
 
 /// <summary>Registrations kept in memory, in place of the database.</summary>

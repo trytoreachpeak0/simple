@@ -33,13 +33,20 @@ namespace Simple.Server.Tests;
 /// <param name="riot">Configure a fleet manager, the <see cref="StubRiot"/>; false leaves <c>Simple:Riot:Url</c> empty.</param>
 /// <param name="extraSettings">Settings that override the test defaults, for example a lower login rate limit.</param>
 /// <param name="services">Replaces the server's services, for example the password hasher with a <see cref="GatedPasswordHasher"/>.</param>
+/// <param name="siteVehicleList">
+/// Confirm terminals against the vehicle list of the imported site
+/// configuration, as the server does; false (the default) lets every vehicle
+/// id count as listed (<see cref="TestVehicles"/>), so that a test about
+/// terminals needs no site configuration.
+/// </param>
 public sealed class ServerInstance(
     string? instance = null,
     bool kestrel = false,
     TimeProvider? time = null,
     bool riot = true,
     IReadOnlyDictionary<string, string?>? extraSettings = null,
-    Action<IServiceCollection>? services = null) : IAsyncDisposable
+    Action<IServiceCollection>? services = null,
+    bool siteVehicleList = false) : IAsyncDisposable
 {
     /// <summary>
     /// The SQL Server instance the test databases are created on, without a
@@ -190,7 +197,7 @@ public sealed class ServerInstance(
             settings["urls"] = "http://127.0.0.1:0";
         }
 
-        var created = new Factory(settings, time, MesGateway, Riot, services);
+        var created = new Factory(settings, time, MesGateway, Riot, services, siteVehicleList);
         try
         {
             if (kestrel)
@@ -272,7 +279,7 @@ public sealed class ServerInstance(
         Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Select(a => new Uri(a)).ToList();
 
     private sealed class Factory(
-        Dictionary<string, string?> settings, TimeProvider? time, StubMesGateway mesGateway, StubRiot riot, Action<IServiceCollection>? services)
+        Dictionary<string, string?> settings, TimeProvider? time, StubMesGateway mesGateway, StubRiot riot, Action<IServiceCollection>? services, bool siteVehicleList)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -286,6 +293,11 @@ public sealed class ServerInstance(
                 .ConfigureTestServices(services => services
                     .AddHttpClient(RiotConnectionProbe.HttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(riot.CreateHandler));
+            if (!siteVehicleList)
+            {
+                builder.ConfigureTestServices(services => services.Replace(ServiceDescriptor.Singleton<OnboardTerminals.IVehicleList>(new TestVehicles())));
+            }
+
             if (services is not null)
             {
                 builder.ConfigureTestServices(services);

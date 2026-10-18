@@ -279,7 +279,8 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
             FakeRiotSpeedup: scenario.Initial.FakeRiotSpeedup,
             FakeMesSeedFile: seed,
             Cargo: scenario.Initial.Cargo,
-            ConfirmTerminals: scenario.Initial.ConfirmTerminals);
+            ConfirmTerminals: scenario.Initial.ConfirmTerminals,
+            Site: scenario.Site);
         var up = await system.UpAsync(instance, sqlServer, options, UpTimeout, cancellationToken);
         evidence.Write("up", new { up.ExitCode, up.Error, up.Result });
         if (up.ExitCode != ExitCodes.Success)

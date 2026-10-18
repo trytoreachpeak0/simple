@@ -4,12 +4,14 @@
       "id": 1,
       "name": "fake-map-1",
       "stations": [
-        { "id": 1, "name": "F1-01", "type": 1, "x": 0, "y": 0 },
-        { "id": 2, "name": "F1-02", "type": 1, "x": 10000, "y": 0 },
-        { "id": 3, "name": "F1-03", "type": 1, "x": 20000, "y": 0 },
-        { "id": 4, "name": "F1-04", "type": 1, "x": 20000, "y": 10000 },
+        { "id": 1, "name": "S1-1", "type": 1, "x": 0, "y": 0 },
+        { "id": 2, "name": "关卡", "type": 1, "x": 10000, "y": 0 },
+        { "id": 3, "name": "S1-2", "type": 1, "x": 20000, "y": 0 },
+        { "id": 4, "name": "烘箱", "type": 1, "x": 20000, "y": 10000 },
         { "id": 5, "name": "F1-CHARGER", "type": 2, "x": 10000, "y": 10000 },
-        { "id": 6, "name": "F1-UNREACHABLE", "type": 1, "x": 0, "y": 10000 }
+        { "id": 6, "name": "F1-UNREACHABLE", "type": 1, "x": 0, "y": 10000 },
+        { "id": 7, "name": "等待点1", "type": 1, "x": 10000, "y": -10000 },
+        { "id": 8, "name": "等待点2", "type": 1, "x": 20000, "y": -10000 }
       ],
       "edges": [
         { "id": 1, "from": 1, "to": 2 },
@@ -19,19 +21,32 @@
         { "id": 5, "from": 4, "to": 2 },
         { "id": 6, "from": 2, "to": 5 },
         { "id": 7, "from": 5, "to": 2 },
-        { "id": 8, "from": 6, "to": 1 }
+        { "id": 8, "from": 6, "to": 1 },
+        { "id": 9, "from": 2, "to": 7 },
+        { "id": 10, "from": 7, "to": 2 },
+        { "id": 11, "from": 3, "to": 8 },
+        { "id": 12, "from": 8, "to": 3 }
       ]
     },
     {
       "id": 2,
       "name": "fake-map-2",
       "stations": [
-        { "id": 1, "name": "F2-01", "type": 1, "x": 0, "y": 0 },
-        { "id": 2, "name": "F2-02", "type": 1, "x": 5000, "y": 0 }
+        { "id": 1, "name": "等待点3", "type": 1, "x": 0, "y": 0 },
+        { "id": 2, "name": "S2-1", "type": 1, "x": 5000, "y": 0 },
+        { "id": 3, "name": "F2-CHARGER", "type": 2, "x": 5000, "y": 5000 },
+        { "id": 4, "name": "烘箱2", "type": 1, "x": 10000, "y": 0 },
+        { "id": 5, "name": "关卡2", "type": 1, "x": 0, "y": 5000 }
       ],
       "edges": [
         { "id": 1, "from": 1, "to": 2 },
-        { "id": 2, "from": 2, "to": 1 }
+        { "id": 2, "from": 2, "to": 1 },
+        { "id": 3, "from": 2, "to": 3 },
+        { "id": 4, "from": 3, "to": 2 },
+        { "id": 5, "from": 2, "to": 4 },
+        { "id": 6, "from": 4, "to": 2 },
+        { "id": 7, "from": 1, "to": 5 },
+        { "id": 8, "from": 5, "to": 1 }
       ]
     }
   ],

@@ -136,6 +136,14 @@ public static class EventTypes
 
     /// <summary>A person discarded the console's certificate with the server command; the next start makes a new one.</summary>
     public const string ConsoleCertificateDiscarded = "console.certificate-discarded";
+
+    /// <summary>
+    /// A person imported a site's starting configuration with the server
+    /// command at first install (ADR 0017): data.version (1), data.site and
+    /// how many projects, zones, areas, taskTypes and vehicles it has. Every
+    /// task type is switched off.
+    /// </summary>
+    public const string SiteConfigurationImported = "site-configuration.imported";
 }
 
 /// <summary>The entries an event can come through (ADR 0019).</summary>
@@ -152,6 +160,6 @@ public static class EventSources
     /// <summary>An AI session through MCP.</summary>
     public const string Mcp = "mcp";
 
-    /// <summary>A person on the server machine, through a server command (setting the administrator's password).</summary>
+    /// <summary>A person on the server machine, through a server command (setting the administrator's password, importing the site configuration).</summary>
     public const string ServerCommand = "server-command";
 }

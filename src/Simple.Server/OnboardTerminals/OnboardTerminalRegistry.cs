@@ -227,6 +227,11 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
                     return $"the vehicle id is longer than {MaxVehicleIdLength} characters.";
                 }
 
+                if (!IsValidVehicleId(report.VehicleId))
+                {
+                    return "the vehicle id has whitespace around it or a control character in it. A vehicle id is written exactly as the vehicle list has it.";
+                }
+
                 if (!links.TryGetValue(link.KeyPin, out var previous) && !pending.ContainsKey(link.KeyPin) && !IsRegistered(link.KeyPin) && !MakeRoom())
                 {
                     return $"{MaxPending} terminals are waiting for confirmation already, each with a stream open.";
@@ -309,18 +314,33 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
     public async Task<PairingOutcome> ConfirmAsync(string vehicleId, string pairingCode, Actor actor, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
-        var done = new TaskCompletionSource<PairingOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!IsValidVehicleId(vehicleId))
+        {
+            return PairingOutcome.Invalid(InvalidVehicleId);
+        }
+
         lock (gate)
         {
-            if (pending.Values.FirstOrDefault(p => p.Claim == vehicleId && p.Code == pairingCode) is not { } waiting)
+            if (!pending.Values.Any(p => p.Claim == vehicleId && p.Code == pairingCode))
             {
                 return PairingOutcome.NotFound($"No terminal waiting for confirmation claims vehicle {vehicleId} with that pairing code.");
             }
+        }
 
-            if (!vehicles.Contains(vehicleId))
+        // The vehicle list is in the database: asked outside the lock.
+        if (!await vehicles.ContainsAsync(vehicleId, cancellationToken))
+        {
+            return PairingOutcome.Conflict(
+                $"Vehicle {vehicleId} is not in the vehicle list. A terminal claiming it is listed, but it can be confirmed only once the vehicle is in the list (ADR 0029).");
+        }
+
+        var done = new TaskCompletionSource<PairingOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (gate)
+        {
+            // Looked up again: it may have gone (or reconnected claiming another vehicle) meanwhile.
+            if (pending.Values.FirstOrDefault(p => p.Claim == vehicleId && p.Code == pairingCode) is not { } waiting)
             {
-                return PairingOutcome.Conflict(
-                    $"Vehicle {vehicleId} is not in the vehicle list. A terminal claiming it is listed, but it can be confirmed only once the vehicle is in the list (ADR 0029).");
+                return PairingOutcome.NotFound($"No terminal waiting for confirmation claims vehicle {vehicleId} with that pairing code.");
             }
 
             var keyPin = waiting.KeyPin;
@@ -384,6 +404,11 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
     public async Task<PairingOutcome> RevokeAsync(string vehicleId, Actor actor, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
+        if (!IsValidVehicleId(vehicleId))
+        {
+            return PairingOutcome.Invalid(InvalidVehicleId);
+        }
+
         var done = new TaskCompletionSource<PairingOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (gate)
         {
@@ -477,11 +502,12 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
 
     /// <summary>Every key waiting for confirmation, the oldest first.</summary>
     /// <param name="withCodes">With each one's pairing code: only for a login that may confirm.</param>
-    public IReadOnlyList<PendingOnboardTerminalStatus> Pending(bool withCodes)
+    public async Task<IReadOnlyList<PendingOnboardTerminalStatus>> PendingAsync(bool withCodes, CancellationToken cancellationToken)
     {
+        List<PendingOnboardTerminalStatus> waiting;
         lock (gate)
         {
-            return pending.Values
+            waiting = pending.Values
                 .OrderBy(p => p.FirstSeenAt)
                 .Select(p => new PendingOnboardTerminalStatus(
                     p.KeyPin,
@@ -491,13 +517,38 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
                     p.Link?.RemoteAddress,
                     p.Link?.Version ?? p.Version,
                     p.FirstSeenAt,
-                    vehicles.Contains(p.Claim),
+                    InVehicleList: false,
                     VehicleOnlineWithAnotherKey(p),
                     registrations.Values.FirstOrDefault(r => r.KeyPin == p.KeyPin && r.VehicleId != p.Claim)?.VehicleId,
                     p.CloneSuspected))
                 .ToList();
         }
+
+        // The vehicle list is in the database: asked outside the lock, once per vehicle.
+        var listed = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var vehicle in waiting.Select(p => p.VehicleId).Distinct(StringComparer.Ordinal))
+        {
+            listed[vehicle] = await vehicles.ContainsAsync(vehicle, cancellationToken);
+        }
+
+        return [.. waiting.Select(p => p with { InVehicleList = listed[p.VehicleId] })];
     }
+
+    /// <summary>
+    /// Whether <paramref name="vehicleId"/> can be a vehicle id at all: not
+    /// empty, at most <see cref="MaxVehicleIdLength"/> characters, no
+    /// whitespace around it and no control character in it. SQL Server
+    /// ignores trailing spaces when it compares, so "agv01 " would find
+    /// agv01 in the vehicle list; such an id never gets that far.
+    /// </summary>
+    public static bool IsValidVehicleId(string? vehicleId) =>
+        vehicleId is { Length: > 0 and <= MaxVehicleIdLength }
+        && !char.IsWhiteSpace(vehicleId[0])
+        && !char.IsWhiteSpace(vehicleId[^1])
+        && !vehicleId.Any(char.IsControl);
+
+    private const string InvalidVehicleId =
+        "A vehicle id is not empty, has at most 64 characters, no whitespace around it and no control character in it.";
 
     /// <summary>Every vehicle's registered key.</summary>
     public IReadOnlyList<OnboardTerminalKeyStatus> Registrations()
@@ -664,15 +715,37 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
         link.Wake();
         // Not the pairing code: it is treated as a credential (ADR 0034), and
         // the event record is kept, exported and read by the on-duty AI.
-        Record(EventTypes.OnboardPending, EventSources.Server, new
+        // Whether the vehicle is listed is asked by the writer, in its turn:
+        // the vehicle list is in the database, never asked under the lock.
+        var claim = waiting.Claim;
+        var keyPin = waiting.KeyPin;
+        var remote = link.RemoteAddress;
+        var online = VehicleOnlineWithAnotherKey(waiting);
+        var registeredFor = registrations.Values.FirstOrDefault(r => r.KeyPin == keyPin && r.VehicleId != claim)?.VehicleId;
+        Enqueue(async services =>
         {
-            VehicleId = waiting.Claim,
-            waiting.KeyPin,
-            Remote = link.RemoteAddress,
-            InVehicleList = vehicles.Contains(waiting.Claim),
-            VehicleOnlineWithAnotherKey = VehicleOnlineWithAnotherKey(waiting),
-            RegisteredForVehicle = registrations.Values.FirstOrDefault(r => r.KeyPin == waiting.KeyPin && r.VehicleId != waiting.Claim)?.VehicleId,
-            CloneSuspected = cloneSuspected,
+            try
+            {
+                var listed = await vehicles.ContainsAsync(claim, CancellationToken.None);
+                await services.GetRequiredService<EventStore>().AppendAsync(
+                    EventTypes.OnboardPending,
+                    EventSources.Server,
+                    new
+                    {
+                        VehicleId = claim,
+                        KeyPin = keyPin,
+                        Remote = remote,
+                        InVehicleList = listed,
+                        VehicleOnlineWithAnotherKey = online,
+                        RegisteredForVehicle = registeredFor,
+                        CloneSuspected = cloneSuspected,
+                    },
+                    CancellationToken.None);
+            }
+            catch (Exception e)
+            {
+                LogNotRecorded(logger, e, EventTypes.OnboardPending);
+            }
         });
     }
 
@@ -965,13 +1038,15 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
 }
 
 /// <summary>What became of a confirmation or a revocation; <see cref="Problem"/> is null when it was done.</summary>
-/// <param name="Status">The HTTP status that says it: 200, 404, 409 or 503.</param>
+/// <param name="Status">The HTTP status that says it: 200, 400, 404, 409 or 503.</param>
 /// <param name="ReplacedKeyPin">On a confirmation: the vehicle's earlier key, released by it.</param>
 public sealed record PairingOutcome(int Status, string? Problem, OnboardTerminalKey? Key = null, string? ReplacedKeyPin = null)
 {
     public static PairingOutcome Done(OnboardTerminalKey key, string? replacedKeyPin) => new(StatusCodes.Status200OK, null, key, replacedKeyPin);
 
     public static PairingOutcome NotFound(string problem) => new(StatusCodes.Status404NotFound, problem);
+
+    public static PairingOutcome Invalid(string problem) => new(StatusCodes.Status400BadRequest, problem);
 
     public static PairingOutcome Conflict(string problem) => new(StatusCodes.Status409Conflict, problem);
 

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Simple.Server.Events;
 using Simple.Server.Persistence;
+using Simple.Server.Sites;
 
 namespace Simple.Server.OnboardTerminals;
 
@@ -68,20 +69,23 @@ public sealed class OnboardTerminalKeyStore(SimpleDbContext db, EventStore event
 /// <summary>Whether a vehicle id is in the vehicle list (ADR 0007): only a listed vehicle's terminal can be confirmed (ADR 0029).</summary>
 public interface IVehicleList
 {
-    bool Contains(string vehicleId);
+    /// <summary>Whether <paramref name="vehicleId"/>, exactly as written, is in the vehicle list now.</summary>
+    Task<bool> ContainsAsync(string vehicleId, CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// Temporary: every vehicle id counts as listed, because the server has no
-/// vehicle list yet. #91 brings it. Whichever of #91 and #92 merges second
-/// deletes this class and implements <see cref="IVehicleList"/> on #91's
-/// vehicle table, with a test that an id absent from the imported site
-/// configuration cannot be confirmed. Nothing but Program.cs's registration
-/// may use it.
+/// The vehicle list of the current site configuration (ADR 0017), compared
+/// exactly (BIN2). SQL Server ignores trailing spaces even then, so the
+/// registry hands it only ids without surrounding whitespace
+/// (<see cref="OnboardTerminalRegistry.IsValidVehicleId"/>).
 /// </summary>
-public sealed class AnyVehicle : IVehicleList
+public sealed class SiteVehicleList(IServiceScopeFactory scopes) : IVehicleList
 {
-    public bool Contains(string vehicleId) => true;
+    public async Task<bool> ContainsAsync(string vehicleId, CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<SiteConfigurationStore>().HasVehicleAsync(vehicleId, cancellationToken);
+    }
 }
 
 /// <summary>Reads the registered keys into the registry at start, before the terminal endpoint takes streams.</summary>

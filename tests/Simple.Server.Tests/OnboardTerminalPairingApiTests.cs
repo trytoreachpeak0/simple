@@ -190,7 +190,7 @@ public sealed class OnboardTerminalPairingApiTests
     {
         await using var server = new ServerInstance(
             kestrel: true,
-            services: s => s.Replace(ServiceDescriptor.Singleton<IVehicleList>(new OnlyVehicle("vehicle-1"))));
+            services: s => s.Replace(ServiceDescriptor.Singleton<IVehicleList>(new TestVehicles(["vehicle-1"]))));
         using var admin = server.Start();
         await using var terminal = await TestTerminal.ConnectAsync(admin);
         await terminal.ReceiveAsync();
@@ -237,15 +237,48 @@ public sealed class OnboardTerminalPairingApiTests
         }
     }
 
+    [Fact]
+    public async Task OnlyAVehicleOfTheImportedSiteConfigurationCanBeConfirmedExactlyAsItIsWritten()
+    {
+        await using var server = new ServerInstance(kestrel: true, siteVehicleList: true);
+        using var admin = server.Start();
+        server.Riot.SetMaps(SiteExamples.Map);
+        var file = Path.Combine(Directory.CreateTempSubdirectory("simple-pairing-site-").FullName, "site.yaml");
+        await File.WriteAllTextAsync(file, SiteExamples.ValidFile, Cancel);
+        Assert.Equal(Sites.SiteImportCommand.Imported, await Sites.SiteImportCommand.RunAsync(server.Services, file, TextWriter.Null, Cancel));
+
+        // v3 is not in it, V1 is not v1: listed, but not confirmed.
+        foreach (var claim in new[] { "v3", "V1" })
+        {
+            await using var stranger = await TestTerminal.ConnectAsync(admin);
+            await stranger.ReceiveAsync();
+            await stranger.ReportAsync(claim);
+            var code = await Api.PairingCodeAsync(admin, stranger.Key.Pin, claim);
+            Assert.False((await Api.StatusAsync(admin)).PendingOnboardTerminals.Single(p => p.KeyPin == stranger.Key.Pin).InVehicleList);
+            using var refused = await Api.ConfirmAsync(admin, claim, code);
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        }
+
+        // A claim with a space SQL Server would ignore never gets as far as the list.
+        foreach (var claim in new[] { "v1 ", " v1" })
+        {
+            await using var spaced = await TestTerminal.ConnectAsync(admin);
+            await spaced.ReceiveAsync();
+            await spaced.ReportAsync(claim);
+            Assert.Equal(StatusCode.InvalidArgument, (await spaced.FailureAsync()).StatusCode);
+            using var malformed = await Api.ConfirmAsync(admin, claim, "123456");
+            Assert.Equal(HttpStatusCode.BadRequest, malformed.StatusCode);
+        }
+
+        Assert.Empty(await Api.EventsAsync(admin, EventTypes.OnboardConfirmed));
+        await using var listed = await TestTerminal.ConnectConfirmedAsync(admin, "v1");
+        Assert.Equal("v1", Assert.Single(await Api.EventsAsync(admin, EventTypes.OnboardConfirmed)).Text("vehicleId"));
+    }
+
     private static async Task CreateAccountAsync(HttpClient admin, string name, string role)
     {
         using var created = await admin.PostAsJsonAsync(
             new Uri("/api/v1/accounts", UriKind.Relative), new { name, role, project = "P1", password = Password }, Cancel);
         created.EnsureSuccessStatusCode();
-    }
-
-    private sealed class OnlyVehicle(string listed) : IVehicleList
-    {
-        public bool Contains(string vehicleId) => vehicleId == listed;
     }
 }

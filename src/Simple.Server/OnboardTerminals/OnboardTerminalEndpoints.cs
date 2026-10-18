@@ -14,7 +14,8 @@ public static class OnboardTerminalEndpoints
     public static void MapOnboardTerminalEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/v1/onboard-terminals", async (HttpContext http, OnboardTerminalRegistry terminals) =>
-                TypedResults.Ok(new OnboardTerminalKeysResponse(terminals.Registrations(), terminals.Pending(withCodes: await http.MayAsync(Access.Engineer)))))
+                TypedResults.Ok(new OnboardTerminalKeysResponse(
+                    terminals.Registrations(), await terminals.PendingAsync(withCodes: await http.MayAsync(Access.Engineer), http.RequestAborted))))
             .RequireAccess(Access.View)
             .WithName("ListOnboardTerminalKeys")
             .WithSummary("Every vehicle's registered terminal key, and every terminal key waiting for confirmation; its pairing code only for an engineer and up, through the console.");

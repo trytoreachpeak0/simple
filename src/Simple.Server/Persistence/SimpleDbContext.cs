@@ -4,6 +4,7 @@ using Simple.Server.Accounts;
 using Simple.Server.Events;
 using Simple.Server.Listeners;
 using Simple.Server.OnboardTerminals;
+using Simple.Server.Sites;
 
 namespace Simple.Server.Persistence;
 
@@ -38,6 +39,9 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
 
     /// <summary>The terminal key confirmed for each vehicle (ADR 0025).</summary>
     public DbSet<OnboardTerminalKey> OnboardTerminalKeys => Set<OnboardTerminalKey>();
+
+    /// <summary>The versions of the site configuration (ADR 0017); their rows are in the Site* tables (see SiteModel).</summary>
+    public DbSet<SiteVersionRecord> SiteVersions => Set<SiteVersionRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -96,5 +100,6 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
             e.Property(x => x.RemoteAddress).HasMaxLength(64);
             e.HasOne<Account>().WithMany().HasForeignKey(x => x.AccountId).OnDelete(DeleteBehavior.Cascade);
         });
+        SiteModel.Configure(modelBuilder);
     }
 }

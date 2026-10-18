@@ -1,20 +1,74 @@
-# A fictional small site for scenarios and tests (sites/sample/README.md).
-# Its values match the fakes' starting data: the areas and task types of the
-# fake MES's seed rows (src/Simple.MesGateway/Fake/seed-rows.json) and the
+# A fictional small site for scenarios and tests (sites/sample/README.md);
+# the format is in sites/README.md. Its values match the fakes' starting data:
+# the areas and task types of the fake MES's seed rows
+# (src/Simple.MesGateway/Fake/seed-rows.json) and the maps, stations and
 # vehicles of the fake RIoT's world (src/Simple.FakeRiot/seed.json).
 name: sample
 description: 虚构的小厂区，给场景和测试用
-areas:
-  - S1-1
-  - S1-2
-  - S2-1
+
+projects:
+  - code: SAMPLE_A
+    name: 示例项目甲
+    zones:
+      - { code: ZONE_1, name: 一区 }
+    fixed-stations:
+      - { task-type: SAMPLE_TO_OVEN, map: 1, station: 4 }
+      - { task-type: SAMPLE_TO_GATE, map: 1, station: 2 }
+  - code: SAMPLE_B
+    name: 示例项目乙
+    zones:
+      - { code: ZONE_2, name: 二区, demand-order: first-come-first-served }
+    fixed-stations:
+      - { task-type: SAMPLE_TO_OVEN, map: 2, station: 4 }
+      - { task-type: SAMPLE_TO_GATE, map: 2, station: 5, all-loaded: 3m }
+
 task-types:
-  - SAMPLE_TO_OVEN
-  - SAMPLE_TO_GATE
+  - { code: SAMPLE_TO_OVEN, name: 示例送烘箱, pickup: machine, unload: fixed-station }
+  - { code: SAMPLE_TO_GATE, name: 示例送关卡, pickup: machine, unload: fixed-station }
+
+areas:
+  - { area: S1-1, zone: ZONE_1, door-side: front }
+  - { area: S1-2, zone: ZONE_1, door-side: rear }
+  - { area: S2-1, zone: ZONE_2, door-side: front }
+
+# The local onboard terminals report vehicle-1, vehicle-2… (scenarios/README.md).
+# Every vehicle is wired like the IO simulator's cabinet: slot n's lock
+# feedback on DI n, its light curtain on DI n+8, its unlock on DO n.
 vehicles:
-  - name: fake-vehicle-1
+  - id: vehicle-1
     riot-device-key: BROKERX-0000000000000000000000000000fa01
-  - name: fake-vehicle-2
+    project: SAMPLE_A
+    zone: ZONE_1
+    task-types: [SAMPLE_TO_OVEN]
+    slot-groups: &slot-groups
+      - { name: front, slots: [1, 2, 3, 4] }
+      - { name: rear, slots: [5, 6, 7, 8] }
+    chargers: [{ map: 1, station: 5 }]
+    waiting-point: { map: 1, station: 7 }
+    io-points: &io-points
+      - { slot: 1, lock: DI1, light-curtain: DI9, unlock: DO1 }
+      - { slot: 2, lock: DI2, light-curtain: DI10, unlock: DO2 }
+      - { slot: 3, lock: DI3, light-curtain: DI11, unlock: DO3 }
+      - { slot: 4, lock: DI4, light-curtain: DI12, unlock: DO4 }
+      - { slot: 5, lock: DI5, light-curtain: DI13, unlock: DO5 }
+      - { slot: 6, lock: DI6, light-curtain: DI14, unlock: DO6 }
+      - { slot: 7, lock: DI7, light-curtain: DI15, unlock: DO7 }
+      - { slot: 8, lock: DI8, light-curtain: DI16, unlock: DO8 }
+  - id: vehicle-2
     riot-device-key: BROKERX-0000000000000000000000000000fa02
-  - name: fake-vehicle-3
+    project: SAMPLE_A
+    zone: ZONE_1
+    task-types: [SAMPLE_TO_GATE]
+    slot-groups: *slot-groups
+    chargers: [{ map: 1, station: 5 }]
+    waiting-point: { map: 1, station: 8 }
+    io-points: *io-points
+  - id: vehicle-3
     riot-device-key: BROKERX-0000000000000000000000000000fa03
+    project: SAMPLE_B
+    zone: ZONE_2
+    task-types: [SAMPLE_TO_OVEN, SAMPLE_TO_GATE]
+    slot-groups: *slot-groups
+    chargers: [{ map: 2, station: 3 }]
+    waiting-point: { map: 2, station: 1 }
+    io-points: *io-points

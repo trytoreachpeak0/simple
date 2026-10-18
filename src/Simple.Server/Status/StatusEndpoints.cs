@@ -5,6 +5,7 @@ using Simple.Server.Listeners;
 using Simple.Server.Mes;
 using Simple.Server.OnboardTerminals;
 using Simple.Server.Riot;
+using Simple.Server.Sites;
 
 namespace Simple.Server.Status;
 
@@ -12,7 +13,7 @@ public static class StatusEndpoints
 {
     public static void MapStatusEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/status", async (HttpContext http, ServerInfo info, IOptions<ServerSettings> settings, OnboardTerminalRegistry terminals, OnboardEndpoint endpoint, ConsoleEndpoint console, MesGatewayMonitor mes, RiotConnectionMonitor riot) =>
+        app.MapGet("/api/v1/status", async (HttpContext http, ServerInfo info, IOptions<ServerSettings> settings, OnboardTerminalRegistry terminals, OnboardEndpoint endpoint, ConsoleEndpoint console, MesGatewayMonitor mes, RiotConnectionMonitor riot, CurrentSiteVersion site) =>
                 new StatusResponse(
                     info.Version,
                     info.StartedAt,
@@ -21,11 +22,12 @@ public static class StatusEndpoints
                     endpoint.Describe(),
                     OnboardTerminals: terminals.Snapshot(),
                     // The pairing code only to those who may confirm (ADR 0034: a credential).
-                    PendingOnboardTerminals: terminals.Pending(withCodes: await http.MayAsync(Access.Engineer)),
+                    PendingOnboardTerminals: await terminals.PendingAsync(withCodes: await http.MayAsync(Access.Engineer), http.RequestAborted),
                     Riot: riot.Status(),
                     MesGateway: mes.Status(),
                     ConsoleEndpoint: console.Describe(),
-                    OverviewEndpoint: console.DescribeOverview()))
+                    OverviewEndpoint: console.DescribeOverview(),
+                    SiteConfiguration: site.Summary))
             .RequireAccess(Access.View)
             .WithName("GetStatus")
             .WithSummary("Server version, start time and instance, and the state of every connected part.");
@@ -39,6 +41,7 @@ public static class StatusEndpoints
 /// <param name="MesGateway">What the server last learned from the MES gateway.</param>
 /// <param name="ConsoleEndpoint">The console's HTTPS address and its certificate, with the expiry warning (ADR 0046); null without one.</param>
 /// <param name="OverviewEndpoint">The vehicle overview's plain address; null without one.</param>
+/// <param name="SiteConfiguration">Which version of the site configuration is in effect; null before the first import.</param>
 public sealed record StatusResponse(
     string Version,
     DateTimeOffset StartedAt,
@@ -50,7 +53,8 @@ public sealed record StatusResponse(
     RiotStatus Riot,
     MesGatewayStatus MesGateway,
     ConsoleEndpointStatus? ConsoleEndpoint = null,
-    OverviewEndpointStatus? OverviewEndpoint = null);
+    OverviewEndpointStatus? OverviewEndpoint = null,
+    SiteVersionSummary? SiteConfiguration = null);
 
 /// <param name="Url">The address terminals are configured with.</param>
 /// <param name="CertificatePin">What terminals pin: the SHA-256 of the server certificate's public key, in hex.</param>
