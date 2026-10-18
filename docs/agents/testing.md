@@ -51,14 +51,21 @@ What `simple remote` does and what its exit codes mean:
 ## The loop: from a problem to a red scenario
 
 1. **See the system run.** `./simple remote scenario run infrastructure-up`.
-   Done when it ends with 0 and its last lines read `Verdict: holds` and
-   `System stopped`. This proves the remote machine, the build and every
-   component work before you change anything.
+   Done when it ends with 0 and its output has the lines
+   `Verdict: holds (expected holds, as expected)` and `System stopped …`.
+   This proves the remote machine, the build and every component work before
+   you change anything. A remote scenario run takes about a minute the first
+   time (it builds) and half a minute after that, plus however long it queues
+   for a slot (up to 30 minutes): run it in the background or with a timeout
+   of 35 minutes or more.
 2. **Find the nearest scenario.** `./simple scenario list` lists every scenario
-   under `scenarios/`, what it proves and its expected verdict. Read the one
+   under `scenarios/`: its name, site, expected verdict and title (what it
+   proves); a file that is not valid shows `NOT VALID`. Read the one
    closest to the problem, and `scenarios/README.md` for the format: initial
    state, events (actions through the fakes), expectations, conditions on the
-   server's status and event record.
+   server's status and event record. The event types an expectation can
+   name are the constants in `src/Simple.Server/Events/EventRecord.cs`, each
+   with a comment saying when the server records it.
 3. **Write the problem as a scenario.** A new file `scenarios/<name>.yaml`,
    first line `# yaml-language-server: $schema=scenario.schema.json`, its
    expectations stating what the system should do. Leave `expected-verdict` out
@@ -79,10 +86,17 @@ What `simple remote` does and what its exit codes mean:
    - 12 (not applicable): every `only-if` was false.
    - 1: the run could not stop its system (`teardown` in `result.json`).
 6. **Fix and go green.** Change the code, run the scenario again until it ends
-   with 0, then run the tests the change touches. The scenario stays in
-   `scenarios/` with the fix: `dotnet test` and CI run every scenario
-   (`tests/Simple.Cli.Tests/ScenarioTests.cs`) and fail when its verdict differs
-   from its `expected-verdict`.
+   with 0, then run the tests the change touches. The scenario goes into the
+   same PR as the fix: `dotnet test` and CI run every scenario in `scenarios/`
+   (`tests/Simple.Cli.Tests/ScenarioTests.cs`) and fail when its verdict
+   differs from its `expected-verdict`. A scenario committed while it is still
+   red therefore turns CI red.
+
+A scenario written only to see a red verdict, with no bug behind it (to learn
+the format, or to check the runner), is deleted afterwards. The one exception
+is a scenario that proves the runner itself judges correctly, such as
+`scenarios/deliberately-wrong.yaml`: it says `expected-verdict: does-not-hold`
+and has exactly one expectation.
 
 ## Scenario runs
 
@@ -113,7 +127,8 @@ the local copy under the run directory the last line prints. Here it is under
 
 - `result.json`: the run's outcome. Read three things:
   - `verdict` (and `asExpected`, against `expectedVerdict`);
-  - `expectations[]`: each one's `verdict`, `reason` and `line` in the file;
+  - `expectations[]`: each one's `name` (its `id` in the file, or
+    `expectation <n>`), `verdict`, `reason` and `line` in the file;
     `events[]`: each action's `state` and `detail`; `driveFailure` when the
     scenario could not be driven;
   - `teardown.stopped`: whether the system was stopped. `verdict` says nothing
@@ -122,6 +137,9 @@ the local copy under the run directory the last line prints. Here it is under
 - `timeline.jsonl` (what happened when), `events.jsonl` (the server's event
   record), `status.json` (the server's last status), `logs/` (every component's
   program log and console output), `scenario.yaml` (the file that ran).
+  `runInstance` in `result.json` is the instance the run used
+  (`<instance>-scenario`); `instance` is set only when `--keep-up` left that
+  system running.
 
 To look into a run's system after it ends, run it here with `--keep-up`, then
 `./simple status --instance <instance>-scenario` and so on, and `./simple down
