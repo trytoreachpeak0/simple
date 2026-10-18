@@ -271,8 +271,7 @@ public sealed class LocalSystemTests : IDisposable
         var scenario = Scenarios.ScenarioRunner.InstanceFor(instance);
         store.WriteSqlServer(instance, CliRunner.SqlServer);
         var asked = new List<string>();
-        var system = new LocalSystem(@"F:\simple
-epo", store, TextWriter.Null, deleteServerKey: (name, _) =>
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null, deleteServerKey: (name, _) =>
         {
             asked.Add(name);
             return false;
@@ -296,8 +295,7 @@ epo", store, TextWriter.Null, deleteServerKey: (name, _) =>
         Directory.CreateDirectory(Path.GetDirectoryName(log)!);
         File.WriteAllText(log, "the last run\n");
         store.WriteSqlServer(scenario, CliRunner.SqlServer);
-        var system = new LocalSystem(@"F:\simple
-epo", store, TextWriter.Null, deleteServerKey: (_, _) => false);
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null, deleteServerKey: (_, _) => false);
 
         var outcome = await system.ResetAsync(instance, CliRunner.SqlServer, Cancel);
 

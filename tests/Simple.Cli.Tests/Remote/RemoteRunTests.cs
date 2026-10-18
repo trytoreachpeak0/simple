@@ -456,24 +456,55 @@ public sealed class RemoteRunTests
     /// only way to remove them later, so it stays; one with only locks and
     /// logs goes (review of #90).
     /// </summary>
-    [Fact]
-    public async Task ForgetWithoutAWorktreeThereKeepsTheDirectoriesThatStillRecordSomething()
+    [Theory]
+    [InlineData("state.json")]
+    [InlineData("sqlserver.txt")]
+    [InlineData("serverkey.txt")]
+    public async Task ForgetWithoutAWorktreeThereKeepsTheDirectoriesThatStillRecordSomething(string record)
     {
         await using var sandbox = await GitSandbox.CreateAsync(Cancel);
         var home = Path.Combine(sandbox.RemoteRoot, "home");
         var machine = new DirectoryMachine(sandbox.RemoteRoot) { Environment = new Dictionary<string, string> { [Instances.InstanceStore.HomeVariable] = home } };
         await RunOkAsync(sandbox, machine);
         var (own, scenario, _) = LeaveInstanceDirectories(sandbox, home);
-        File.WriteAllText(Path.Combine(own, "sqlserver.txt"), @"Server=.\SIMPLE_DEV;Integrated Security=true");
+        File.WriteAllText(Path.Combine(own, record), "recorded\n");
         Directory.Delete(sandbox.RemoteWorktree(), recursive: true);
 
         var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "forget");
 
         Assert.True(exitCode == 0, stderr);
         Assert.Empty(Lines(stdout));
-        Assert.True(File.Exists(Path.Combine(own, "sqlserver.txt")));
+        Assert.True(File.Exists(Path.Combine(own, record)));
         Assert.Contains($"keeping {own}", stderr, StringComparison.OrdinalIgnoreCase);
         Assert.False(Directory.Exists(scenario), $"{scenario} is still there");
+    }
+
+    /// <summary>
+    /// With a worktree there, forget's down --reset has run and succeeded:
+    /// whatever its directories still hold goes, records included.
+    /// </summary>
+    [Fact]
+    public async Task ForgetAfterASuccessfulResetRemovesTheDirectoriesRecordsAndAll()
+    {
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var home = Path.Combine(sandbox.RemoteRoot, "home");
+        var machine = new DirectoryMachine(sandbox.RemoteRoot) { Environment = new Dictionary<string, string> { [Instances.InstanceStore.HomeVariable] = home } };
+        await RunOkAsync(sandbox, machine);
+        var (own, scenario, _) = LeaveInstanceDirectories(sandbox, home);
+        foreach (var directory in new[] { own, scenario })
+        {
+            foreach (var record in new[] { "state.json", "sqlserver.txt", "serverkey.txt" })
+            {
+                File.WriteAllText(Path.Combine(directory, record), "recorded\n");
+            }
+        }
+
+        var (exitCode, _, stderr) = await RunAsync(sandbox, machine, "forget");
+
+        Assert.True(exitCode == 0, stderr);
+        Assert.False(Directory.Exists(own), $"{own} is still there");
+        Assert.False(Directory.Exists(scenario), $"{scenario} is still there");
+        Assert.DoesNotContain("keeping", stderr, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>What down --reset leaves under the remote command line's home: lock files and logs, for the instance, its scenario instance and another clone's.</summary>
