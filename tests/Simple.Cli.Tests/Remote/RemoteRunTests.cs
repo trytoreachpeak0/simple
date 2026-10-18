@@ -450,6 +450,32 @@ public sealed class RemoteRunTests
         Assert.True(File.Exists(Path.Combine(scenario, "lock")));
     }
 
+    /// <summary>
+    /// Without a worktree there, forget runs no down --reset: a directory that
+    /// still records the instance's database, server key or processes is the
+    /// only way to remove them later, so it stays; one with only locks and
+    /// logs goes (review of #90).
+    /// </summary>
+    [Fact]
+    public async Task ForgetWithoutAWorktreeThereKeepsTheDirectoriesThatStillRecordSomething()
+    {
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var home = Path.Combine(sandbox.RemoteRoot, "home");
+        var machine = new DirectoryMachine(sandbox.RemoteRoot) { Environment = new Dictionary<string, string> { [Instances.InstanceStore.HomeVariable] = home } };
+        await RunOkAsync(sandbox, machine);
+        var (own, scenario, _) = LeaveInstanceDirectories(sandbox, home);
+        File.WriteAllText(Path.Combine(own, "sqlserver.txt"), @"Server=.\SIMPLE_DEV;Integrated Security=true");
+        Directory.Delete(sandbox.RemoteWorktree(), recursive: true);
+
+        var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "forget");
+
+        Assert.True(exitCode == 0, stderr);
+        Assert.Empty(Lines(stdout));
+        Assert.True(File.Exists(Path.Combine(own, "sqlserver.txt")));
+        Assert.Contains($"keeping {own}", stderr, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(scenario), $"{scenario} is still there");
+    }
+
     /// <summary>What down --reset leaves under the remote command line's home: lock files and logs, for the instance, its scenario instance and another clone's.</summary>
     private static (string Own, string Scenario, string Other) LeaveInstanceDirectories(GitSandbox sandbox, string home)
     {

@@ -340,7 +340,8 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
         KeepRuns,
         KeepAgentDays = KeepAgents.TotalDays,
         machine.Sweep,
-        // The command line's own directories forget removes there once down --reset has run (#88).
+        // The command line's own directories forget removes there once down --reset has run;
+        // without a worktree there, only those that record nothing down --reset would need (#88).
         ForgetInstances = plan.Forget ? new[] { instance, Scenarios.ScenarioRunner.InstanceFor(instance) } : null,
     };
 

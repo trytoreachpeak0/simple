@@ -58,6 +58,8 @@ public sealed class NuGetAuditTests : IDisposable
         WritePackage(Path.Combine(feed, "simple.audit.probe.1.0.0.nupkg"));
         var project = Directory.CreateDirectory(Path.Combine(directory, "project")).FullName;
         var repository = CliEnvironment.FindRepository(AppContext.BaseDirectory);
+        // The SDK the repository pins, whose NuGet CI restores with; without it the newest installed one would run.
+        File.Copy(Path.Combine(repository, "global.json"), Path.Combine(directory, "global.json"), overwrite: true);
         File.WriteAllText(
             Path.Combine(project, "Directory.Build.props"),
             $"""<Project><Import Project="{Path.Combine(repository, "Directory.Build.props")}" /></Project>""");
@@ -108,6 +110,8 @@ public sealed class NuGetAuditTests : IDisposable
         start.Environment["NUGET_PACKAGES"] = Path.Combine(directory, "packages");
         start.Environment["NUGET_HTTP_CACHE_PATH"] = Path.Combine(directory, "http-cache");
         start.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en";
+        start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "true";
+        start.Environment["DOTNET_NOLOGO"] = "true";
         start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
         if (ci)
         {

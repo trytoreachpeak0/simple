@@ -259,17 +259,50 @@ public sealed class LocalSystemTests : IDisposable
         Assert.Contains($"Deleted the server key {Components.ServerKeyName(instance)} from the User key store.", outcome.Lines);
     }
 
+    /// <summary>
+    /// Every scenario run makes its instance's directory first; without one
+    /// nothing ran as it here, and reset makes none (review of #90: removing a
+    /// directory made only for the locks raced with a run starting meanwhile).
+    /// </summary>
     [Fact]
-    public async Task ResetLeavesNoDirectoryForAScenarioInstanceThatHadNone()
+    public async Task ResetLeavesAScenarioInstanceThatNeverRanHereAlone()
     {
         var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var scenario = Scenarios.ScenarioRunner.InstanceFor(instance);
         store.WriteSqlServer(instance, CliRunner.SqlServer);
-        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null, deleteServerKey: (_, _) => false);
+        var asked = new List<string>();
+        var system = new LocalSystem(@"F:\simple
+epo", store, TextWriter.Null, deleteServerKey: (name, _) =>
+        {
+            asked.Add(name);
+            return false;
+        });
 
         var outcome = await system.ResetAsync(instance, CliRunner.SqlServer, Cancel);
 
         Assert.True(outcome.ExitCode == ExitCodes.Success, outcome.Error);
-        Assert.False(Directory.Exists(store.InstanceDirectory(Scenarios.ScenarioRunner.InstanceFor(instance))));
+        Assert.False(Directory.Exists(store.InstanceDirectory(scenario)));
+        Assert.DoesNotContain(Components.ServerKeyName(scenario), asked);
+        var result = JsonSerializer.SerializeToElement(outcome.Result, Outcome.JsonOptions);
+        Assert.Equal(JsonValueKind.Null, result.GetProperty("scenarioInstance").ValueKind);
+    }
+
+    [Fact]
+    public async Task ResetKeepsTheLogsOfTheScenarioInstance()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var scenario = Scenarios.ScenarioRunner.InstanceFor(instance);
+        var log = store.LogPath(scenario, "server");
+        Directory.CreateDirectory(Path.GetDirectoryName(log)!);
+        File.WriteAllText(log, "the last run\n");
+        store.WriteSqlServer(scenario, CliRunner.SqlServer);
+        var system = new LocalSystem(@"F:\simple
+epo", store, TextWriter.Null, deleteServerKey: (_, _) => false);
+
+        var outcome = await system.ResetAsync(instance, CliRunner.SqlServer, Cancel);
+
+        Assert.True(outcome.ExitCode == ExitCodes.Success, outcome.Error);
+        Assert.Equal("the last run\n", File.ReadAllText(log));
     }
 
     [Fact]

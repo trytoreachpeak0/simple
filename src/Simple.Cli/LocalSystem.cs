@@ -284,7 +284,16 @@ public sealed partial class LocalSystem(
         }
 
         var scenario = Scenarios.ScenarioRunner.InstanceFor(instance);
-        var hadDirectory = Directory.Exists(store.InstanceDirectory(scenario));
+        if (!Directory.Exists(store.InstanceDirectory(scenario)))
+        {
+            // No scenario has run as it on this machine: every run takes its
+            // lock there first, which makes the directory. Taking the locks
+            // here would only make it, and removing it again races with a run
+            // that starts meanwhile (review of #90).
+            var alone = await DownAsync(instance, sqlServer, reset: true, cancellationToken);
+            return alone with { Result = WithScenarioInstance(alone.Result, null) };
+        }
+
         Outcome scenarioDown;
         // A run in progress resets, starts and stops its instance itself; this
         // waits for it instead of stopping its system under it.
@@ -300,18 +309,6 @@ public sealed partial class LocalSystem(
             scenarioDown = await DownAsync(scenario, sqlServer, reset: true, cancellationToken);
         }
 
-        if (!hadDirectory)
-        {
-            // Only the locks taken above are in it; a run that has started since holds them and keeps it.
-            try
-            {
-                Directory.Delete(store.InstanceDirectory(scenario), recursive: true);
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-            }
-        }
-
         if (scenarioDown.ExitCode != ExitCodes.Success)
         {
             return scenarioDown with
@@ -321,9 +318,15 @@ public sealed partial class LocalSystem(
         }
 
         var down = await DownAsync(instance, sqlServer, reset: true, cancellationToken);
-        var result = JsonSerializer.SerializeToNode(down.Result, Outcome.JsonOptions) as System.Text.Json.Nodes.JsonObject ?? [];
-        result["scenarioInstance"] = JsonSerializer.SerializeToNode(scenarioDown.Result, Outcome.JsonOptions);
-        return down with { Result = result, Lines = [.. scenarioDown.Lines, .. down.Lines] };
+        return down with { Result = WithScenarioInstance(down.Result, scenarioDown.Result), Lines = [.. scenarioDown.Lines, .. down.Lines] };
+    }
+
+    /// <summary>A down's result with what the down of its scenario instance gave (null when it had none here) as <c>scenarioInstance</c>.</summary>
+    private static System.Text.Json.Nodes.JsonObject WithScenarioInstance(object? result, object? scenarioResult)
+    {
+        var combined = JsonSerializer.SerializeToNode(result, Outcome.JsonOptions) as System.Text.Json.Nodes.JsonObject ?? [];
+        combined["scenarioInstance"] = JsonSerializer.SerializeToNode(scenarioResult, Outcome.JsonOptions);
+        return combined;
     }
 
     public async Task<Outcome> DownAsync(string instance, string sqlServer, bool reset, CancellationToken cancellationToken)
