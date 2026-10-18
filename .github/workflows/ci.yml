@@ -1,8 +1,13 @@
 name: ci
 
-# Restore, build and test every pull request and every push to main on the
-# SIMPLE runner win11-01-simple on vm01 (the CI guest on the factory server),
-# and record how long each phase takes (issue #28).
+# Restore, build and test every pull request and every push to main on a
+# self-hosted SIMPLE runner, and record how long each phase takes (issue #28).
+#
+# Two runners, one named at a time (issue #41): simple01, SIMPLE's own machine,
+# is the primary (label `simple01`); win11-01-simple on vm01, the CI guest on
+# the factory server, stays online as the standby (label `simple`). The two
+# share no label. Switching is a pull request that changes `runs-on` below;
+# that pull request's own run already lands on the runner it names.
 #
 # Moving CI to another self-hosted machine: change `runs-on` below (the only
 # place that names the runner) and preinstall on the new machine the latest
@@ -46,16 +51,19 @@ jobs:
   build-and-test:
     name: build-and-test
     # Only PRs from branches of this repository. A fork PR would execute its
-    # code on vm01, which sits in the plant network next to production
-    # services. This condition only stops fork PRs that leave this file alone:
-    # a pull_request run uses the PR's own copy of the workflow, so a fork PR
+    # code on the runner machine; simple01 and vm01 both sit in the plant
+    # network, within reach of the vehicles and production services. This
+    # condition only stops fork PRs that leave this file alone: a
+    # pull_request run uses the PR's own copy of the workflow, so a fork PR
     # can delete the condition. Those are held by the repository setting that
     # makes outside contributors' PRs wait for approval; before approving one,
     # read its changes under .github/workflows/ first.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    # The only place that names the runner. `simple` is carried by
-    # win11-01-simple alone; never add a label of the v2 runners here.
-    runs-on: [self-hosted, simple]
+    # The only place that names the runner. `simple01` is carried by the
+    # runner simple01 alone (the primary); switching to the standby means
+    # `[self-hosted, simple]`, which only win11-01-simple on vm01 carries.
+    # Never add a label of the v2 runners here, and never name both runners.
+    runs-on: [self-hosted, simple01]
     # Backstop only. When GitHub cancels a job for running past this limit it
     # sends the runner the same cancel message as a manual cancel, which is the
     # path that has wedged runners. Every step therefore carries its own
@@ -65,18 +73,21 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      # Steps are judged by exit codes only: vm01 runs a Chinese-locale
-      # Windows and dotnet prints localized text.
+      # Steps are judged by exit codes only: a runner machine may run a
+      # Chinese-locale Windows (vm01 does) and dotnet prints localized text.
       - name: Record machine load
         timeout-minutes: 2
         run: |
           # Our own job is one Runner.Worker; any other one is a job of another
           # runner on this machine (on vm01 the runners of the v2 line and of
-          # riot-sdk, which share its CPU and memory).
+          # riot-sdk, which share its CPU and memory). simple01 has no other
+          # runner, so there this is 0; work sent there by simple remote is
+          # not a Runner.Worker and is not counted.
           $others = [Math]::Max(0, @(Get-Process -Name Runner.Worker -ErrorAction Ignore).Count - 1)
           "SIMPLE_CI_OTHER_JOBS_AT_START=$others" >> $env:GITHUB_ENV
           # The NuGet caches stay on the machine between runs, apart from those
-          # of the other runners, which run under the same service account.
+          # of the other runners on vm01, which run under the same service
+          # account.
           # This keeps SIMPLE's runs from writing into their caches by
           # accident; it does not stop code running under that account on
           # purpose.
@@ -191,16 +202,17 @@ jobs:
 
       # The same for the servers' certificate keys: a test that brings up a
       # server makes a key in the user's key store of the runner account
-      # (Microsoft Software Key Storage Provider) and must delete it. That
-      # account is shared with the other runners on this machine (see Record
+      # (Microsoft Software Key Storage Provider) and must delete it. On vm01
+      # that account is shared with the other runners there (see Record
       # machine load), so only keys in the tests' own naming are deleted, the
       # formats of RemoteSweep.TestKeys in src/Simple.Cli/Remote/RemoteSweep.cs:
       # Simple-Server-test_ and 12 hex digits, Simple-Test- and 32 ($tests
       # below; RemoteLeftoversTests checks the two are the same). Any other
       # Simple-* key is no test's leftover and may be another runner's: it is
       # left alone and only warned about, with how to delete it, since a
-      # failure here would stay red until a person on vm01 deleted it. The
-      # machine store is not looked at: tests use it only under simple remote.
+      # failure here would stay red until a person on the runner machine
+      # deleted it. The machine store is not looked at: tests use it only
+      # under simple remote.
       # .NET opens a key by name but cannot list keys, so the names come from
       # NCryptEnumKeys; failing to list fails the step.
       - name: No test keys left behind
@@ -269,7 +281,7 @@ jobs:
             Write-Output "::error::Test keys left behind (now deleted): $($left -join ', ')"
           }
           if ($other) {
-            Write-Output "::warning::Simple-* keys not named like a test's, left alone: $($other -join ', '). They are in the user key store of the runner account, $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name), so only a process running as that account can delete one, for example a one-off scheduled task on this machine running pwsh as that account with the lines below in this step's log. Ask the product owner (through the coordinator) before touching vm01."
+            Write-Output "::warning::Simple-* keys not named like a test's, left alone: $($other -join ', '). They are in the user key store of the runner account, $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name), so only a process running as that account can delete one, for example a one-off scheduled task on this machine running pwsh as that account with the lines below in this step's log. Ask the product owner (through the coordinator) before touching the runner machine."
             foreach ($name in $other) {
               Write-Output "  [System.Security.Cryptography.CngKey]::Open('$name', [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider).Delete()"
             }
