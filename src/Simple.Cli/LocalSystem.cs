@@ -187,47 +187,61 @@ public sealed partial class LocalSystem(
         // certificate pin).
         var deadline = Stopwatch.StartNew();
         var environment = ComponentEnvironment();
-        foreach (var group in contexts.GroupBy(c => c.Component))
+        // Each process's handle, held until up ends, for the exit code of one
+        // that exits before it is ready (#85).
+        var handles = new Dictionary<string, StartedProcess>();
+        try
         {
-            foreach (var (component, name, context) in group)
+            foreach (var group in contexts.GroupBy(c => c.Component))
             {
-                var executable = executables[component.Name];
-                var log = store.LogPath(instance, name);
-                progress.WriteLine($"Starting {name}...");
-                (int Pid, DateTimeOffset StartedAt) started;
-                try
+                foreach (var (component, name, context) in group)
                 {
-                    if (component.SetAdminPassword is { } setAdminPassword)
+                    var executable = executables[component.Name];
+                    var log = store.LogPath(instance, name);
+                    progress.WriteLine($"Starting {name}...");
+                    StartedProcess started;
+                    try
                     {
-                        await RunToEndAsync(
-                            executable, setAdminPassword(context), adminPassword, environment, store.LogPath(instance, $"{name}-set-admin-password"), cancellationToken);
+                        if (component.SetAdminPassword is { } setAdminPassword)
+                        {
+                            await RunToEndAsync(
+                                executable, setAdminPassword(context), adminPassword, environment, store.LogPath(instance, $"{name}-set-admin-password"), cancellationToken);
+                        }
+
+                        if (component.Prepare is { } prepare)
+                        {
+                            await prepare(context, Http, cancellationToken);
+                        }
+
+                        started = ChildProcess.Start(executable, component.Arguments(context), Path.GetDirectoryName(executable)!, environment, log, options.BreakAway);
+                    }
+                    catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException or HttpRequestException or JsonException or InvalidOperationException
+                        || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
+                    {
+                        var stopped = await StopAllAsync(state, cancellationToken);
+                        var stillHeld = await ForgetAsync(state, cancellationToken);
+                        return Outcome.Fail(ExitCodes.NotReady, $"{name} could not be started: {e.Message}{Kept(stillHeld, instance)}", stopped);
                     }
 
-                    if (component.Prepare is { } prepare)
-                    {
-                        await prepare(context, Http, cancellationToken);
-                    }
-
-                    started = ChildProcess.Start(executable, component.Arguments(context), Path.GetDirectoryName(executable)!, environment, log, options.BreakAway);
+                    handles[name] = started;
+                    processes.Add(new ProcessRecord(name, component.Name, context.Index, started.Pid, started.StartedAt, executable, context.Ports, log));
+                    store.Write(state);
                 }
-                catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException or HttpRequestException or JsonException or InvalidOperationException
-                    || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
+
+                var failure = await WaitUntilReadyAsync(processes.Where(p => p.Component == group.Key.Name).ToList(), handles, state, timeout - deadline.Elapsed, cancellationToken);
+                if (failure is not null)
                 {
                     var stopped = await StopAllAsync(state, cancellationToken);
                     var stillHeld = await ForgetAsync(state, cancellationToken);
-                    return Outcome.Fail(ExitCodes.NotReady, $"{name} could not be started: {e.Message}{Kept(stillHeld, instance)}", stopped);
+                    return NotReady(instance, failure.Value.Process, failure.Value.Reason, stopped, Kept(stillHeld, instance), failure.Value.ExitCode);
                 }
-
-                processes.Add(new ProcessRecord(name, component.Name, context.Index, started.Pid, started.StartedAt, executable, context.Ports, log));
-                store.Write(state);
             }
-
-            var failure = await WaitUntilReadyAsync(processes.Where(p => p.Component == group.Key.Name).ToList(), state, timeout - deadline.Elapsed, cancellationToken);
-            if (failure is not null)
+        }
+        finally
+        {
+            foreach (var handle in handles.Values)
             {
-                var stopped = await StopAllAsync(state, cancellationToken);
-                var stillHeld = await ForgetAsync(state, cancellationToken);
-                return NotReady(instance, failure.Value.Process, failure.Value.Reason, stopped, Kept(stillHeld, instance));
+                handle.Dispose();
             }
         }
 
@@ -240,14 +254,15 @@ public sealed partial class LocalSystem(
     /// are shown (it may have stopped before its program log started), and
     /// its program log directory (ADR 0034), each named as what it is (#80).
     /// </summary>
-    internal Outcome NotReady(string instance, ProcessRecord process, string reason, IReadOnlyList<StopReport> stopped, string kept)
+    /// <param name="exitCode">The exit code of a process that exited before it was ready, when known; in the result as <c>processExitCode</c> (#85).</param>
+    internal Outcome NotReady(string instance, ProcessRecord process, string reason, IReadOnlyList<StopReport> stopped, string kept, uint? exitCode = null)
     {
         var programLog = store.ProgramLogDirectory(instance, process.Name);
         var tail = Tail(process.Log, 20);
         return Outcome.Fail(
             ExitCodes.NotReady,
             $"{process.Name} {reason}. Its console output: {process.Log} (simple logs {process.Name} --output); its program log: {programLog} (simple logs {process.Name}).{kept}",
-            new { process.Name, Reason = reason, ProgramLog = programLog, Output = process.Log, OutputTail = tail, Stopped = stopped },
+            new { process.Name, Reason = reason, ProcessExitCode = exitCode is { } code ? unchecked((int)code) : (int?)null, ProgramLog = programLog, Output = process.Log, OutputTail = tail, Stopped = stopped },
             ["Last lines of its console output:", .. tail]);
     }
 
@@ -623,8 +638,8 @@ public sealed partial class LocalSystem(
         }
     }
 
-    private async Task<(ProcessRecord Process, string Reason)?> WaitUntilReadyAsync(
-        IReadOnlyList<ProcessRecord> processes, InstanceState state, TimeSpan timeout, CancellationToken cancellationToken)
+    private async Task<(ProcessRecord Process, string Reason, uint? ExitCode)?> WaitUntilReadyAsync(
+        IReadOnlyList<ProcessRecord> processes, IReadOnlyDictionary<string, StartedProcess> handles, InstanceState state, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var deadline = Stopwatch.StartNew();
         var waiting = processes.ToList();
@@ -635,7 +650,8 @@ public sealed partial class LocalSystem(
             {
                 if (!IsAlive(process))
                 {
-                    return (process, "exited before it was ready");
+                    var exitCode = handles.GetValueOrDefault(process.Name)?.ExitCode;
+                    return (process, ExitedBeforeReady(exitCode), exitCode);
                 }
 
                 if (await IsReadyAsync(state, process, cancellationToken))
@@ -651,12 +667,23 @@ public sealed partial class LocalSystem(
 
             if (deadline.Elapsed > timeout)
             {
-                return (waiting[0], "was not ready within --timeout");
+                return (waiting[0], "was not ready within --timeout", null);
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
         }
     }
+
+    /// <summary>
+    /// Why a process did not get ready, with its exit code when known: one
+    /// that ended on its own sets it, one killed by another process gets
+    /// what that process chose (.NET's Process.Kill: 0xFFFFFFFF), one
+    /// Windows could not start gets an NTSTATUS such as 0xC0000142 (#85).
+    /// </summary>
+    internal static string ExitedBeforeReady(uint? exitCode) =>
+        exitCode is { } code
+            ? $"exited before it was ready, with exit code {unchecked((int)code).ToString(CultureInfo.InvariantCulture)} (0x{code.ToString("X8", CultureInfo.InvariantCulture)})"
+            : "exited before it was ready";
 
     private Task<bool> IsReadyAsync(InstanceState state, ProcessRecord process, CancellationToken cancellationToken)
     {

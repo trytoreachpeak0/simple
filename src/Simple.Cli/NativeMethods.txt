@@ -5,6 +5,7 @@ CreateProcess
 DeleteProcThreadAttributeList
 FreeConsole
 GenerateConsoleCtrlEvent
+GetExitCodeProcess
 GetProcessTimes
 InitializeProcThreadAttributeList
 RmEndSession
@@ -14,3 +15,4 @@ RmStartSession
 STARTUPINFOEXW
 SetHandleInformation
 UpdateProcThreadAttribute
+WaitForSingleObject

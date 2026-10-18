@@ -32,7 +32,7 @@ public static class ChildProcess
     /// Starts <paramref name="executable"/> in a hidden console of its own.
     /// Returns its process id and start time, read from the process handle
     /// while it is still open, so even a process that exits at once is
-    /// recorded as itself.
+    /// recorded as itself, and that handle, for its exit code (#85).
     /// </summary>
     /// <param name="breakAway">
     /// Start it outside the job the command line runs in. Only simple remote
@@ -43,7 +43,7 @@ public static class ChildProcess
     /// that cleans up after a run (a CI runner's) still catches a component
     /// a test failed to stop.
     /// </param>
-    public static unsafe (int Pid, DateTimeOffset StartedAt) Start(
+    public static unsafe StartedProcess Start(
         string executable,
         IReadOnlyList<string> arguments,
         string workingDirectory,
@@ -117,6 +117,8 @@ public static class ChildProcess
                     }
                 }
 
+                PInvoke.CloseHandle(information.hThread);
+                var process = new SafeProcessHandle((nint)information.hProcess.Value, ownsHandle: true);
                 try
                 {
                     System.Runtime.InteropServices.ComTypes.FILETIME created, exited, kernel, user;
@@ -126,12 +128,12 @@ public static class ChildProcess
                     }
 
                     var ticks = ((long)(uint)created.dwHighDateTime << 32) | (uint)created.dwLowDateTime;
-                    return ((int)information.dwProcessId, new DateTimeOffset(DateTime.FromFileTimeUtc(ticks)));
+                    return new StartedProcess(process, (int)information.dwProcessId, new DateTimeOffset(DateTime.FromFileTimeUtc(ticks)));
                 }
-                finally
+                catch
                 {
-                    PInvoke.CloseHandle(information.hThread);
-                    PInvoke.CloseHandle(information.hProcess);
+                    process.Dispose();
+                    throw;
                 }
             }
             finally
@@ -207,24 +209,47 @@ public static class ChildProcess
         return 0;
     }
 
-    /// <summary>Whether process <paramref name="pid"/> is the one that was recorded: alive, with the same start time.</summary>
-    public static Process? Find(int pid, DateTimeOffset startedAt)
+    /// <summary>
+    /// Whether process <paramref name="pid"/> is the one that was recorded:
+    /// alive, with the same start time. The process returned holds its handle,
+    /// opened before the start time is compared, so whatever the caller does
+    /// with it (a stop signal, a wait, a kill) reaches that process and no
+    /// other that gets the id once it has exited (#85).
+    /// </summary>
+    public static Process? Find(int pid, DateTimeOffset startedAt) => Find(pid, startedAt, process => _ = process.SafeHandle);
+
+    /// <param name="hold">Opens the handle the process keeps; tests stand in a refusal here.</param>
+    internal static Process? Find(int pid, DateTimeOffset startedAt, Action<Process> hold)
     {
+        ArgumentNullException.ThrowIfNull(hold);
+        Process? process = null;
         try
         {
-            var process = Process.GetProcessById(pid);
+            process = Process.GetProcessById(pid);
+            try
+            {
+                hold(process);
+            }
+            catch (Win32Exception e) when (e.NativeErrorCode == AccessDenied)
+            {
+                // The handle asks for every right, which a process started
+                // elevated refuses an ordinary terminal; its start time can
+                // still be read. It is compared without the handle held, as
+                // before #85, and is never taken for gone: a stop that may
+                // not kill it then fails loudly itself.
+            }
+
             if (!process.HasExited && new DateTimeOffset(process.StartTime.ToUniversalTime()) == startedAt)
             {
                 return process;
             }
-
-            process.Dispose();
         }
         catch (Exception e) when (e is ArgumentException or InvalidOperationException or Win32Exception)
         {
             // Gone, or not ours to inspect.
         }
 
+        process?.Dispose();
         return null;
     }
 
@@ -247,4 +272,48 @@ public static class ChildProcess
 
         return block.Append('\0').ToString().ToCharArray();
     }
+}
+
+/// <summary>
+/// A process <see cref="ChildProcess.Start"/> started, with its handle held
+/// open: its exit code stays readable after it exits, and while the handle is
+/// held Windows gives its process id to no other process.
+/// </summary>
+public sealed class StartedProcess : IDisposable
+{
+    private const uint ExitedAlready = 0;
+
+    private readonly SafeProcessHandle handle;
+
+    internal StartedProcess(SafeProcessHandle handle, int pid, DateTimeOffset startedAt)
+    {
+        this.handle = handle;
+        Pid = pid;
+        StartedAt = startedAt;
+    }
+
+    public int Pid { get; }
+
+    public DateTimeOffset StartedAt { get; }
+
+    /// <summary>Its exit code once it has exited; null while it runs.</summary>
+    public uint? ExitCode
+    {
+        get
+        {
+            if (PInvoke.WaitForSingleObject(handle, ExitedAlready) != WAIT_EVENT.WAIT_OBJECT_0)
+            {
+                return null;
+            }
+
+            if (!PInvoke.GetExitCodeProcess(handle, out var code))
+            {
+                throw new Win32Exception();
+            }
+
+            return code;
+        }
+    }
+
+    public void Dispose() => handle.Dispose();
 }
