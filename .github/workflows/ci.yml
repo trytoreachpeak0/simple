@@ -85,6 +85,8 @@ jobs:
           # not a Runner.Worker and is not counted.
           $others = [Math]::Max(0, @(Get-Process -Name Runner.Worker -ErrorAction Ignore).Count - 1)
           "SIMPLE_CI_OTHER_JOBS_AT_START=$others" >> $env:GITHUB_ENV
+          # No program logs under ProgramData counts only files written after this.
+          "SIMPLE_CI_JOB_START=$([datetime]::UtcNow.ToString('o'))" >> $env:GITHUB_ENV
           # The NuGet caches stay on the machine between runs, apart from those
           # of the other runners on vm01, which run under the same service
           # account.
@@ -294,25 +296,59 @@ jobs:
       # Tests and the local system give every program a log directory of its
       # own (a temp folder, or %LOCALAPPDATA%\simple through simple up), so a
       # program log in the default place, %ProgramData%\Simple\<program>\logs,
-      # means something started a program without one (#54). Like the database
-      # check, the step removes what it finds and still fails.
+      # means something started a program without one (#54).
+      #
+      # Only this job's own files fail the run. The folder is machine-wide and
+      # simple01 is also the simple remote host, whose runs (as another account)
+      # may write there before or during this job; the runner account cannot
+      # delete other accounts' files, and they are not this run's leak. So a
+      # file counts as this run's when the runner account owns it (a program
+      # of this job runs as that account, which is not an administrator, so it
+      # owns what it creates) and it was written after the job started
+      # (SIMPLE_CI_JOB_START, set by Record machine load). Such files are
+      # removed and fail the step. The runner account's files from before the
+      # job (an earlier run whose check did not get this far) are removed with
+      # a warning. Other accounts' files are left alone and only warned about:
+      # while one sits where a program of this run would write its log, that
+      # program cannot write there, and a leak would go unseen.
       - name: No program logs under ProgramData
         if: always()
         timeout-minutes: 2
         run: |
           $ErrorActionPreference = 'Stop'
-          $left = @(foreach ($program in 'Server', 'MesGateway', 'OnboardTerminal', 'IoSimulator') {
+          $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          # Without a start time (Record machine load failed) every own file counts.
+          $since = $env:SIMPLE_CI_JOB_START `
+            ? [datetime]::Parse($env:SIMPLE_CI_JOB_START, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind) `
+            : [datetime]::MinValue
+          $ours = [System.Collections.Generic.List[string]]::new()
+          $earlier = [System.Collections.Generic.List[string]]::new()
+          $foreign = [System.Collections.Generic.List[string]]::new()
+          foreach ($program in 'Server', 'MesGateway', 'OnboardTerminal', 'IoSimulator') {
             $logs = Join-Path $env:ProgramData "Simple\$program\logs"
-            if (Test-Path -LiteralPath $logs) {
-              Get-ChildItem -LiteralPath $logs -File -Recurse | ForEach-Object FullName
-              Remove-Item -LiteralPath $logs -Recurse -Force
+            if (-not (Test-Path -LiteralPath $logs)) { continue }
+            foreach ($file in Get-ChildItem -LiteralPath $logs -File -Recurse -Force) {
+              $owner = try { (Get-Acl -LiteralPath $file.FullName).GetOwner([System.Security.Principal.SecurityIdentifier]) } catch { $null }
+              if ($owner -and $owner.Value -eq $me) {
+                ($file.LastWriteTimeUtc -ge $since ? $ours : $earlier).Add($file.FullName)
+                Remove-Item -LiteralPath $file.FullName -Force
+                continue
+              }
+              $name = try { $owner.Translate([System.Security.Principal.NTAccount]).Value } catch { $owner ? $owner.Value : 'unknown' }
+              $foreign.Add("$($file.FullName) (owner $name, written $($file.LastWriteTimeUtc.ToString('u')))")
             }
-          })
-          if ($left) {
-            Write-Output "::error::Program logs written under $env:ProgramData\Simple (now removed): $($left -join ', ')"
+          }
+          if ($earlier) {
+            Write-Output "::warning::Program logs of the runner account from before this job (now removed): $($earlier -join ', ')"
+          }
+          if ($foreign) {
+            Write-Output "::warning::Program logs of other accounts under $env:ProgramData\Simple, left alone: $($foreign -join '; '). Not this run's; while one is there, a program of this run cannot write that file, so a leak to it would go unseen. An administrator on this machine can delete them (ask the product owner through the coordinator first)."
+          }
+          if ($ours) {
+            Write-Output "::error::Program logs written under $env:ProgramData\Simple by this run (now removed): $($ours -join ', ')"
             exit 1
           }
-          Write-Output "No program logs under $env:ProgramData\Simple."
+          Write-Output "No program logs under $env:ProgramData\Simple from this run."
 
       # Informational: a failure here never turns the run red.
       - name: Timing summary
