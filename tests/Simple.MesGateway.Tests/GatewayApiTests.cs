@@ -223,8 +223,8 @@ public sealed class GatewayApiTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// The gateway with a source other than the fake, as a real one will be.
-    /// The validator still knows only the fake, so it is taken out here.
+    /// The gateway with a source other than the fake. The validator knows only
+    /// the fake and the Oracle source, so it is taken out here.
     /// </summary>
     private sealed class OtherSourceFactory(string logDirectory) : WebApplicationFactory<Program>
     {

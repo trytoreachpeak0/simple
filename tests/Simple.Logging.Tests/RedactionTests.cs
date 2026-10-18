@@ -83,6 +83,17 @@ public sealed partial class RedactionTests
     [InlineData("pwd:Pwd-colon-secret next", "Pwd-colon-secret", "pwd:*** next")]
     [InlineData("token:abc123def", "abc123def", "token:***")]
     [InlineData("Simple:Mes:Password:Setting-colon-secret", "Setting-colon-secret", "Simple:Mes:Password:***")]
+    // The MES gateway's Oracle connection (issue #93): ODP.NET's connection string as its
+    // builder writes it, the settings and environment variables it comes from, and the
+    // user/password@database form Oracle's own tools use.
+    [InlineData("USER ID=simple_reader;PASSWORD=OdpUpper-secret;DATA SOURCE=127.0.0.1:1521/MES;MAX POOL SIZE=2", "OdpUpper-secret", "USER ID=simple_reader;PASSWORD=***;DATA SOURCE=127.0.0.1:1521/MES;MAX POOL SIZE=2")]
+    [InlineData("User Id=simple_reader;Password=\"semi;colon-secret\";Data Source=MESDB", "colon-secret", "User Id=simple_reader;Password=***;Data Source=MESDB")]
+    [InlineData("Proxy User Id=gw;Proxy Password=Proxy-secret;Data Source=MESDB", "Proxy-secret", "Proxy Password=***;Data Source=MESDB")]
+    [InlineData("Simple__Mes__Oracle__Password=Env-secret", "Env-secret", "Simple__Mes__Oracle__Password=***")]
+    [InlineData("--Simple:Mes:Oracle:Password=Arg-secret --urls=http://127.0.0.1:5190", "Arg-secret", "--Simple:Mes:Oracle:Password=*** --urls=http://127.0.0.1:5190")]
+    [InlineData("sqlplus simple_reader/Ez-secret@127.0.0.1:1521/MES", "Ez-secret", "sqlplus simple_reader/***@127.0.0.1:1521/MES")]
+    [InlineData("connect simple_reader/Tns-secret@MESDB as reader", "Tns-secret", "connect simple_reader/***@MESDB as reader")]
+    [InlineData("connect simple_reader/p@ss-At-secret@MESDB", "At-secret", "connect simple_reader/***@MESDB")]
     public void ACredentialInFreeTextIsNotWritten(string message, string secret, string kept)
     {
         using var log = new TestLog();
@@ -100,6 +111,9 @@ public sealed partial class RedactionTests
     [InlineData("serverCertificatePin 3F2A9C0B7D1E4F5A6B8C9D0E1F2A3B4C5D6E7F8091A2B3C4D5E6F708192A3B4C")]
     [InlineData("Server=(localdb)\\MSSQLLocalDB;Integrated Security=true;TrustServerCertificate=true")]
     [InlineData("Round 42: read 17 rows; lot LOT123 at EQP-01")]
+    [InlineData("User Id=simple_reader;Data Source=127.0.0.1:1521/MES;Connection Timeout=15")]
+    [InlineData("ORA-12541: Cannot connect. No listener at host 127.0.0.1 port 1521. (CONNECTION_ID=abc/def==)")]
+    [InlineData("Read src/Simple.MesGateway/Oracle/mes-task-union.sql at 2026-10-18 08:30, mail ops@example.com")]
     // Business values are often digits, a 6-digit one included: only a pairing
     // code named as such is taken out, never a number for looking like one.
     [InlineData("Sublot 482913.01 for EQP 100234 at station 300512, task 654321, vehicle 2")]

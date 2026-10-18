@@ -3,9 +3,9 @@ using System.Globalization;
 namespace Simple.MesGateway.Sources;
 
 /// <summary>
-/// Where the gateway reads the MES from: the real MES database later, the fake
-/// source today. A read has no side effect, so the gateway retries a failed
-/// one for as long as it takes (ADR 0008).
+/// Where the gateway reads the MES from: the customer's Oracle MES
+/// (OracleMesSource) or the fake source. A read has no side effect, so the
+/// gateway retries a failed one for as long as it takes (ADR 0008).
 /// </summary>
 public interface IMesSource
 {
