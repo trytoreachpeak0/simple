@@ -87,18 +87,26 @@ public sealed class OnboardTerminalPairingTests
     }
 
     [Fact]
-    public async Task AClaimedVehicleNotInTheVehicleListIsListedButCannotBeConfirmed()
+    public async Task AClaimedVehicleNotInTheVehicleListIsListedButCannotBeConfirmedAListedOneCan()
     {
         using var setup = new Setup(vehicles: ["vehicle-1"]);
         setup.Connect(KeyA, "vehicle-9", run: "run-a");
-        var pending = Assert.Single(setup.Registry.Pending());
-        Assert.False(pending.InVehicleList);
+        setup.Connect(KeyB, "vehicle-1", run: "run-b");
+        var unlisted = setup.Registry.Pending().Single(p => p.KeyPin == KeyA);
+        var listed = setup.Registry.Pending().Single(p => p.KeyPin == KeyB);
+        Assert.False(unlisted.InVehicleList);
+        Assert.True(listed.InVehicleList);
 
-        var outcome = await setup.Registry.ConfirmAsync("vehicle-9", pending.PairingCode, Engineer, Cancel);
+        var refused = await setup.Registry.ConfirmAsync("vehicle-9", unlisted.PairingCode, Engineer, Cancel);
 
-        Assert.Equal(409, outcome.Status);
-        Assert.Contains("vehicle list", outcome.Problem, StringComparison.Ordinal);
+        Assert.Equal(409, refused.Status);
+        Assert.Contains("vehicle list", refused.Problem, StringComparison.Ordinal);
         Assert.Empty(setup.Keys.Rows);
+        Assert.Equal(2, setup.Registry.Pending().Count);
+
+        Assert.Null((await setup.Registry.ConfirmAsync("vehicle-1", listed.PairingCode, Engineer, Cancel)).Problem);
+        Assert.Equal(("vehicle-1", KeyB), (Assert.Single(setup.Keys.Rows.Values).VehicleId, Assert.Single(setup.Keys.Rows.Values).KeyPin));
+        Assert.Equal(KeyA, Assert.Single(setup.Registry.Pending()).KeyPin);
     }
 
     [Fact]

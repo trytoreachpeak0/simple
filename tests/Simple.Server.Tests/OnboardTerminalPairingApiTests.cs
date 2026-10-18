@@ -186,7 +186,7 @@ public sealed class OnboardTerminalPairingApiTests
     }
 
     [Fact]
-    public async Task AVehicleNotInTheVehicleListIsListedButCannotBeConfirmed()
+    public async Task AVehicleNotInTheVehicleListIsListedButCannotBeConfirmedAListedOneCan()
     {
         await using var server = new ServerInstance(
             kestrel: true,
@@ -198,10 +198,18 @@ public sealed class OnboardTerminalPairingApiTests
 
         var code = await Api.PairingCodeAsync(admin, terminal.Key.Pin, "vehicle-9");
         Assert.False(Assert.Single((await Api.StatusAsync(admin)).PendingOnboardTerminals).InVehicleList);
-        using var refused = await Api.ConfirmAsync(admin, "vehicle-9", code);
+        using (var refused = await Api.ConfirmAsync(admin, "vehicle-9", code))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        }
 
-        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
         Assert.Empty(await Api.EventsAsync(admin, EventTypes.OnboardConfirmed));
+        Assert.Single((await Api.StatusAsync(admin)).PendingOnboardTerminals);
+
+        // A terminal claiming a listed vehicle is confirmed as usual.
+        await using var listed = await TestTerminal.ConnectConfirmedAsync(admin, "vehicle-1");
+        Assert.Equal("vehicle-1", Assert.Single(await Api.EventsAsync(admin, EventTypes.OnboardConfirmed)).Text("vehicleId"));
+        Assert.Equal(terminal.Key.Pin, Assert.Single((await Api.StatusAsync(admin)).PendingOnboardTerminals).KeyPin);
     }
 
     private static async Task CreateAccountAsync(HttpClient admin, string name, string role)

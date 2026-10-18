@@ -72,8 +72,12 @@ public interface IVehicleList
 }
 
 /// <summary>
-/// Every vehicle id counts as listed. The server has no vehicle list yet
-/// (#91 brings it); until then this stands in for it.
+/// Temporary: every vehicle id counts as listed, because the server has no
+/// vehicle list yet. #91 brings it. Whichever of #91 and #92 merges second
+/// deletes this class and implements <see cref="IVehicleList"/> on #91's
+/// vehicle table, with a test that an id absent from the imported site
+/// configuration cannot be confirmed. Nothing but Program.cs's registration
+/// may use it.
 /// </summary>
 public sealed class AnyVehicle : IVehicleList
 {
