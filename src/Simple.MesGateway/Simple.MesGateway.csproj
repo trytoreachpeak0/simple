@@ -2,11 +2,17 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Oracle.ManagedDataAccess.Core" />
     <PackageReference Include="Polly.Core" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Update="Fake\seed-rows.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Compiled in, so the approved query travels inside the program and is checked there (MesTaskUnionQuery). -->
+    <EmbeddedResource Include="Oracle\mes-task-union.sql" LogicalName="$(MSBuildProjectName).Oracle.mes-task-union.sql" />
   </ItemGroup>
 
   <ItemGroup>

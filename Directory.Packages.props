@@ -40,6 +40,10 @@
          maintenance-fee terms on the binary packages. -->
     <PackageVersion Include="NJsonSchema" Version="11.6.1" />
     <!-- Retries with backoff and jitter (ADR 0008): the MES gateway's rounds, the server's polling of the gateway and the onboard terminal's reconnects. -->
+    <!-- The MES gateway's real source (issue #93): Oracle's managed driver in Thin
+         mode, no Oracle client installed. The version the previous line read the
+         same customer MES with in production. -->
+    <PackageVersion Include="Oracle.ManagedDataAccess.Core" Version="23.9.0" />
     <PackageVersion Include="Polly.Core" Version="8.8.0" />
     <!-- Shortest paths on the fake fleet manager's directed route graph (Simple.FakeRiot). -->
     <PackageVersion Include="QuikGraph" Version="2.5.0" />

@@ -36,7 +36,7 @@ public sealed class GatewaySettingsTests
     [InlineData("urls", "http://*:5190", "urls 'http://*:5190' is not a loopback address")]
     [InlineData("Kestrel:Endpoints:Http:Url", "http://factory01:5190", "Kestrel:Endpoints:Http:Url 'http://factory01:5190' is not a loopback address")]
     [InlineData("http_ports", "5190", "http_ports '5190' listens on every network interface")]
-    [InlineData("Simple:Mes:Source", "Oracle", "Simple:Mes:Source 'Oracle' is not a known MES source")]
+    [InlineData("Simple:Mes:Source", "Mes", "Simple:Mes:Source 'Mes' is not a known MES source")]
     [InlineData("Simple:Mes:Source", "", "Simple:Mes:Source '' is not a known MES source")]
     [InlineData("Simple:Mes:Fake:SeedFile", "", "Simple:Mes:Fake:SeedFile is missing")]
     [InlineData("Simple:Mes:Fake:SeedFile", "no-such-seed.json", "no-such-seed.json' cannot be read")]
@@ -50,10 +50,77 @@ public sealed class GatewaySettingsTests
         Assert.Contains(failures, f => f.Contains(message, StringComparison.Ordinal));
     }
 
+    /// <summary>The Oracle source as a person sets it for one run, from outside the repository.</summary>
+    private static readonly (string Key, string? Value)[] Oracle =
+    [
+        ("Simple:Mes:Source", "Oracle"),
+        ("Simple:Mes:Oracle:DataSource", "127.0.0.1:1521/FAKEMES"),
+        ("Simple:Mes:Oracle:User", "simple_reader"),
+        ("Simple:Mes:Oracle:Password", OracleMesSourceTests.Secret),
+    ];
+
+    [Fact]
+    public void TheOracleSourceWithEverythingSetIsValid()
+    {
+        Assert.Empty(Check(Oracle));
+
+        var settings = new GatewaySettings();
+        settings.ReadFrom(new ConfigurationBuilder().AddInMemoryCollection(Oracle.Select(o => new KeyValuePair<string, string?>(o.Key, o.Value))).Build());
+        Assert.True(settings.UsesOracleSource);
+        Assert.False(settings.UsesFakeSource);
+        Assert.Equal("127.0.0.1:1521/FAKEMES", settings.Oracle.DataSource);
+        Assert.Equal("simple_reader", settings.Oracle.User);
+        Assert.Equal(OracleMesSourceTests.Secret, settings.Oracle.Password);
+        // The previous line's query timeout; with the connect timeout the whole read stays under the server's 90 s stall threshold with a 30 s retry wait on top (ADR 0027).
+        Assert.Equal(TimeSpan.FromSeconds(30), settings.Oracle.QueryTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(15), settings.Oracle.ConnectTimeout);
+        Assert.True(settings.Oracle.ReadTimeout + settings.RetryMaxDelay < TimeSpan.FromSeconds(90));
+        Assert.Empty(Check([.. Oracle, ("Simple:Mes:RoundInterval", "00:00:30")]));
+    }
+
+    [Theory]
+    [InlineData("Simple:Mes:Oracle:DataSource", "", "Simple:Mes:Oracle:DataSource is missing")]
+    [InlineData("Simple:Mes:Oracle:User", "", "Simple:Mes:Oracle:User is missing")]
+    [InlineData("Simple:Mes:Oracle:Password", "", "Simple:Mes:Oracle:Password is missing")]
+    [InlineData("Simple:Mes:Oracle:DataSource", "simple_reader/" + OracleMesSourceTests.Secret + "@127.0.0.1:1521/FAKEMES", "Simple:Mes:Oracle:DataSource holds an @")]
+    [InlineData("Simple:Mes:Oracle:QueryTimeout", "00:00:00", "Simple:Mes:Oracle:QueryTimeout must be longer than zero")]
+    [InlineData("Simple:Mes:Oracle:ConnectTimeout", "-00:00:01", "Simple:Mes:Oracle:ConnectTimeout must be longer than zero")]
+    [InlineData("Simple:Mes:Oracle:QueryTimeout", "half a minute", "Simple:Mes:Oracle:QueryTimeout 'half a minute' is not a duration")]
+    // A read that hangs after the longest wait must still end, and fail its round, before the server's default 90 s stall threshold.
+    [InlineData("Simple:Mes:RoundInterval", "00:01:00", "the longest time between two rounds, 110 s")]
+    [InlineData("Simple:Mes:Oracle:QueryTimeout", "00:01:00", "the longest time between two rounds, 110 s")]
+    [InlineData("Simple:Mes:Oracle:ConnectTimeout", "00:00:16", "the longest time between two rounds, 81 s")]
+    public void AnInvalidOracleSettingIsNamedWithoutThePassword(string key, string value, string message)
+    {
+        var failures = Check([.. Oracle.Where(o => o.Key != key), (key, value)]);
+
+        Assert.Contains(failures, f => f.Contains(message, StringComparison.Ordinal));
+        Assert.All(failures, f => Assert.DoesNotContain(OracleMesSourceTests.Secret, f, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The repository's own settings never pick the Oracle source or carry
+    /// anything of it: where the MES is and how to log in to it come from
+    /// outside the repository, for one run (repository CLAUDE.md, Safety).
+    /// </summary>
+    [Fact]
+    public void TheShippedSettingsCarryNothingOfTheOracleSource()
+    {
+        var files = Directory.GetFiles(Path.Combine(MesTaskUnionQueryTests.RepositoryRoot(), "src", "Simple.MesGateway"), "appsettings*.json");
+        Assert.NotEmpty(files);
+        foreach (var file in files)
+        {
+            var configuration = new ConfigurationBuilder().AddJsonFile(file).Build();
+            Assert.DoesNotContain(configuration.GetSection("Simple:Mes:Oracle").AsEnumerable(), e => e.Value is not null);
+            Assert.True(configuration["Simple:Mes:Source"] is null or GatewaySettings.FakeSource, $"{file} picks the source {configuration["Simple:Mes:Source"]}.");
+        }
+    }
+
     /// <summary>Runs the real gateway executable, as a person would, and reads what it says.</summary>
     [Theory]
     [InlineData("--urls=http://0.0.0.0:5190", "urls 'http://0.0.0.0:5190' is not a loopback address")]
-    [InlineData("--Simple:Mes:Source=Oracle", "Simple:Mes:Source 'Oracle' is not a known MES source")]
+    [InlineData("--Simple:Mes:Source=Mes", "Simple:Mes:Source 'Mes' is not a known MES source")]
+    [InlineData("--Simple:Mes:Source=Oracle", "Simple:Mes:Oracle:DataSource is missing")]
     [InlineData("--Simple:SettingsFile=no-such-settings.json", "Simple:SettingsFile")]
     [InlineData("--Simple:Logs:RetainedFileCount=0", "Simple:Logs:RetainedFileCount '0' is not a whole number above 0")]
     public async Task TheGatewayRefusesToStartAndNamesTheSetting(string argument, string message)
