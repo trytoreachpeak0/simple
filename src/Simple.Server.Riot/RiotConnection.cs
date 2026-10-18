@@ -139,7 +139,7 @@ public sealed class RiotConnectionProbe(
 
 public static class RiotServiceCollectionExtensions
 {
-    /// <summary>The fleet manager connection: settings from <c>Simple:Riot</c>, its monitor and its probe.</summary>
+    /// <summary>The fleet manager connection: settings from <c>Simple:Riot</c>, its monitor, its probe and the map reader.</summary>
     public static IServiceCollection AddRiotConnection(this IServiceCollection services)
     {
         services.AddOptions<RiotSettings>()
@@ -150,6 +150,7 @@ public static class RiotServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddSingleton<RiotConnectionMonitor>();
         services.AddHostedService<RiotConnectionProbe>();
+        services.AddSingleton<RiotMapReader>();
         return services;
     }
 }

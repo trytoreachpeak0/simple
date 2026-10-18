@@ -7,6 +7,8 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
     <PackageReference Include="Polly.Core" />
+    <!-- Site files (sites/<site>/site.yaml) are YAML, read by the server's import and by the command line. -->
+    <PackageReference Include="YamlDotNet" />
     <!-- Design-time only: lets `dotnet ef migrations add` run against this project. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>

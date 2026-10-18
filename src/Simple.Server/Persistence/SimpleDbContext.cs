@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Simple.Server.Accounts;
 using Simple.Server.Events;
 using Simple.Server.Listeners;
+using Simple.Server.Sites;
 
 namespace Simple.Server.Persistence;
 
@@ -34,6 +35,9 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
 
     /// <summary>The console's certificate, once made (ADR 0046); its key is in the Windows key store.</summary>
     public DbSet<ConsoleCertificateRecord> ConsoleCertificates => Set<ConsoleCertificateRecord>();
+
+    /// <summary>The versions of the site configuration (ADR 0017); their rows are in the Site* tables (see SiteModel).</summary>
+    public DbSet<SiteVersionRecord> SiteVersions => Set<SiteVersionRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -80,5 +84,6 @@ public sealed class SimpleDbContext(DbContextOptions<SimpleDbContext> options) :
             e.Property(x => x.RemoteAddress).HasMaxLength(64);
             e.HasOne<Account>().WithMany().HasForeignKey(x => x.AccountId).OnDelete(DeleteBehavior.Cascade);
         });
+        SiteModel.Configure(modelBuilder);
     }
 }
