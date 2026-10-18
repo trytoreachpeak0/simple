@@ -111,7 +111,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
             run = $"{DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}-{snapshot.Commit[..8]}";
         }
 
-        var plan = RemotePlan.For(command, arguments, $"{machine.Root}/runs/{instance}/{run}", json);
+        var plan = RemotePlan.For(command, arguments, $"{machine.Root}/runs/{instance}/{run}", json, instance);
         if (!plan.KeepsResults)
         {
             run = null;
@@ -255,7 +255,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
             "ran" when exitCode == 0 => null,
             "ran" => Outcome.Fail(
                 exitCode,
-                $"simple remote: forget stopped on {machine.Name}: simple down --reset --instance {Scenarios.ScenarioRunner.InstanceFor(instance)} "
+                $"simple remote: forget stopped on {machine.Name}: simple down --reset --instance {plan.Arguments[^1]} "
                 + $"ended with {exitCode}, so instance {instance} is kept there. Run simple remote forget again."),
             "busy" => Outcome.Fail(ExitCodes.RemoteBusy, $"simple remote: {result.GetProperty("error").GetString()}"),
             "failed" => Outcome.Fail(ExitCodes.RemoteFailed, $"simple remote: forget did not run on {machine.Name}: {result.GetProperty("error").GetString()}"),
@@ -505,7 +505,7 @@ public sealed class RemoteRun(string repository, string instance, IRemoteMachine
 /// <param name="Commit">The snapshot that ran; null for commands that run on what is there (down, status, events, logs, forget).</param>
 /// <param name="ExitCode">The remote command's own exit code.</param>
 /// <param name="Results">The local directory with the run's output and results.</param>
-/// <param name="Remote">The remote simple command's own JSON (up, down, status, events, logs, forget).</param>
+/// <param name="Remote">The remote simple command's own JSON (scenario, up, down, status, events, logs, forget).</param>
 public sealed record RemoteReport(
     string Machine,
     string Instance,

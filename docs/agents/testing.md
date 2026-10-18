@@ -25,9 +25,10 @@ heavy work goes to a remote machine through `simple remote`:
 | Reading files, `simple scenario list` and `validate`, `--help` | here |
 
 `simple remote` runs on the machine named by the `SIMPLE_REMOTE` environment
-variable, an alias in the user's SSH configuration. Set it in the command's own
-environment, for example `$env:SIMPLE_REMOTE = '<alias>'` in the same pwsh
-session; the person who gave you the task tells you the alias. Without it every
+variable, an alias in the user's SSH configuration. Set it in the same
+PowerShell command as `simple remote`, since a shell's state may not carry
+from one tool call to the next: `$env:SIMPLE_REMOTE = '<alias>'; ./simple remote …`.
+The person who gave you the task tells you the alias. Without it every
 `simple remote` command ends with 2 and says so.
 
 What `simple remote` does and what its exit codes mean:
@@ -131,9 +132,10 @@ the local copy under the run directory the last line prints. Here it is under
     `expectation <n>`), `verdict`, `reason` and `line` in the file;
     `events[]`: each action's `state` and `detail`; `driveFailure` when the
     scenario could not be driven;
-  - `teardown.stopped`: whether the system was stopped. `verdict` says nothing
-    about that, so a run whose `teardown.stopped` is false failed even when its
-    verdict is `holds`.
+  - `teardown`: whether the system was stopped. `verdict` says nothing about
+    that, so a run whose `teardown.stopped` and `teardown.kept` are both false
+    failed (exit code 1) even when its verdict is `holds`. With `--keep-up`,
+    `kept` is true and the system is meant to be running.
 - `timeline.jsonl` (what happened when), `events.jsonl` (the server's event
   record), `status.json` (the server's last status), `logs/` (every component's
   program log and console output), `scenario.yaml` (the file that ran).
@@ -141,10 +143,14 @@ the local copy under the run directory the last line prints. Here it is under
   (`<instance>-scenario`); `instance` is set only when `--keep-up` left that
   system running.
 
-To look into a run's system after it ends, run it here with `--keep-up`, then
-`./simple status --instance <instance>-scenario` and so on, and `./simple down
---instance <instance>-scenario` when done. `simple remote scenario` refuses
-`--keep-up`: a system kept up there would end with the SSH session.
+To look into a system for longer than a run, bring one up with
+`./simple remote up` and use `./simple remote status`, `events` and `logs`
+(next section), then `./simple remote down`. `simple remote scenario` refuses
+`--keep-up`: a system kept up there would end with the SSH session. On a
+machine that can carry the system itself, `./simple scenario run <name>
+--keep-up` leaves the run's system up for `./simple status --instance
+<instance>-scenario` and the like, until `./simple down --instance
+<instance>-scenario`.
 
 ## Looking into a running system
 

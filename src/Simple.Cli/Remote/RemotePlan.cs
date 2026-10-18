@@ -21,10 +21,12 @@ public sealed record RemotePlan(
     public static readonly IReadOnlyList<string> Commands = ["build", "test", "scenario", "exec", "up", "down", "status", "events", "logs", "forget"];
 
     /// <summary>What simple remote scenario passes on itself; the caller may not.</summary>
-    public static readonly IReadOnlyList<string> ScenarioOwnOptions = ["--evidence", global::Simple.Cli.SimpleCommand.ServerKeyStoreOption, "--keep-up"];
+    public static readonly IReadOnlyList<string> ScenarioOwnOptions =
+        ["--evidence", global::Simple.Cli.SimpleCommand.ServerKeyStoreOption, global::Simple.Cli.SimpleCommand.InstanceOption, "--keep-up"];
 
-    /// <param name="runDirectory">Where the run's results go on the remote machine (build, test, exec).</param>
-    public static RemotePlan For(string command, IReadOnlyList<string> arguments, string runDirectory, bool json)
+    /// <param name="runDirectory">Where the run's results go on the remote machine (build, test, scenario run, exec).</param>
+    /// <param name="instance">The instance there; a scenario run uses the scenario instance named after it, as forget resets it.</param>
+    public static RemotePlan For(string command, IReadOnlyList<string> arguments, string runDirectory, bool json, string instance = "")
     {
         ArgumentNullException.ThrowIfNull(arguments);
         string[] jsonFlag = json ? [global::Simple.Cli.SimpleCommand.JsonOption] : [];
@@ -35,9 +37,16 @@ public sealed record RemotePlan(
             "test" => new("dotnet", ["test", .. Target(arguments), .. ResultsArguments(arguments, runDirectory), .. arguments], true, true, true, false),
             // A scenario run builds and brings a system up, so it takes a slot
             // like up. Its server cannot use the user's key store over SSH,
-            // and its evidence goes into the run directory to come back.
+            // and its evidence goes into the run directory to come back. Its
+            // instance is named here, the same one forget resets.
             "scenario" when arguments is ["run", ..] => SimpleCli(
-                ["scenario", "run", global::Simple.Cli.SimpleCommand.ServerKeyStoreOption, nameof(ServerKeyStore.Machine), "--evidence", runDirectory, .. arguments.Skip(1), .. jsonFlag],
+                [
+                    "scenario", "run",
+                    global::Simple.Cli.SimpleCommand.InstanceOption, ScenarioInstance(instance),
+                    global::Simple.Cli.SimpleCommand.ServerKeyStoreOption, nameof(ServerKeyStore.Machine),
+                    "--evidence", runDirectory,
+                    .. arguments.Skip(1), .. jsonFlag,
+                ],
                 checkout: true,
                 slot: true) with { KeepsResults = true },
             // Checked out, so a scenario written here and not committed is the one checked there.
@@ -66,7 +75,9 @@ public sealed record RemotePlan(
     /// whose database and server key would otherwise outlive the worktree.
     /// </summary>
     public static RemotePlan ForgetScenarios(string instance) =>
-        SimpleCli(["down", "--reset", global::Simple.Cli.SimpleCommand.InstanceOption, global::Simple.Cli.Scenarios.ScenarioRunner.InstanceFor(instance)], checkout: false, slot: false);
+        SimpleCli(["down", "--reset", global::Simple.Cli.SimpleCommand.InstanceOption, ScenarioInstance(instance)], checkout: false, slot: false);
+
+    private static string ScenarioInstance(string instance) => global::Simple.Cli.Scenarios.ScenarioRunner.InstanceFor(instance);
 
     /// <summary>The command line the remote side starts the program with.</summary>
     public string CommandLine => Processes.CommandLine.Join(Arguments);

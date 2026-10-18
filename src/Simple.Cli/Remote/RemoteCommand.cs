@@ -16,7 +16,7 @@ public static class RemoteCommand
             + "simple remote scenario run infrastructure-up. A scenario given as a path must be a .yaml file inside the clone that .gitignore does not exclude. "
             + "run takes a slot, keeps its server's key in the machine's store and ends with the verdict: 0 holds, 10 does not hold, 11 cannot tell, 12 not applicable "
             + "(1 when its system could not be stopped, 2 when the file is not valid, 7 when another run holds the instance). "
-            + "Its evidence comes back with the run's output. simple remote sets --evidence and --server-key-store itself and refuses them, and --keep-up, "
+            + "Its evidence comes back with the run's output. simple remote sets the scenario instance (<instance>-scenario), --evidence and --server-key-store itself and refuses them, and --keep-up, "
             + "since a system kept up there would end with the SSH session.",
         ["exec"] = "Run any command there in the instance's worktree: simple remote exec -- <command> [arguments]. "
             + "Files it writes to %SIMPLE_REMOTE_RUN% come back.",
@@ -100,8 +100,19 @@ public static class RemoteCommand
 
         if (arguments.FirstOrDefault(a => IsOption(a, [.. RemotePlan.ScenarioOwnOptions])) is { } own)
         {
-            return $"'{own}' is not passed through: simple remote scenario sets where the evidence goes and the key store itself, "
-                + "and a system kept up there would end with the SSH session.";
+            return $"'{own}' is not passed through: simple remote scenario sets the instance, where the evidence goes and the key store itself, "
+                + "and a system kept up there would end with the SSH session. Give --instance before scenario.";
+        }
+
+        // Refused here, before anything is sent and a slot is waited for.
+        if (arguments is ["run", ..] && (arguments.Count != 2 || arguments[1].StartsWith('-')))
+        {
+            return "simple remote scenario run takes exactly one scenario: simple remote scenario run <scenario>.";
+        }
+
+        if (arguments is ["list", _, ..])
+        {
+            return "simple remote scenario list takes no scenario: it lists them all.";
         }
 
         for (var i = 1; i < arguments.Count; i++)
@@ -162,6 +173,19 @@ public static class RemoteCommand
         var arguments = parse.UnmatchedTokens.ToList();
         Outcome outcome;
         string? argumentRefusal = null;
+        try
+        {
+            if (command == "scenario")
+            {
+                argumentRefusal = await ScenarioRefusalAsync(environment.Repository, arguments, cancellationToken);
+            }
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // As below: with --json, stdout stays one JSON object.
+            return Outcome.Fail(ExitCodes.Unexpected, e.ToString()).Write(json, environment.Out, environment.Error);
+        }
+
         if (command == "test" && arguments.FirstOrDefault(TargetsItself) is { } passed)
         {
             // Passed through after --, it would get past the check below.
@@ -177,11 +201,6 @@ public static class RemoteCommand
             {
                 argumentRefusal = $"{ProjectOption} '{project}' is not a test project or a project file inside this clone ({environment.Repository}).";
             }
-        }
-
-        else if (command == "scenario")
-        {
-            argumentRefusal = await ScenarioRefusalAsync(environment.Repository, arguments, cancellationToken);
         }
 
         var machine = environment.RemoteMachine;

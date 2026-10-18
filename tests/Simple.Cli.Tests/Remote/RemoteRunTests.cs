@@ -163,11 +163,24 @@ public sealed class RemoteRunTests
 
         Assert.True(exitCode == ExitCodes.DoesNotHold, $"exit code {exitCode}: {stderr}");
         var line = Assert.Single(Lines(stdout));
-        Assert.StartsWith("fake simple scenario run --server-key-store Machine --evidence ", line, StringComparison.Ordinal);
+        Assert.StartsWith($"fake simple scenario run --instance {sandbox.Instance}-scenario --server-key-store Machine --evidence ", line, StringComparison.Ordinal);
         Assert.EndsWith(" scenarios/new.yaml", line, StringComparison.Ordinal);
         var run = Assert.Single(Directory.GetDirectories(Path.Combine(sandbox.Clone, "artifacts", "remote", sandbox.Instance)));
         Assert.Contains("does-not-hold", ReadShared(Path.Combine(run, "run-1", "result.json")), StringComparison.Ordinal);
         Assert.Contains("scenario exited with 10", stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ForgetOfAnInstanceNeverSetUpThereSucceeds()
+    {
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var machine = new DirectoryMachine(sandbox.RemoteRoot);
+
+        var (exitCode, stdout, stderr) = await RunAsync(sandbox, machine, "forget");
+
+        Assert.True(exitCode == 0, $"exit code {exitCode}: {stderr}");
+        Assert.Empty(Lines(stdout));
+        Assert.False(Directory.Exists(sandbox.RemoteWorktree()));
     }
 
     [Fact]
