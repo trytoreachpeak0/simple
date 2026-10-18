@@ -186,8 +186,9 @@ public sealed class RemoteDisconnectTests
     /// child, and opens both at once, while they sleep. The handles held keep
     /// Windows from giving those ids to another process once these two have
     /// ended, so the checks and the clean-up below only ever see and kill
-    /// these two: by bare id, the clean-up once killed another test's freshly
-    /// started component that had been given a recycled id (#85).
+    /// these two: by bare id, the clean-up could kill whatever process had
+    /// been given a recycled id by then, another test's component included
+    /// (#85).
     /// </summary>
     private static async Task<Process[]> ProcessesAsync(GitSandbox sandbox, Task<Outcome> running)
     {
@@ -210,11 +211,35 @@ public sealed class RemoteDisconnectTests
             // Set-Content ends the line: without its newline the file may be half written.
             if (written.EndsWith('\n') && written.Trim() is { Length: > 0 } text && text.Contains(' ', StringComparison.Ordinal))
             {
-                return [.. text.Split(' ').Select(int.Parse).Select(Open)];
+                return OpenAll(text.Split(' ').Select(int.Parse));
             }
         }
 
         throw new TimeoutException("The command did not start its child within 60 s.");
+    }
+
+    /// <summary>Opens every process, or none: one that cannot be opened closes those opened before it.</summary>
+    private static Process[] OpenAll(IEnumerable<int> pids)
+    {
+        var opened = new List<Process>();
+        try
+        {
+            foreach (var pid in pids)
+            {
+                opened.Add(Open(pid));
+            }
+
+            return [.. opened];
+        }
+        catch
+        {
+            foreach (var process in opened)
+            {
+                process.Dispose();
+            }
+
+            throw;
+        }
     }
 
     private static Process Open(int pid)

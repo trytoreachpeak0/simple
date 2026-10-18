@@ -209,24 +209,31 @@ public static class ChildProcess
         return 0;
     }
 
-    /// <summary>Whether process <paramref name="pid"/> is the one that was recorded: alive, with the same start time.</summary>
+    /// <summary>
+    /// Whether process <paramref name="pid"/> is the one that was recorded:
+    /// alive, with the same start time. The process returned holds its handle,
+    /// opened before the start time is compared, so whatever the caller does
+    /// with it (a stop signal, a wait, a kill) reaches that process and no
+    /// other that gets the id once it has exited (#85).
+    /// </summary>
     public static Process? Find(int pid, DateTimeOffset startedAt)
     {
+        Process? process = null;
         try
         {
-            var process = Process.GetProcessById(pid);
+            process = Process.GetProcessById(pid);
+            _ = process.SafeHandle;
             if (!process.HasExited && new DateTimeOffset(process.StartTime.ToUniversalTime()) == startedAt)
             {
                 return process;
             }
-
-            process.Dispose();
         }
         catch (Exception e) when (e is ArgumentException or InvalidOperationException or Win32Exception)
         {
             // Gone, or not ours to inspect.
         }
 
+        process?.Dispose();
         return null;
     }
 

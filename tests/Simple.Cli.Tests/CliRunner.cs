@@ -91,7 +91,7 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
             var error = await stderr;
             if (args is ["up", ..] && process.ExitCode != ExitCodes.Success && KeepLogs(args) is { } kept)
             {
-                error += $"{Environment.NewLine}The instance's console output and program logs are kept in {kept}";
+                error += Environment.NewLine + kept;
             }
 
             return (process.ExitCode, await stdout, error);
@@ -110,6 +110,7 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
     /// copied to SIMPLE_TEST_EVIDENCE (CI sets it under its test results), so
     /// that why a component did not get ready is known (#85).
     /// </summary>
+    /// <remarks>A copy that fails is said so in its place: it must not take the place of up's own failure, which says why.</remarks>
     private string? KeepLogs(string[] args)
     {
         var at = Array.IndexOf(args, "--instance");
@@ -119,7 +120,16 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
         }
 
         var instance = args[at + 1];
-        return TestEvidence.Keep(new InstanceStore(Home).LogDirectory(instance), $"{instance}-up-failed", "SIMPLE_TEST_EVIDENCE", "test-evidence");
+        try
+        {
+            return TestEvidence.Keep(new InstanceStore(Home).LogDirectory(instance), $"{instance}-up-failed", "SIMPLE_TEST_EVIDENCE", "test-evidence") is { } kept
+                ? $"The instance's console output and program logs are kept in {kept}"
+                : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return $"The instance's console output and program logs could not be kept: {e.Message}";
+        }
     }
 
     public async Task<bool> DatabaseExistsAsync(string instance)

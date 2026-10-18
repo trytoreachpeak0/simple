@@ -30,7 +30,7 @@ public sealed class SmokeTests
         var serverB = Server(ups[1].Output);
         Assert.NotEqual(serverA.Pid, serverB.Pid);
         Assert.NotEqual(serverA.Url, serverB.Url);
-        var startedA = StartTime(serverA.Pid);
+        var startedA = StartTime(cli, a, serverA.Pid);
 
         // up again: nothing new is started.
         var again = await cli.RunJsonAsync("up", "--instance", a);
@@ -88,7 +88,7 @@ public sealed class SmokeTests
 
         // down stops a gracefully: its processes are gone and the server recorded its stop.
         var gatewayA = Process(ups[0].Output, "mes-gateway");
-        var gatewayStartedA = StartTime(gatewayA.Pid);
+        var gatewayStartedA = StartTime(cli, a, gatewayA.Pid);
         var down = await cli.RunJsonAsync("down", "--instance", a);
         Assert.True(down.ExitCode == ExitCodes.Success, $"down exited with {down.ExitCode}: {down.Output}{Environment.NewLine}{down.Error}");
         var stopped = down.Output.GetProperty("result").GetProperty("stopped").EnumerateArray().ToList();
@@ -133,9 +133,7 @@ public sealed class SmokeTests
         return (process.GetProperty("pid").GetInt32(), process.GetProperty("url").GetString()!);
     }
 
-    internal static DateTimeOffset StartTime(int pid)
-    {
-        using var process = System.Diagnostics.Process.GetProcessById(pid);
-        return new DateTimeOffset(process.StartTime.ToUniversalTime());
-    }
+    /// <summary>A process's start time as up recorded it, not read again by a pid that may by now be another process's (#85).</summary>
+    internal static DateTimeOffset StartTime(CliRunner cli, string instance, int pid) =>
+        new InstanceStore(cli.Home).Read(instance)!.Processes.Single(p => p.Pid == pid).ProcessStartedAt;
 }

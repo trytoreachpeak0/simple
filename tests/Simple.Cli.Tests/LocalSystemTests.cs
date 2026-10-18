@@ -54,6 +54,23 @@ public sealed class LocalSystemTests : IDisposable
     }
 
     [Fact]
+    public void AProcessThatExitedBeforeItWasReadyIsReportedWithItsExitCode()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var output = store.LogPath(instance, "io-simulator-2");
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        File.WriteAllText(output, string.Empty);
+        var process = new ProcessRecord("io-simulator-2", "io-simulator", 2, 1234, DateTimeOffset.UnixEpoch, "Simple.IoSimulator.Headless.exe", [20010, 20011], output);
+        var system = new LocalSystem(@"F:\simple\repo", store, TextWriter.Null);
+
+        var outcome = system.NotReady(instance, process, LocalSystem.ExitedBeforeReady(uint.MaxValue), [], string.Empty, uint.MaxValue);
+
+        Assert.StartsWith("io-simulator-2 exited before it was ready, with exit code -1 (0xFFFFFFFF). Its console output:", outcome.Error, StringComparison.Ordinal);
+        var result = JsonSerializer.SerializeToElement(outcome.Result, Outcome.JsonOptions);
+        Assert.Equal(-1, result.GetProperty("processExitCode").GetInt32());
+    }
+
+    [Fact]
     public async Task DownRefusesAnInstanceStartedFromAnotherClone()
     {
         // Two clones in folders of the same name get the same default instance.

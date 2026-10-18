@@ -30,8 +30,8 @@ public sealed class MesGatewaySmokeTests
         Assert.True(up.ExitCode == ExitCodes.Success, $"up exited with {up.ExitCode}: {up.Output}{Environment.NewLine}{up.Error}");
         var gateway = SmokeTests.Process(up.Output, "mes-gateway");
         var server = SmokeTests.Process(up.Output, "server");
-        var gatewayStarted = SmokeTests.StartTime(gateway.Pid);
-        var serverStarted = SmokeTests.StartTime(server.Pid);
+        var gatewayStarted = SmokeTests.StartTime(cli, instance, gateway.Pid);
+        var serverStarted = SmokeTests.StartTime(cli, instance, server.Pid);
         var gatewayUrl = new Uri(gateway.Url);
         await using var serverApi = (await ServerApi.LogInAsync(Http, new Uri(server.Url), new InstanceStore(cli.Home).ReadAdminPassword(instance)!, Cancel))!;
 

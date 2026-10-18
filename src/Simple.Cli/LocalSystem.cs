@@ -233,7 +233,7 @@ public sealed partial class LocalSystem(
                 {
                     var stopped = await StopAllAsync(state, cancellationToken);
                     var stillHeld = await ForgetAsync(state, cancellationToken);
-                    return NotReady(instance, failure.Value.Process, failure.Value.Reason, stopped, Kept(stillHeld, instance));
+                    return NotReady(instance, failure.Value.Process, failure.Value.Reason, stopped, Kept(stillHeld, instance), failure.Value.ExitCode);
                 }
             }
         }
@@ -254,14 +254,15 @@ public sealed partial class LocalSystem(
     /// are shown (it may have stopped before its program log started), and
     /// its program log directory (ADR 0034), each named as what it is (#80).
     /// </summary>
-    internal Outcome NotReady(string instance, ProcessRecord process, string reason, IReadOnlyList<StopReport> stopped, string kept)
+    /// <param name="exitCode">The exit code of a process that exited before it was ready, when known; in the result as <c>processExitCode</c> (#85).</param>
+    internal Outcome NotReady(string instance, ProcessRecord process, string reason, IReadOnlyList<StopReport> stopped, string kept, uint? exitCode = null)
     {
         var programLog = store.ProgramLogDirectory(instance, process.Name);
         var tail = Tail(process.Log, 20);
         return Outcome.Fail(
             ExitCodes.NotReady,
             $"{process.Name} {reason}. Its console output: {process.Log} (simple logs {process.Name} --output); its program log: {programLog} (simple logs {process.Name}).{kept}",
-            new { process.Name, Reason = reason, ProgramLog = programLog, Output = process.Log, OutputTail = tail, Stopped = stopped },
+            new { process.Name, Reason = reason, ProcessExitCode = exitCode is { } code ? unchecked((int)code) : (int?)null, ProgramLog = programLog, Output = process.Log, OutputTail = tail, Stopped = stopped },
             ["Last lines of its console output:", .. tail]);
     }
 
@@ -637,7 +638,7 @@ public sealed partial class LocalSystem(
         }
     }
 
-    private async Task<(ProcessRecord Process, string Reason)?> WaitUntilReadyAsync(
+    private async Task<(ProcessRecord Process, string Reason, uint? ExitCode)?> WaitUntilReadyAsync(
         IReadOnlyList<ProcessRecord> processes, IReadOnlyDictionary<string, StartedProcess> handles, InstanceState state, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var deadline = Stopwatch.StartNew();
@@ -649,7 +650,8 @@ public sealed partial class LocalSystem(
             {
                 if (!IsAlive(process))
                 {
-                    return (process, ExitedBeforeReady(handles.GetValueOrDefault(process.Name)?.ExitCode));
+                    var exitCode = handles.GetValueOrDefault(process.Name)?.ExitCode;
+                    return (process, ExitedBeforeReady(exitCode), exitCode);
                 }
 
                 if (await IsReadyAsync(state, process, cancellationToken))
@@ -665,7 +667,7 @@ public sealed partial class LocalSystem(
 
             if (deadline.Elapsed > timeout)
             {
-                return (waiting[0], "was not ready within --timeout");
+                return (waiting[0], "was not ready within --timeout", null);
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
