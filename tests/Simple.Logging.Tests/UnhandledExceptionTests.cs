@@ -6,6 +6,12 @@ namespace Simple.Logging.Tests;
 /// A program log also records what nothing in the program caught (ADR 0034):
 /// the program then goes on as it would have without the log.
 /// </summary>
+/// <remarks>
+/// Run alone: the runtime raises an unobserved task exception to every
+/// handler in the process, so every other test's log open at that moment
+/// recorded the forgotten task too (ProgramLogTests, 2026-10-18, #85).
+/// </remarks>
+[Collection(nameof(UnhandledExceptionTests))]
 public sealed class UnhandledExceptionTests
 {
     [Fact]
@@ -72,3 +78,6 @@ public sealed class UnhandledExceptionTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void FaultAndForget() => _ = Task.FromException(new InvalidOperationException("Forgotten-task"));
 }
+
+[CollectionDefinition(nameof(UnhandledExceptionTests), DisableParallelization = true)]
+public sealed class UnhandledExceptionTestsRunAlone;
