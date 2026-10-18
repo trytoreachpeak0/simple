@@ -52,10 +52,10 @@ public sealed class ModbusFaceTests : IDisposable
 
         module.Server.SetFault(ModbusFault.Disconnect, TimeSpan.Zero);
 
-        Assert.ThrowsAny<IOException>(() => module.Input(1));
+        AssertClosed(() => module.Input(1));
         using var refused = module.Connect();
         refused.ReadTimeout = 300;
-        Assert.ThrowsAny<IOException>(() => refused.ReadDiscreteInputs(IoModuleServer.UnitId, IoModuleServer.FirstInputAddress, 16));
+        AssertClosed(() => refused.ReadDiscreteInputs(IoModuleServer.UnitId, IoModuleServer.FirstInputAddress, 16));
 
         module.Server.SetFault(ModbusFault.None, TimeSpan.Zero);
         using var again = module.Connect();
@@ -72,6 +72,20 @@ public sealed class ModbusFaceTests : IDisposable
 
         Assert.InRange(watch.Elapsed, TimeSpan.FromMilliseconds(400), TimeSpan.FromSeconds(2));
         Assert.Equal((ModbusFault.Delay, TimeSpan.FromMilliseconds(400)), module.Server.Fault);
+    }
+
+    /// <summary>
+    /// The module closed the connection, as FluentModbus reports it either
+    /// way: a reset (IOException), or the close read as the end of the
+    /// stream (InvalidOperationException), whichever reaches the client
+    /// first (#85; the terminal's IoModuleReader takes both as unreadable).
+    /// </summary>
+    private static void AssertClosed(Action read)
+    {
+        var e = Record.Exception(read);
+        Assert.True(
+            e is IOException or InvalidOperationException { Message: "The TCP connection closed unexpectedly." },
+            $"Not the connection closing: {e?.ToString() ?? "no exception"}");
     }
 
     public void Dispose() => module.Dispose();
