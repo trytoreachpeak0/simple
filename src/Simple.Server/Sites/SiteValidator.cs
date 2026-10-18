@@ -108,7 +108,7 @@ public static class SiteValidator
 
                 if (a.DoorSide is { } side && !slotGroupNames.Contains(side))
                 {
-                    Add($"areas[{area}].door-side", $"开门侧 {side} 不是车辆清单里任何一台车的仓位分组（现有：{Join(slotGroupNames)}）。");
+                    Add($"areas[{area}].door-side", $"开门侧 {side} 不是车辆清单里任何一台车的仓位分组（现有：{Join(slotGroupNames.Order(StringComparer.Ordinal))}）。");
                 }
             }
         }

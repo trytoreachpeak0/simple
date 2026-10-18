@@ -106,6 +106,12 @@ public sealed partial class LocalSystem(
             }
         }
 
+        var siteFile = Scenarios.Site.PathOf(Repository, options.Site);
+        if (!File.Exists(siteFile))
+        {
+            return Outcome.Fail(ExitCodes.Usage, $"Site '{options.Site}' has no {Path.Combine("sites", options.Site, Scenarios.Site.FileName)} in {Repository}.");
+        }
+
         if (await VerifySqlServerAsync(sqlServer, cancellationToken) is { } refused)
         {
             return refused;
@@ -177,7 +183,7 @@ public sealed partial class LocalSystem(
                     index++;
                     portsOf[name] = ports.Skip(next).Take(component.PortsPerProcess).ToList();
                     next += component.PortsPerProcess;
-                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name), store.ProgramLogDirectory(instance, name), options.KeyStore, adminPassword) { Options = options }));
+                    contexts.Add((component, name, new ComponentContext(instance, sqlServer, index, portsOf[name], portsOf, store.ProcessDirectory(instance, name), store.ProgramLogDirectory(instance, name), options.KeyStore, adminPassword) { Options = options, SiteFile = siteFile }));
                 }
             }
         }
@@ -206,6 +212,12 @@ public sealed partial class LocalSystem(
                         {
                             await RunToEndAsync(
                                 executable, setAdminPassword(context), adminPassword, environment, store.LogPath(instance, $"{name}-set-admin-password"), cancellationToken);
+                        }
+
+                        if (component.ImportSite is { } importSite)
+                        {
+                            await RunToEndAsync(
+                                executable, importSite(context), string.Empty, environment, store.LogPath(instance, $"{name}-import-site"), cancellationToken);
                         }
 
                         if (component.Prepare is { } prepare)
@@ -830,10 +842,13 @@ public sealed partial class LocalSystem(
             throw new InvalidOperationException($"{Path.GetFileName(executable)} {arguments[0]} did not end within two minutes. Its output: {log}");
         }
 
-        await File.WriteAllTextAsync(log, await output + await error, cancellationToken);
+        var written = await output + await error;
+        await File.WriteAllTextAsync(log, written, cancellationToken);
         if (process.ExitCode != 0)
         {
-            throw new InvalidOperationException($"{Path.GetFileName(executable)} {arguments[0]} ended with exit code {process.ExitCode}. Its output: {log}");
+            // What it said goes with the failure: an import says what is wrong with the site file.
+            var said = written.Trim() is { Length: > 0 } text ? $"{Environment.NewLine}{text}" : string.Empty;
+            throw new InvalidOperationException($"{Path.GetFileName(executable)} {arguments[0]} ended with exit code {process.ExitCode} (its output: {log}).{said}");
         }
     }
 

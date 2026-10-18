@@ -162,7 +162,12 @@ machine that can carry the system itself, `./simple scenario run <name>
 
 `./simple up --terminals 2` brings up the whole local system (fake RIoT, MES
 gateway with its fake MES, server, one IO simulator and one headless onboard
-terminal per terminal) and returns once all are ready; `./simple down` stops it,
+terminal per terminal) and returns once all are ready. Before the server
+starts, its command `import-site` imports a site's starting configuration
+(`sites/sample/` unless `--site` names another; a scenario's `site:`),
+checked against the fake RIoT's maps; once the database has one it imports
+nothing, and when the file is not valid `up` fails with the problems listed
+(`sites/README.md`). `./simple down` stops it,
 `--reset` also drops its database. `./simple remote up` and the other remote
 commands do the same on the remote machine, where it keeps running until
 `./simple remote down`.

@@ -20,6 +20,14 @@ public sealed class SiteConfigurationStore(SimpleDbContext db)
             .Select(v => new SiteVersionSummary(v.Id, v.Site, v.CreatedAt, v.Source))
             .FirstOrDefaultAsync(cancellationToken);
 
+    /// <summary>Whether the vehicle list of the current configuration has this vehicle ID (ADR 0007); false before the first import.</summary>
+    public async Task<bool> HasVehicleAsync(string vehicleId, CancellationToken cancellationToken)
+    {
+        var current = await db.SiteVersions.AsNoTracking().OrderByDescending(v => v.Id).Select(v => (int?)v.Id).FirstOrDefaultAsync(cancellationToken);
+        return current is { } version
+            && await db.Set<SiteVehicleRecord>().AsNoTracking().AnyAsync(v => v.VersionId == version && v.VehicleId == vehicleId, cancellationToken);
+    }
+
     /// <summary>The current configuration: the newest version; null before the first import.</summary>
     public async Task<SiteVersion?> CurrentAsync(CancellationToken cancellationToken)
     {

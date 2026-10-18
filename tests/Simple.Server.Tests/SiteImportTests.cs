@@ -64,6 +64,21 @@ public sealed class SiteImportTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task TheStoreAnswersWhetherAVehicleIsInTheCurrentConfiguration()
+    {
+        server.Start();
+        server.Riot.SetMaps(Map);
+        await using var scope = server.Services.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<SiteConfigurationStore>();
+        Assert.False(await store.HasVehicleAsync("v1", Cancel));
+
+        await ImportAsync(ValidFile);
+
+        Assert.True(await store.HasVehicleAsync("v1", Cancel));
+        Assert.False(await store.HasVehicleAsync("v9", Cancel));
+    }
+
+    [Fact]
     public async Task TheImportIsRecordedInTheEventRecord()
     {
         var admin = server.Start();
