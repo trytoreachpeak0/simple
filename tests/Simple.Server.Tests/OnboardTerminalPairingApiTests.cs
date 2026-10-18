@@ -282,6 +282,37 @@ public sealed class OnboardTerminalPairingApiTests
         Assert.Equal("v1", Assert.Single(await Api.EventsAsync(admin, EventTypes.OnboardConfirmed)).Text("vehicleId"));
     }
 
+    [Fact]
+    public async Task WithTheVehicleListUnreadableTheStatusStillAnswersAndConfirmingSaysSo()
+    {
+        await using var server = new ServerInstance(
+            kestrel: true,
+            services: s => s.Replace(ServiceDescriptor.Singleton<IVehicleList>(new UnreachableVehicleList())));
+        using var admin = server.Start();
+        await using var terminal = await TestTerminal.ConnectAsync(admin);
+        await terminal.ReceiveAsync();
+        await terminal.ReportAsync();
+        var code = await Api.PairingCodeAsync(admin, terminal.Key.Pin);
+
+        // Exactly when the status matters most, it answers: whether the vehicle is listed is not known.
+        Assert.Null(Assert.Single((await Api.StatusAsync(admin)).PendingOnboardTerminals).InVehicleList);
+        using (var listed = await admin.GetAsync(new Uri("/api/v1/onboard-terminals", UriKind.Relative), Cancel))
+        {
+            Assert.Equal(HttpStatusCode.OK, listed.StatusCode);
+        }
+
+        using var confirm = await Api.ConfirmAsync(admin, "vehicle-1", code);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, confirm.StatusCode);
+        Assert.Single((await Api.StatusAsync(admin)).PendingOnboardTerminals);
+    }
+
+    /// <summary>A vehicle list whose database cannot be reached.</summary>
+    private sealed class UnreachableVehicleList : IVehicleList
+    {
+        public Task<bool> ContainsAsync(string vehicleId, CancellationToken cancellationToken) =>
+            Task.FromException<bool>(new InvalidOperationException("the database cannot be reached (test)"));
+    }
+
     private static async Task CreateAccountAsync(HttpClient admin, string name, string role)
     {
         using var created = await admin.PostAsJsonAsync(

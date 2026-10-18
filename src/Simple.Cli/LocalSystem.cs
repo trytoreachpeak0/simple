@@ -126,6 +126,23 @@ public sealed partial class LocalSystem(
             return Outcome.Fail(ExitCodes.Usage, $"Site '{options.Site}' has no {Path.Combine("sites", options.Site, Scenarios.Site.FileName)} in {Repository}.");
         }
 
+        // Each local terminal is one of the site's vehicles (its id from the
+        // site file): the server confirms no terminal for another (ADR 0029).
+        try
+        {
+            var vehicles = Scenarios.Site.Read(siteFile).Vehicles.Count;
+            if (options.Terminals > vehicles)
+            {
+                return Outcome.Fail(
+                    ExitCodes.Usage,
+                    $"Site '{options.Site}' has {vehicles} vehicles, so up starts at most {vehicles} terminals, not {options.Terminals}: each local terminal is one of the site's vehicles.");
+            }
+        }
+        catch (Exception e) when (e is InvalidDataException or IOException)
+        {
+            return Outcome.Fail(ExitCodes.Usage, $"Site '{options.Site}': {e.Message}");
+        }
+
         // Kept after down, so down --reset finds the database where up made it
         // even when the caller's SIMPLE_SQLSERVER has changed since, and the
         // server key in the store it was made in.
@@ -1110,6 +1127,10 @@ public sealed record InstanceReport(
                 if (Field(p, "inVehicleList") is { ValueKind: JsonValueKind.False })
                 {
                     notes.Add("not in the vehicle list");
+                }
+                else if (Field(p, "inVehicleList") is { ValueKind: JsonValueKind.Null })
+                {
+                    notes.Add("vehicle list unreadable");
                 }
 
                 if (Field(p, "vehicleOnlineWithAnotherKey") is { ValueKind: JsonValueKind.True })

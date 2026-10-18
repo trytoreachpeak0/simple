@@ -104,6 +104,41 @@ public sealed class LocalSystemTests : IDisposable
     private static Task<string?> Refuse(string sqlServer, CancellationToken cancellationToken) =>
         Task.FromResult<string?>("refused by the test");
 
+    /// <summary>A clone with only a site file: two vehicles named as at D8.</summary>
+    private string CloneWithSite(string site)
+    {
+        var clone = Path.Combine(store.Home, "clone");
+        Directory.CreateDirectory(Path.Combine(clone, "sites", site));
+        File.WriteAllText(
+            Path.Combine(clone, "sites", site, "site.yaml"),
+            $"name: {site}\nvehicles:\n  - id: agv01\n    riot-device-key: k1\n  - id: agv02\n    riot-device-key: k2\n");
+        return clone;
+    }
+
+    [Fact]
+    public async Task UpRefusesMoreTerminalsThanTheSiteHasVehiclesBeforeBuildingAnything()
+    {
+        var instance = $"test_{Guid.NewGuid():N}"[..17];
+        var system = new LocalSystem(CloneWithSite("two"), store, TextWriter.Null, (_, _) => Task.FromResult<string?>(null));
+
+        var outcome = await system.UpAsync(instance, CliRunner.SqlServer, new UpOptions(3, Site: "two"), TimeSpan.FromSeconds(5), Cancel);
+
+        Assert.Equal(ExitCodes.Usage, outcome.ExitCode);
+        Assert.Contains("2 vehicles", outcome.Error, StringComparison.Ordinal);
+        Assert.Null(store.Read(instance));
+        Assert.False(File.Exists(store.LogPath(instance, "build")));
+    }
+
+    [Fact]
+    public void ALocalTerminalClaimsTheVehicleOfTheSiteWithItsNumber()
+    {
+        var file = Scenarios.Site.PathOf(CloneWithSite("two"), "two");
+
+        Assert.Equal("agv01", OnboardTerminalSettings.VehicleId(file, 1));
+        Assert.Equal("agv02", OnboardTerminalSettings.VehicleId(file, 2));
+        Assert.Throws<InvalidOperationException>(() => OnboardTerminalSettings.VehicleId(file, 3));
+    }
+
     [Fact]
     public async Task UpChecksTheSqlServerBeforeBuildingOrRecordingAnything()
     {

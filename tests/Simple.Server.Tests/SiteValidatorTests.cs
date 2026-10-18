@@ -465,7 +465,12 @@ public sealed class SiteValidatorTests
     [Fact]
     public void ValuesAtTheirColumnsLengthAreAllowed()
     {
-        var configuration = WithVehicle("v1", v => v with { Id = new string('v', SiteModel.CodeMaxLength) });
+        // A vehicle id goes no further than a terminal can claim (OnboardTerminalRegistry.MaxVehicleIdLength).
+        var configuration = WithVehicle("v1", v => v with
+        {
+            Id = new string('v', OnboardTerminals.OnboardTerminalRegistry.MaxVehicleIdLength),
+            RiotDeviceKey = new string('k', SiteModel.CodeMaxLength),
+        });
 
         Assert.Empty(SiteValidator.Validate(configuration, Map));
     }
@@ -484,6 +489,21 @@ public sealed class SiteValidatorTests
         var configuration = WithVehicle("v1", v => v with { Chargers = [], WaitingPoint = new StationRef(1, 99) });
 
         Assert.Equal(2, SiteValidator.Validate(configuration, Map).Count);
+    }
+
+    [Theory]
+    [InlineData("v1 ")]
+    [InlineData(" v1")]
+    [InlineData("v\u00011")]
+    [InlineData("v1234567890123456789012345678901234567890123456789012345678901234")]
+    public void AVehicleIdATerminalCouldNotClaimExactlyIsRefused(string id)
+    {
+        // The onboard terminal claims its vehicle id as it is written, and
+        // the server pairs only ids of at most 64 characters with no
+        // whitespace around them (OnboardTerminalRegistry.IsValidVehicleId).
+        var problem = Single(WithVehicle("v1", v => v with { Id = id }));
+
+        Assert.Equal($"vehicles[{id}].id", problem.Where);
     }
 
     private static SiteProblem Single(SiteConfiguration configuration)

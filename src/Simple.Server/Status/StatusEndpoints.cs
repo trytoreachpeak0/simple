@@ -93,7 +93,7 @@ public sealed record OnboardTerminalStatus(
 /// <param name="RemoteAddress">Where its open stream comes from.</param>
 /// <param name="TerminalVersion">The terminal program's version, from its latest report.</param>
 /// <param name="FirstSeenAt">When it started waiting, on the server's clock.</param>
-/// <param name="InVehicleList">Whether the vehicle it claims is in the vehicle list; only then can it be confirmed.</param>
+/// <param name="InVehicleList">Whether the vehicle it claims is in the vehicle list; only then can it be confirmed. Null when the vehicle list could not be read (its database is unreachable).</param>
 /// <param name="VehicleOnlineWithAnotherKey">The vehicle it claims is online now with its registered key: "this vehicle is online, on another computer".</param>
 /// <param name="RegisteredForVehicle">The vehicle the key is registered for, when that is another one than it claims now.</param>
 /// <param name="CloneSuspected">It waits because two computers sent fresh reports with this key at once (a cloned disk).</param>
@@ -105,7 +105,7 @@ public sealed record PendingOnboardTerminalStatus(
     string? RemoteAddress,
     string TerminalVersion,
     DateTimeOffset FirstSeenAt,
-    bool InVehicleList,
+    bool? InVehicleList,
     bool VehicleOnlineWithAnotherKey,
     string? RegisteredForVehicle,
     bool CloneSuspected);

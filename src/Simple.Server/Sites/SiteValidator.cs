@@ -365,6 +365,14 @@ public static class SiteValidator
             foreach (var v in c.Vehicles)
             {
                 Fits($"vehicles[{v.Id}].id", v.Id, code);
+                // The onboard terminal claims the id as it is written, and the
+                // server pairs only ids it can match exactly (ADR 0007, 0025).
+                if (v.Id.Length <= code && !OnboardTerminals.OnboardTerminalRegistry.IsValidVehicleId(v.Id))
+                {
+                    Add(
+                        $"vehicles[{v.Id}].id",
+                        $"车辆标识最多 {OnboardTerminals.OnboardTerminalRegistry.MaxVehicleIdLength} 个字符，前后不能有空白，也不能含控制字符：车载终端按它原样自称，否则这台车的车载终端无法确认（ADR 0007、0025）。");
+                }
                 Fits($"vehicles[{v.Id}].riot-device-key", v.RiotDeviceKey, code);
                 foreach (var g in v.SlotGroups)
                 {

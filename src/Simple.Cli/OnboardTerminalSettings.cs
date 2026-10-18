@@ -19,8 +19,23 @@ public static class OnboardTerminalSettings
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerOptions.Web) { WriteIndented = true };
 
-    /// <summary>The vehicle a local terminal reports: vehicle-1, vehicle-2…</summary>
-    public static string VehicleId(int index) => $"vehicle-{index.ToString(CultureInfo.InvariantCulture)}";
+    /// <summary>
+    /// The vehicle local terminal <paramref name="index"/> is on: the site's
+    /// vehicle with that number, in the order of its site file, so that the
+    /// server, which confirms only vehicles of its imported configuration,
+    /// can confirm it (ADR 0029).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The site has fewer vehicles.</exception>
+    public static string VehicleId(string siteFile, int index)
+    {
+        var vehicles = Scenarios.Site.Read(siteFile).Vehicles;
+        return index >= 1 && index <= vehicles.Count
+            ? vehicles[index - 1].Id
+            : throw new InvalidOperationException($"{siteFile} has {vehicles.Count.ToString(CultureInfo.InvariantCulture)} vehicles, so there is no terminal {index.ToString(CultureInfo.InvariantCulture)}.");
+    }
+
+    private static string VehicleId(ComponentContext context) =>
+        VehicleId(context.SiteFile ?? throw new InvalidOperationException("up names no site file."), context.Index);
 
     public static async Task WriteAsync(ComponentContext context, HttpClient http, CancellationToken cancellationToken)
     {
@@ -36,7 +51,7 @@ public static class OnboardTerminalSettings
         Directory.CreateDirectory(context.Directory);
         var settings = new
         {
-            VehicleId = VehicleId(context.Index),
+            VehicleId = VehicleId(context),
             Server = endpoint.GetProperty("url").GetString(),
             ServerCertificatePin = endpoint.GetProperty("certificatePin").GetString(),
             IoModule = $"127.0.0.1:{IoSimulatorPorts(context)[Components.IoSimulatorModbusPort].ToString(CultureInfo.InvariantCulture)}",
@@ -69,7 +84,7 @@ public static class OnboardTerminalSettings
             new Uri($"http://127.0.0.1:{server.ToString(CultureInfo.InvariantCulture)}"),
             context.Url(),
             context.AdminPassword ?? throw new InvalidOperationException("The instance has no administrator password."),
-            VehicleId(context.Index),
+            VehicleId(context),
             ConfirmWait,
             cancellationToken);
     }

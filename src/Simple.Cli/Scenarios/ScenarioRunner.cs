@@ -357,7 +357,8 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
                     // brings about can be recorded before it returns (a
                     // stopped terminal is seen gone while it is stopping).
                     var startedAt = DateTimeOffset.UtcNow;
-                    var (ok, detail) = await ExecuteAsync(system, instance, urls, store.ReadAdminPassword(instance), run.Scenario.Initial.Terminals, step.Event.Action, cancellationToken);
+                    var (ok, detail) = await ExecuteAsync(
+                        system, instance, urls, store.ReadAdminPassword(instance), Site.PathOf(repository, run.Scenario.Site), run.Scenario.Initial.Terminals, step.Event.Action, cancellationToken);
                     if (ok)
                     {
                         step.State = "done";
@@ -463,7 +464,7 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
     }
 
     private static async Task<(bool Ok, string Detail)> ExecuteAsync(
-        LocalSystem system, string instance, IReadOnlyDictionary<string, Uri> urls, string? adminPassword, int terminals, ScenarioAction action, CancellationToken cancellationToken)
+        LocalSystem system, string instance, IReadOnlyDictionary<string, Uri> urls, string? adminPassword, string siteFile, int terminals, ScenarioAction action, CancellationToken cancellationToken)
     {
         var a = action.Arguments;
         try
@@ -491,7 +492,7 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
                     Url(urls, Components.Server.Name, "/"),
                     Url(urls, Process("terminal", a, terminals), "/"),
                     adminPassword ?? throw new InvalidOperationException($"instance {instance} has no administrator password"),
-                    OnboardTerminalSettings.VehicleId((int)a["terminal"]!),
+                    OnboardTerminalSettings.VehicleId(siteFile, (int)a["terminal"]!),
                     OnboardTerminalSettings.ConfirmWait,
                     cancellationToken)),
                 "fault-io-module" => await SendAsync(HttpMethod.Put, Url(urls, Process("io-simulator", a, terminals), "/api/v1/modbus-fault"), Camel(a, "terminal"), cancellationToken),

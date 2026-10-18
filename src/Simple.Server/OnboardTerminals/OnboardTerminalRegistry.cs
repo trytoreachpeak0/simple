@@ -328,7 +328,18 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
         }
 
         // The vehicle list is in the database: asked outside the lock.
-        if (!await vehicles.ContainsAsync(vehicleId, cancellationToken))
+        bool listed;
+        try
+        {
+            listed = await vehicles.ContainsAsync(vehicleId, cancellationToken);
+        }
+        catch (Exception e) when (e is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            LogVehicleListUnreadable(logger, e, vehicleId);
+            return PairingOutcome.Unavailable($"The vehicle list could not be read, so vehicle {vehicleId} cannot be confirmed now: {e.Message}");
+        }
+
+        if (!listed)
         {
             return PairingOutcome.Conflict(
                 $"Vehicle {vehicleId} is not in the vehicle list. A terminal claiming it is listed, but it can be confirmed only once the vehicle is in the list (ADR 0029).");
@@ -517,18 +528,28 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
                     p.Link?.RemoteAddress,
                     p.Link?.Version ?? p.Version,
                     p.FirstSeenAt,
-                    InVehicleList: false,
+                    InVehicleList: null,
                     VehicleOnlineWithAnotherKey(p),
                     registrations.Values.FirstOrDefault(r => r.KeyPin == p.KeyPin && r.VehicleId != p.Claim)?.VehicleId,
                     p.CloneSuspected))
                 .ToList();
         }
 
-        // The vehicle list is in the database: asked outside the lock, once per vehicle.
-        var listed = new Dictionary<string, bool>(StringComparer.Ordinal);
+        // The vehicle list is in the database: asked outside the lock, once
+        // per vehicle. With the database unreachable the status still answers
+        // (that is when it matters): whether a vehicle is listed is unknown.
+        var listed = new Dictionary<string, bool?>(StringComparer.Ordinal);
         foreach (var vehicle in waiting.Select(p => p.VehicleId).Distinct(StringComparer.Ordinal))
         {
-            listed[vehicle] = await vehicles.ContainsAsync(vehicle, cancellationToken);
+            try
+            {
+                listed[vehicle] = await vehicles.ContainsAsync(vehicle, cancellationToken);
+            }
+            catch (Exception e) when (e is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                LogVehicleListUnreadable(logger, e, vehicle);
+                listed[vehicle] = null;
+            }
         }
 
         return [.. waiting.Select(p => p with { InVehicleList = listed[p.VehicleId] })];
@@ -726,7 +747,18 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
         {
             try
             {
-                var listed = await vehicles.ContainsAsync(claim, CancellationToken.None);
+                bool? listed;
+                try
+                {
+                    listed = await vehicles.ContainsAsync(claim, CancellationToken.None);
+                }
+                catch (Exception e)
+                {
+                    // Recorded all the same, as not known.
+                    LogVehicleListUnreadable(logger, e, claim);
+                    listed = null;
+                }
+
                 await services.GetRequiredService<EventStore>().AppendAsync(
                     EventTypes.OnboardPending,
                     EventSources.Server,
@@ -1016,6 +1048,9 @@ public sealed partial class OnboardTerminalRegistry : IDisposable
     [LoggerMessage(Level = LogLevel.Warning, Message = "Stream {Connection}: skipped {Count} onboard input(s), {Why}")]
     private static partial void LogInputsSkipped(ILogger logger, string connection, int count, string why);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not read the vehicle list to tell whether vehicle {Vehicle} is in it")]
+    private static partial void LogVehicleListUnreadable(ILogger logger, Exception exception, string vehicle);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Terminal key {KeyPin} confirmed for vehicle {Vehicle} by {Account}")]
     private static partial void LogConfirmed(ILogger logger, string vehicle, string keyPin, string account);
 
@@ -1051,6 +1086,8 @@ public sealed record PairingOutcome(int Status, string? Problem, OnboardTerminal
     public static PairingOutcome Conflict(string problem) => new(StatusCodes.Status409Conflict, problem);
 
     public static PairingOutcome NotSaved(string message) => new(StatusCodes.Status503ServiceUnavailable, $"The change could not be saved: {message}");
+
+    public static PairingOutcome Unavailable(string problem) => new(StatusCodes.Status503ServiceUnavailable, problem);
 }
 
 /// <summary>One stream from one terminal. Its sequence numbers start at 1 on every stream.</summary>
