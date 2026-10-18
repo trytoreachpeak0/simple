@@ -405,8 +405,8 @@ function Remove-OldFiles {
 }
 
 # The names of the keys in one store of a key storage provider (the software
-# one, or the TPM's): .NET opens a key by name but cannot list them. A
-# provider this machine does not have lists nothing.
+# one, or the TPM's): .NET opens a key by name but cannot list them. Failing
+# to open or list the provider throws.
 function Get-KeyNames([string] $provider, [bool] $machine) {
     if (-not ('SimpleRemoteKeyNames' -as [type])) {
         Add-Type -TypeDefinition @'
@@ -433,8 +433,6 @@ public static class SimpleRemoteKeyNames
     {
         IntPtr provider;
         int status = NCryptOpenStorageProvider(out provider, providerName, 0);
-        // NTE_PROV_DLL_NOT_FOUND and the like: no such provider here, so no key in it.
-        if (status != 0 && providerName != "Microsoft Software Key Storage Provider") return new string[0];
         if (status != 0) throw new Win32Exception(status);
         var names = new List<string>();
         IntPtr state = IntPtr.Zero;
@@ -520,9 +518,23 @@ function Clear-Leftovers {
 
         $machine = $sweep.keyStore -eq 'machine'
         $options = $machine ? [Security.Cryptography.CngKeyOpenOptions]::MachineKey : [Security.Cryptography.CngKeyOpenOptions]::None
-        # The software store, and the TPM, where the terminal tests may put a key.
+        # The software store, and the TPM, where the terminal tests may put a
+        # key. A TPM that cannot be opened or listed (none, or access denied)
+        # is said, with why, and the sweep goes on; the software store must list.
         foreach ($provider in 'Microsoft Software Key Storage Provider', 'Microsoft Platform Crypto Provider') {
-            $names = Get-KeyNames $provider $machine | Where-Object {
+            try {
+                $listed = @(Get-KeyNames $provider $machine)
+            }
+            catch {
+                if ($provider -eq 'Microsoft Software Key Storage Provider') {
+                    throw
+                }
+
+                Say "warning: the TPM's key store ($provider) could not be listed, so test keys left there are not cleared: $($_.Exception.InnerException?.Message ?? $_.Exception.Message)"
+                continue
+            }
+
+            $names = $listed | Where-Object {
                 [regex]::IsMatch($_, $sweep.keys) -and
                 -not (Test-SetUp $_ '\ASimple-Server-(.+)\z') -and
                 -not (Test-SetUp $_ '\ASimple-Terminal-(.+)-[0-9]+\z')

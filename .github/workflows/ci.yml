@@ -217,8 +217,9 @@ jobs:
       # deleted it. The machine store is not looked at: tests use it only
       # under simple remote. Besides the software store, the TPM's provider
       # (Microsoft Platform Crypto Provider) is looked at: the terminal tests
-      # put a key there where the machine has a TPM; a machine without one
-      # lists nothing there.
+      # put a key there where the machine has a TPM. A TPM that cannot be
+      # opened or listed (none, as on a VM, or access denied) is a warning
+      # that says why, not a failure; the software store must list.
       # .NET opens a key by name but cannot list keys, so the names come from
       # NCryptEnumKeys; failing to list fails the step.
       - name: No test keys left behind
@@ -250,7 +251,6 @@ jobs:
               {
                   IntPtr provider;
                   int status = NCryptOpenStorageProvider(out provider, providerName, 0);
-                  if (status != 0 && providerName != "Microsoft Software Key Storage Provider") return new string[0];
                   if (status != 0) throw new Win32Exception(status);
                   var names = new List<string>();
                   IntPtr state = IntPtr.Zero;
@@ -278,7 +278,17 @@ jobs:
           '@
           $tests = '\ASimple-(Server-test_[0-9a-f]{12}|Terminal-test_[0-9a-f]{12}-[0-9]+|Test-[0-9a-f]{32})\z'
           foreach ($provider in 'Microsoft Software Key Storage Provider', 'Microsoft Platform Crypto Provider') {
-            $simple = @([UserKeyNames]::List($provider) | Where-Object { $_ -like 'Simple-*' } | Sort-Object)
+            try {
+              $listed = @([UserKeyNames]::List($provider))
+            }
+            catch {
+              if ($provider -eq 'Microsoft Software Key Storage Provider') {
+                throw
+              }
+              Write-Output "::warning::The TPM's key store ($provider) could not be listed, so test keys left there are not seen: $($_.Exception.InnerException?.Message ?? $_.Exception.Message)"
+              continue
+            }
+            $simple = @($listed | Where-Object { $_ -like 'Simple-*' } | Sort-Object)
             $left = @($simple | Where-Object { [regex]::IsMatch($_, $tests) })
             $other = @($simple | Where-Object { -not [regex]::IsMatch($_, $tests) })
             foreach ($name in $left) {

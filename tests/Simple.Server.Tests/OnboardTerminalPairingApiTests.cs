@@ -219,6 +219,12 @@ public sealed class OnboardTerminalPairingApiTests
         using var admin = server.Start();
         await CreateAccountAsync(admin, "p1-engineer", "engineer");
         await CreateAccountAsync(admin, "p1-team-leader", "team-leader");
+        using (var created = await admin.PostAsJsonAsync(
+            new Uri("/api/v1/accounts", UriKind.Relative), new { name = "watch", role = "watch", password = Password }, Cancel))
+        {
+            created.EnsureSuccessStatusCode();
+        }
+
         await using var terminal = await TestTerminal.ConnectAsync(admin);
         await terminal.ReceiveAsync();
         await terminal.ReportAsync();
@@ -226,8 +232,9 @@ public sealed class OnboardTerminalPairingApiTests
 
         using var engineer = (await server.LogInAsync("p1-engineer", Password)).Client!;
         using var teamLeader = (await server.LogInAsync("p1-team-leader", Password)).Client!;
+        using var watch = (await server.LogInAsync("watch", Password, entry: "mcp")).Client!;
         using var overMcp = (await server.LogInAsync("admin", ServerInstance.AdminPassword, entry: "mcp")).Client!;
-        foreach (var (client, sees) in new[] { (admin, true), (engineer, true), (teamLeader, false), (overMcp, false) })
+        foreach (var (client, sees) in new[] { (admin, true), (engineer, true), (teamLeader, false), (watch, false), (overMcp, false) })
         {
             var pending = Assert.Single((await Api.StatusAsync(client)).PendingOnboardTerminals);
             Assert.Equal(terminal.Key.Pin, pending.KeyPin);

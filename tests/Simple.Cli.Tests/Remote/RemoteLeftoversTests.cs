@@ -126,6 +126,8 @@ public sealed class RemoteLeftoversTests
         var tag = Guid.NewGuid().ToString("N")[..8];
         var machine = new DirectoryMachine(sandbox.RemoteRoot) { Sweep = Sweep(tag, sqlServer: null) };
         var name = Key(tag, "a");
+        // Not named as the sweep's pattern says: in the TPM and in the software store alike, it stays.
+        var other = Key(tag, "c");
         try
         {
             if (!TryCreateTpmKey(name, out var problem))
@@ -133,15 +135,22 @@ public sealed class RemoteLeftoversTests
                 Assert.Skip($"No TPM this account can use here: {problem}");
             }
 
+            Assert.True(TryCreateTpmKey(other, out problem), problem);
+            CreateKey(other);
+
             var (exitCode, stderr) = await RunAsync(sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "exit 0");
 
             Assert.True(exitCode == 0, $"exit code {exitCode}: {stderr}");
             Assert.False(TpmKeyExists(name), $"{name} is still in the TPM: {stderr}");
             Assert.Contains($"deleted key {name}", stderr, StringComparison.Ordinal);
+            Assert.True(TpmKeyExists(other), $"{other} was deleted from the TPM: {stderr}");
+            Assert.True(ServerKey.Exists(other, TestKeyStore.Store), $"{other} was deleted from the software store: {stderr}");
         }
         finally
         {
             DeleteTpmKey(name);
+            DeleteTpmKey(other);
+            ServerKey.Delete(other, TestKeyStore.Store);
         }
     }
 
@@ -153,6 +162,8 @@ public sealed class RemoteLeftoversTests
 
         Assert.Contains("Microsoft Software Key Storage Provider", step, StringComparison.Ordinal);
         Assert.Contains("Microsoft Platform Crypto Provider", step, StringComparison.Ordinal);
+        // A TPM that cannot be listed is said, not a red step.
+        Assert.Contains("::warning::The TPM's key store", step, StringComparison.Ordinal);
     }
 
     [Theory]

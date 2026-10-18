@@ -239,7 +239,7 @@ public sealed class OnboardTerminalPairingTests
     }
 
     [Fact]
-    public async Task AReplacedRunComingBackIsAClonEvenBeforeItsFirstFreshReport()
+    public async Task AReplacedRunComingBackIsACloneEvenBeforeItsFirstFreshReport()
     {
         using var setup = new Setup();
         var a = await setup.ConnectConfirmedAsync(KeyA, "vehicle-1", "run-a");
