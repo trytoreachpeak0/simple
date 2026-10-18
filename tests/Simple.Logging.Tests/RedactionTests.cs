@@ -94,6 +94,10 @@ public sealed partial class RedactionTests
     [InlineData("sqlplus simple_reader/Ez-secret@127.0.0.1:1521/MES", "Ez-secret", "sqlplus simple_reader/***@127.0.0.1:1521/MES")]
     [InlineData("connect simple_reader/Tns-secret@MESDB as reader", "Tns-secret", "connect simple_reader/***@MESDB as reader")]
     [InlineData("connect simple_reader/p@ss-At-secret@MESDB", "At-secret", "connect simple_reader/***@MESDB")]
+    [InlineData("connect simple_reader/pa/ss-Slash-secret@MESDB", "Slash-secret", "connect simple_reader/***@MESDB")]
+    [InlineData("sqlplus simple_reader/EzSlashes-secret@//127.0.0.1:1521/MES", "EzSlashes-secret", "sqlplus simple_reader/***@//127.0.0.1:1521/MES")]
+    [InlineData("sqlplus simple_reader/Desc-secret@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=127.0.0.1)(PORT=1521)))", "Desc-secret", "sqlplus simple_reader/***@(DESCRIPTION=(ADDRESS=")]
+    [InlineData("url jdbc:oracle:thin:simple_reader/Jdbc-secret@127.0.0.1:1521/MES", "Jdbc-secret", "url jdbc:oracle:thin:simple_reader/***@127.0.0.1:1521/MES")]
     public void ACredentialInFreeTextIsNotWritten(string message, string secret, string kept)
     {
         using var log = new TestLog();

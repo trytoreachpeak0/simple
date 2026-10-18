@@ -322,10 +322,12 @@ public static partial class Redaction
     [GeneratedRegex(@"(?<name>(?<![A-Za-z0-9+.\-])[A-Za-z][A-Za-z0-9+.\-]{0,30}://[^/\s:@]{1,200}:)[^\s/]+(?=@[^@\s/]*(?:[/?#\s]|$))", Options, TimeoutMilliseconds)]
     private static partial Regex UrlPassword();
 
-    // user/password@database, the login Oracle's own tools take (the MES is Oracle):
-    // the password goes, the user and database stay. As for a URL, the password runs
-    // to the last @ before the database, which ends at a port, a /service or the word's end.
-    [GeneratedRegex(@"(?<name>(?<![\w$#/:.@-])[A-Za-z][\w$#]{0,127}/)[^\s/]{1,200}(?=@(?:[\w.-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])(?::\d{1,5})?(?:[/\s;,)""']|$))", Options, TimeoutMilliseconds)]
+    // user/password@database, the login Oracle's own tools take (the MES is Oracle), also
+    // inside jdbc:oracle:thin:user/password@...: the password goes, the user and database
+    // stay. As for a URL, the password (which may hold / and @) runs to the last @ before
+    // the database: a descriptor "(DESCRIPTION=...", or //host, host or [address], then a
+    // port, a /service or the word's end.
+    [GeneratedRegex(@"(?<name>(?<![\w$#/.@-])[A-Za-z][\w$#]{0,127}/)\S{1,200}(?=@(?:\(|(?://)?(?:[\w.-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])(?::\d{1,5})?(?:[/\s;,)""'?]|$)))", Options, TimeoutMilliseconds)]
     private static partial Regex OracleLogin();
 
     // A name followed by = or :, a --option followed by a space, or a word with colons and

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -14,6 +15,16 @@ namespace Simple.MesGateway.Configuration;
 /// </summary>
 public sealed class GatewaySettingsValidator : IValidateOptions<GatewaySettings>
 {
+    /// <summary>
+    /// The longest the Oracle source may let pass between two rounds. The
+    /// server takes rounds that stop for longer than its <c>StaleAfter</c>
+    /// (Simple.Server's MesGatewaySettings, default 90 s) for stalled; the
+    /// gateway cannot know a value set on the server, so it keeps under that
+    /// default, with 10 s to spare for the server's 2 s poll and 5 s request
+    /// timeout. A server set below 90 s needs the gateway shortened too.
+    /// </summary>
+    public static readonly TimeSpan LongestTimeBetweenRounds = TimeSpan.FromSeconds(80);
+
     public ValidateOptionsResult Validate(string? name, GatewaySettings options)
     {
         var failures = Check(options);
@@ -28,7 +39,7 @@ public sealed class GatewaySettingsValidator : IValidateOptions<GatewaySettings>
 
         if (settings.UsesOracleSource)
         {
-            CheckOracle(settings.Oracle, failures);
+            CheckOracle(settings, failures);
         }
         else if (!settings.UsesFakeSource)
         {
@@ -89,8 +100,9 @@ public sealed class GatewaySettingsValidator : IValidateOptions<GatewaySettings>
     }
 
     /// <summary>The Oracle source's settings. No message here repeats a value that could hold the password.</summary>
-    private static void CheckOracle(OracleSettings oracle, List<string> failures)
+    private static void CheckOracle(GatewaySettings settings, List<string> failures)
     {
+        var oracle = settings.Oracle;
         const string section = GatewaySettings.Section + ":Oracle";
         foreach (var (key, value) in new[] { ("DataSource", oracle.DataSource), ("User", oracle.User), ("Password", oracle.Password) })
         {
@@ -115,6 +127,17 @@ public sealed class GatewaySettingsValidator : IValidateOptions<GatewaySettings>
             {
                 failures.Add($"{section}:{key} must be longer than zero.");
             }
+        }
+
+        // A read can hang right after the longest wait; it must still end, and fail
+        // its round, before the server takes the rounds for stalled (ADR 0027).
+        var longest = (settings.RoundInterval > settings.RetryMaxDelay ? settings.RoundInterval : settings.RetryMaxDelay) + oracle.ReadTimeout;
+        if (longest > LongestTimeBetweenRounds)
+        {
+            failures.Add(
+                $"{section}: the longest time between two rounds, {longest.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)} s, is over {LongestTimeBetweenRounds.TotalSeconds} s. "
+                + $"It is the longer of {GatewaySettings.Section}:RoundInterval and {GatewaySettings.Section}:RetryMaxDelay, plus the read's own limit ({section}:ConnectTimeout + {section}:QueryTimeout + {OracleSettings.ReadTimeoutMargin.TotalSeconds} s). "
+                + "Above it, a hanging MES would show on the server as stalled rounds instead of a failed read. Shorten one of them.");
         }
 
         try

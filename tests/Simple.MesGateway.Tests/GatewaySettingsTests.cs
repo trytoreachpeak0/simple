@@ -75,6 +75,7 @@ public sealed class GatewaySettingsTests
         Assert.Equal(TimeSpan.FromSeconds(30), settings.Oracle.QueryTimeout);
         Assert.Equal(TimeSpan.FromSeconds(15), settings.Oracle.ConnectTimeout);
         Assert.True(settings.Oracle.ReadTimeout + settings.RetryMaxDelay < TimeSpan.FromSeconds(90));
+        Assert.Empty(Check([.. Oracle, ("Simple:Mes:RoundInterval", "00:00:30")]));
     }
 
     [Theory]
@@ -85,6 +86,10 @@ public sealed class GatewaySettingsTests
     [InlineData("Simple:Mes:Oracle:QueryTimeout", "00:00:00", "Simple:Mes:Oracle:QueryTimeout must be longer than zero")]
     [InlineData("Simple:Mes:Oracle:ConnectTimeout", "-00:00:01", "Simple:Mes:Oracle:ConnectTimeout must be longer than zero")]
     [InlineData("Simple:Mes:Oracle:QueryTimeout", "half a minute", "Simple:Mes:Oracle:QueryTimeout 'half a minute' is not a duration")]
+    // A read that hangs after the longest wait must still end, and fail its round, before the server's default 90 s stall threshold.
+    [InlineData("Simple:Mes:RoundInterval", "00:01:00", "the longest time between two rounds, 110 s")]
+    [InlineData("Simple:Mes:Oracle:QueryTimeout", "00:01:00", "the longest time between two rounds, 110 s")]
+    [InlineData("Simple:Mes:Oracle:ConnectTimeout", "00:00:16", "the longest time between two rounds, 81 s")]
     public void AnInvalidOracleSettingIsNamedWithoutThePassword(string key, string value, string message)
     {
         var failures = Check([.. Oracle.Where(o => o.Key != key), (key, value)]);

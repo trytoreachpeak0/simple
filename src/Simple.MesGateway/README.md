@@ -16,7 +16,8 @@ MES 网关是一个单独的小进程，是 SIMPLE 里唯一和客户 MES 打交
 用 Oracle 官方的托管驱动 `Oracle.ManagedDataAccess.Core`（23.9.0，Thin 模式），机器上不用装 Oracle 客户端。这是上一代 MesIngest 在生产上读同一个客户 MES 用的驱动和版本。
 
 - 最多 2 个连接（`OracleMesSource.MaxConnections`）：每轮只读一次、一轮接一轮；第二个连接留给"上一轮超时被放弃、驱动还没放开连接"的情况。
-- 打开连接最多 15 秒（`Simple:Mes:Oracle:ConnectTimeout`），查询最多 30 秒（`Simple:Mes:Oracle:QueryTimeout`，和上一代一样）。整次读取另有一个总时限，等于两者之和再加 5 秒；超过就放弃这次读取，这一轮按读失败算。默认值下，总时限加上最长 30 秒的重试间隔仍小于服务端判定"轮次停住"的 90 秒，所以 MES 卡住时服务端看到的是"读不到 MES"，而不是"网关停了"。
+- 打开连接最多 15 秒（`Simple:Mes:Oracle:ConnectTimeout`），查询最多 30 秒（`Simple:Mes:Oracle:QueryTimeout`，和上一代一样）。整次读取另有一个总时限，等于两者之和再加 5 秒；超过就放弃这次读取，这一轮按读失败算。
+- 两轮之间最长可能隔多久：两轮之间的等待（成功后是 `Simple:Mes:RoundInterval`，失败后最长是 `Simple:Mes:RetryMaxDelay`）取较长的那个，再加上总时限。这个值必须不超过 80 秒，否则网关拒绝启动。原因是服务端超过 90 秒（它的 `StaleAfter` 默认值）没看到新轮次，就判"轮次停住"；留出 10 秒给服务端 2 秒一次的拉取和 5 秒的请求时限，MES 卡住时服务端看到的才是"读不到 MES"。网关不知道服务端实际配的值，按默认的 90 秒算；服务端如果把 `StaleAfter` 调得更短，网关这边也要跟着缩短。默认值是 30 + 50 = 80 秒，正好在线上。
 
 ### 只跑客户批准的那一条查询
 
@@ -46,7 +47,7 @@ MES 网关是一个单独的小进程，是 SIMPLE 里唯一和客户 MES 打交
 
 ### 凭据
 
-地址和账号只从仓库外来，由人为那一次运行选定；仓库里的 `appsettings*.json` 不带任何 `Simple:Mes:Oracle` 设置（`GatewaySettingsTests` 检查）。快照里的失败原因和程序日志都经过 `Simple.Logging` 的脱敏：连接串里的 `Password=…`、`Simple__Mes__Oracle__Password=…`、Oracle 工具常用的 `user/password@库` 写法都只留下 `***`。
+地址和账号只从仓库外来，由人为那一次运行选定；仓库里的 `appsettings*.json` 不带任何 `Simple:Mes:Oracle` 设置（`GatewaySettingsTests` 检查）。快照里的失败原因和程序日志都经过 `Simple.Logging` 的脱敏：连接串里的 `Password=…`、`Simple__Mes__Oracle__Password=…`、Oracle 工具常用的 `user/password@库` 写法（库写成 `host:port/service`、`//host:port/service`、TNS 别名或 `(DESCRIPTION=…)` 都算，也包括 `jdbc:oracle:thin:user/password@…`，密码里带 `/` 或 `@` 也一样），密码都只留下 `***`。
 
 ## 对真 MES 跑一次只读读取
 
@@ -59,7 +60,7 @@ MES 网关是一个单独的小进程，是 SIMPLE 里唯一和客户 MES 打交
      "Simple": {
        "Mes": {
          "Source": "Oracle",
-         "RoundInterval": "00:01:00",
+         "RoundInterval": "00:00:30",
          "Oracle": {
            "DataSource": "<host>:<port>/<service>",
            "User": "<只读账号>"
@@ -70,23 +71,29 @@ MES 网关是一个单独的小进程，是 SIMPLE 里唯一和客户 MES 打交
    }
    ```
 
-   `DataSource` 只写库的地址（`host:port/service` 或 TNS 描述符），不要写成 `user/password@…`，网关会拒绝。`RoundInterval` 是两轮成功读取之间的等待；只是试读的话，放长一些对 MES 更客气。
+   `DataSource` 只写库的地址（`host:port/service` 或 TNS 描述符），不要写成 `user/password@…`，网关会拒绝。`RoundInterval` 是两轮成功读取之间的等待；只是试读的话，放长一些对 MES 更客气，但最长 30 秒（默认时限下；见上文"两轮之间最长可能隔多久"）。
 
-2. **在同一个 PowerShell 7 窗口里输入密码**，只放进这个进程的环境变量，不落盘：
+2. **先构建**（在仓库根目录，这时环境里还没有密码）。构建会留下常驻的 MSBuild 和编译服务进程，先构建、再输密码，它们就不会带着密码变量：
+
+   ```powershell
+   dotnet build src/Simple.MesGateway -c Release
+   ```
+
+3. **在同一个 PowerShell 7 窗口里输入密码**，只放进这个窗口的环境变量，不落盘：
 
    ```powershell
    $env:Simple__Mes__Oracle__Password = Read-Host -MaskInput 'MES password'
    ```
 
-3. **启动网关**（在仓库根目录）：
+4. **启动网关，不再构建**：
 
    ```powershell
-   dotnet run --project src/Simple.MesGateway -c Release -- --Simple:SettingsFile=C:/simple-local/mes-gateway.json
+   dotnet run --project src/Simple.MesGateway -c Release --no-build -- --Simple:SettingsFile=C:/simple-local/mes-gateway.json
    ```
 
    配置有误时网关拒绝启动，退出码 2，并说出是哪一项（不会显示密码）。
 
-4. **读快照**：
+5. **读快照**：
 
    ```powershell
    Invoke-RestMethod http://127.0.0.1:5190/api/v1/snapshot
@@ -94,7 +101,7 @@ MES 网关是一个单独的小进程，是 SIMPLE 里唯一和客户 MES 打交
 
    `round` 从 1 起每读一次加一；`succeeded: true` 时 `rows` 是这一轮的全部行，失败时看 `failure`。
 
-5. **读到想要的结果就停**：在网关窗口按 Ctrl+C，然后 `Remove-Item Env:Simple__Mes__Oracle__Password`。程序日志在第 1 步设的目录里，可以拿来对照；里面不应出现密码，出现了就是缺陷，请报告。
+6. **读到想要的结果就停**：在网关窗口按 Ctrl+C，然后 `Remove-Item Env:Simple__Mes__Oracle__Password`。程序日志在第 1 步设的目录里，可以拿来对照；里面不应出现密码，出现了就是缺陷，请报告。
 
 ## 不在这里做的
 

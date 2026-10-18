@@ -35,6 +35,7 @@ public sealed class RedactionTimeTests
     [InlineData("colons-then-key")]
     [InlineData("配对码-spaces")]
     [InlineData("slash-at")]
+    [InlineData("colon-slash-at")]
     public void AMegabyteLongValueIsRedactedInLinearTime(string shape)
     {
         var text = shape switch
@@ -50,6 +51,7 @@ public sealed class RedactionTimeTests
             "pairing-spaces" => "pairing code" + new string(' ', 1024 * 1024),
             "配对码-spaces" => "配对码" + new string(' ', 1024 * 1024),
             "slash-at" => string.Concat(Enumerable.Repeat("ab/c@ ", 175_000)),
+            "colon-slash-at" => string.Concat(Enumerable.Repeat("a:b/", 262_144)) + "@ ",
             _ => string.Concat(Enumerable.Repeat("pass word token key ", 52_000)),
         };
 

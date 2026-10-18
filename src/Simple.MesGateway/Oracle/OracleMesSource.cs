@@ -31,6 +31,9 @@ public sealed class OracleMesSource(IOptions<GatewaySettings> settings, DbProvid
     /// </summary>
     public const int MaxConnections = 2;
 
+    /// <summary>ORA-01013, "user requested cancel of current operation": what Oracle reports when a command timeout runs out.</summary>
+    private const int UserRequestedCancel = 1013;
+
     public async Task<MesReadResult> ReadAsync(CancellationToken cancellationToken)
     {
         var oracle = settings.Value.Oracle;
@@ -78,6 +81,8 @@ public sealed class OracleMesSource(IOptions<GatewaySettings> settings, DbProvid
             MinPoolSize = 0,
             MaxPoolSize = MaxConnections,
             ConnectionTimeout = WholeSeconds(oracle.ConnectTimeout),
+            // Never part of a transaction something else started: the source only reads.
+            Enlist = "false",
         }.ConnectionString;
         await connection.OpenAsync(cancellationToken);
 
@@ -108,10 +113,10 @@ public sealed class OracleMesSource(IOptions<GatewaySettings> settings, DbProvid
 
             return new MesReadResult(columns, rows);
         }
-        catch (DbException e) when (!cancellationToken.IsCancellationRequested && e.Message.StartsWith("ORA-01013", StringComparison.Ordinal))
+        catch (OracleException e) when (e.Number == UserRequestedCancel && !cancellationToken.IsCancellationRequested)
         {
             // Oracle stops a query that runs past the command timeout and reports it as a cancel.
-            throw new TimeoutException($"The MES query did not finish within {command.CommandTimeout} s: {e.Message}", e);
+            throw new TimeoutException($"The MES query did not finish within {command.CommandTimeout} s; Oracle stopped it (ORA-01013).", e);
         }
     }
 

@@ -80,6 +80,8 @@ public sealed class OracleMesSourceTests
         Assert.Equal("12", connection["Connection Timeout"]);
         Assert.Equal("2", connection["Max Pool Size"]);
         Assert.Equal("True", connection["Pooling"].ToString(), ignoreCase: true);
+        // Never part of a transaction someone else started: the source only reads.
+        Assert.Equal("False", connection["Enlist"].ToString(), ignoreCase: true);
     }
 
     [Fact]
@@ -145,12 +147,23 @@ public sealed class OracleMesSourceTests
     [Fact]
     public async Task OracleCancellingTheQueryAtItsTimeoutIsATimeout()
     {
-        provider.Execute = (_, _) => throw new FakeDbException("ORA-01013: user requested cancel of current operation");
+        provider.Execute = (_, _) => throw OracleErrors.Create(1013, "user requested cancel of current operation");
 
         var failure = await Assert.ThrowsAsync<TimeoutException>(() => Source().ReadAsync(Cancel));
 
         Assert.Contains("30 s", failure.Message, StringComparison.Ordinal);
         Assert.Contains("ORA-01013", failure.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>Only Oracle's error number 1013 means its command timeout ran out; another error that mentions it is passed on as it is.</summary>
+    [Fact]
+    public async Task OnlyOraclesErrorNumberMakesATimeout()
+    {
+        provider.Execute = (_, _) => throw OracleErrors.Create(12541, "Cannot connect. ORA-01013 mentioned in passing");
+
+        var failure = await Assert.ThrowsAsync<global::Oracle.ManagedDataAccess.Client.OracleException>(() => Source().ReadAsync(Cancel));
+
+        Assert.Equal(12541, failure.Number);
     }
 
     [Fact]
@@ -187,7 +200,7 @@ public sealed class OracleMesSourceTests
                 provider.Open = _ => throw new FakeDbException($"Connection failed: User Id=simple_reader;Password={Secret};Data Source=127.0.0.1:1521/FAKEMES");
                 break;
             case "timeout":
-                provider.Execute = (_, _) => throw new FakeDbException("ORA-01013: user requested cancel of current operation");
+                provider.Execute = (_, _) => throw OracleErrors.Create(1013, "user requested cancel of current operation");
                 break;
             case "six columns":
                 provider.Result = FakeDbProvider.Table([.. MesColumns.All.SkipLast(1)], ["T", "S", "A", "E", "ST", null]);
