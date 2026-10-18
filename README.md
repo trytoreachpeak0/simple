@@ -74,6 +74,22 @@ dotnet test --solution simple.slnx
 
 测试里起的服务端，其证书钥匙默认放在当前用户的密钥存储里。环境变量 `SIMPLE_TEST_SERVER_KEY_STORE` 可以改成 `Machine`（本机级存储，建和删都要管理员）。`simple remote` 在远端运行时会设成 `Machine`，因为经 SSH 密钥登录的会话用不了用户级存储。取 `User`、`Machine` 以外的值时测试直接失败，不会悄悄改用用户级存储。
 
+## 本地起停与场景
+
+给 AI 会话的完整上手说明是 [`docs/agents/testing.md`](docs/agents/testing.md)（英文）：从起系统、看状态，到把一个问题写成会判"不成立"的场景。人用的是同一套命令，最短的一圈是这样：
+
+```
+./simple remote scenario run infrastructure-up   # 先看系统能起来：退出码 0，判定 holds
+./simple scenario list                           # 现有的场景、各自证明什么
+./simple scenario validate <新场景>               # 新写的 scenarios/<新场景>.yaml 格式对不对
+./simple remote scenario run <新场景>             # 问题还在时退出码 10，判定 does-not-hold
+```
+
+- **重活去远端**：起整套系统、跑场景、全量编译和测试都经 `simple remote` 送到 `SIMPLE_REMOTE` 指的远端机器上（见下面的"把重活送到远端机器上跑"）；本机只跑带 `--project` 加筛选的定向测试、`scenario list` 和 `validate`。
+- **四种判定**：成立 0、不成立 10、判不了 11、不适用 12。判不了永远不算通过：它说明有期望看不到，或场景没能按写的那样驱动，原因在证据目录 `result.json` 的 `driveFailure` 和每个期望的 `reason` 里。`result.json` 的 `teardown.stopped` 和 `teardown.kept` 都为 `false` 时，系统没停下来，这次运行算失败（退出码 1），不管判定是什么；带 `--keep-up` 时 `kept` 为 `true`，系统本来就该留着。
+- **场景格式**、事件和期望的写法、证据目录里有什么，见 [`scenarios/README.md`](scenarios/README.md)。
+- **只起假的**：`simple up`、`simple scenario run` 和 `simple remote` 只起本机的一套假系统（假 RIoT、假 MES），没有任何指向真实系统的开关；契约测试默认、CI 上永远只对假 RIoT 跑（ADR 0047，见"假 RIoT 与 RIoT 契约测试"）。
+
 ## 在本机起停整套系统
 
 仓库根的 `simple.ps1` 先编译命令行本身（安静地编译，失败才显示输出），再把参数原样交给它。在 PowerShell 7 里：
@@ -124,17 +140,18 @@ dotnet test --solution simple.slnx
 ./simple remote test                                # 全量测试；后面的参数原样交给 dotnet test（MTP 选项）
 ./simple remote test --project tests/Simple.Cli.Tests --filter-class "*CommandLineTests"   # 只跑一个类时要带 --project
 ./simple remote up                                  # 远端起整套系统，返回后系统继续运行
+./simple remote scenario run infrastructure-up      # 远端跑一个场景，退出码就是判定；还有 list、validate
 ./simple remote status                              # 还有 down、events、logs，转给远端那份 simple
 ./simple remote exec -- dotnet --info               # 在远端的工作树里跑任意命令
-./simple remote forget                              # 停掉、删库、删远端目录；删 worktree 之前用
+./simple remote forget                              # 停掉、删库、删远端目录（场景用的实例一起）；删 worktree 之前用
 ```
 
 - **只跑一个类时用 `--project`**：`simple remote test` 默认对整个解决方案跑 `dotnet test --solution simple.slnx`。这时按类过滤（`--filter-class`），其余测试项目一个测试都匹配不到，各自以 8（一个测试都没跑到）结束，整次运行也就以 8 结束。带上 `--project <测试项目路径>`（必须在本仓库里），就只跑那一个项目，跑通了以 0 结束。
 - **跑的恰好是本机这棵树**：每次先把工作树做成一个快照提交，包括没提交的改动和还没 `git add` 的新文件，按 `.gitignore` 排除被忽略的文件；用的是一份临时索引，不动真正的索引和工作区。作者、时间都是固定值，所以同一棵树每次得到同一个提交号；工作树干净时就用 `HEAD` 本身。远端检出这个确切的提交再跑，开头和结尾各打印一行：提交号、基于哪个 `HEAD`、几个未提交的文件、哪台机器。
 - **怎么送**：只把 `origin/main` 之后的部分（本地没推送的提交加快照）打成 git bundle，经 scp 送到远端的裸仓库缓存；远端缺前置对象时从 origin 拉一次（拉进这个实例自己的 `refs/simple-remote-origin/<实例名>`，不和别的实例共用，被断线打断留下的锁下次运行自己清掉；`forget` 时删掉），还不行就送完整历史。远端已经有这个提交就什么都不送。不往 GitHub 推任何分支。快照里新增了超过 10 MiB 的文件时列出来并拒绝发送。
 - **远端的目录**：`C:\simple-remote\` 下有 `repo.git`（所有实例共用的对象缓存）、`wt\<实例名>`（每个 worktree 一个检出目录）、`runs\<实例名>`（每次运行的结果，保留最近 20 次）、`locks`、`slots`。实例名与本机相同，所以远端的 `simple up` 也按本机那套实例规则分开端口和库。**注意**：本机上两个文件夹同名的 clone（例如两台机器上都叫 `repo`）到了远端是同一个实例、同一个目录，本机"实例是从另一个 clone 起的"那道保护在远端不起作用，后跑的会改掉先跑的检出；这种情况下用 `--instance` 给其中一个起别的名字。检出时清掉残留文件，但保留被忽略的 `bin/`、`obj/`、`artifacts/`，编译是增量的。
-- **排队**：同一个实例同一时刻只跑一条远程命令，后来的等着，并打印在等谁；`build`、`test`、`exec`、`up` 还要占用整机 4 个名额中的一个。等 30 分钟还轮不到就以退出码 22 结束。
-- **结果**：输出实时回传；退出码是远端命令自己的（例如测试的 2、8 原样返回）。`simple remote` 自己的失败用 20（没跑成：git、ssh、scp 出错，或远端在起命令之前失败）、21（快照含大文件，没送）、22（等不到实例或名额）；`--json` 时标准输出是一个 `{exitCode, error, result}`，`result` 里有提交号、`HEAD`、未提交文件数和远端退出码。`build`、`test`、`exec` 的输出和测试结果（TRX）拷回本机 `artifacts/remote/<实例名>/<时刻>-<提交号前 8 位>/`；`exec` 的命令把文件写进 `%SIMPLE_REMOTE_RUN%` 也会拷回来。
+- **排队**：同一个实例同一时刻只跑一条远程命令，后来的等着，并打印在等谁；`build`、`test`、`scenario run`、`exec`、`up` 还要占用整机 4 个名额中的一个。等 30 分钟还轮不到就以退出码 22 结束。
+- **结果**：输出实时回传；退出码是远端命令自己的（例如测试的 2、8 原样返回）。`simple remote` 自己的失败用 20（没跑成：git、ssh、scp 出错，或远端在起命令之前失败）、21（快照含大文件，没送）、22（等不到实例或名额）；`--json` 时标准输出是一个 `{exitCode, error, result}`，`result` 里有提交号、`HEAD`、未提交文件数和远端退出码。`build`、`test`、`exec`、`scenario run` 的输出、测试结果（TRX）和场景的证据目录拷回本机 `artifacts/remote/<实例名>/<时刻>-<提交号前 8 位>/`；`exec` 的命令把文件写进 `%SIMPLE_REMOTE_RUN%` 也会拷回来。
 - **远端也只起本机的假系统**：远端的命令把 `SIMPLE_SQLSERVER` 和 `SIMPLE_TEST_SQLSERVER` 指向那台机器上专给它用的命名实例 `.\SIMPLE_DEV`，`simple` 在那台机器上照样只接受本机的 LocalDB 或命名实例；`simple remote` 没有任何指向真实系统的开关。
 - **断线**：远端那台机器的 sshd 在笔记本这头断开后，既不结束会话，也不结束会话里的进程（simple01 上 2026-10-17 实测）。所以本机每 5 秒往 ssh 写一行心跳，远端每 0.5 秒检查一次：察觉断开后，结束这次运行的整棵进程树（包括它起的子进程、`up` 已经起来的部件），然后退出，实例锁和名额随之放掉。命令开跑之前从 origin 拉取、导入 bundle 这些可能要几分钟的 git 操作也一样在检查之列，断开后连 git 一起结束。察觉要多久：
   - 强杀本机的 `simple` 或 ssh：约 1–2 秒（远端读到输入结束）；
@@ -142,8 +159,8 @@ dotnet test --solution simple.slnx
   - 断网：远端在最后一次心跳之后约 30 秒结束运行；本机 ssh 也在约 30 秒内放弃（`ServerAliveInterval=10` × 3），以 20 结束。
 
   `up` 已经成功返回之后再断开不影响它起的系统：部件脱离 SSH 会话继续运行，用 `simple remote down` 停。
-- **残留自动清理**：被断线结束的运行来不及让测试收尾，会在远端留下测试库（`.\SIMPLE_DEV` 上的 `Simple_test_<12 位十六进制>`）和本机级存储里的测试钥匙（`Simple-Server-test_<12 位十六进制>`、`Simple-Test-<32 位十六进制>`）。`build`、`test`、`exec`、`up` 开跑之前，远端先看整机 4 个名额是不是都空着：都空着说明没有别的测试在跑，就占住全部名额，删掉名字恰好是上面这几种格式的库和钥匙，逐个打印删了什么，再放开名额照常排队；有名额被占就这次不清，留给下一次。只认这几种测试命名；worktree 实例自己的库 `Simple_<实例名>` 和钥匙 `Simple-Server-<实例名>` 一般不是这种格式，即使实例名恰好像测试实例（例如 `--instance test_0123456789ab`），只要远端有这个实例的检出目录 `wt\<实例名>`，它的库和钥匙也不删。清理出错只打印一行，不影响这次运行。所以那台机器的 `.\SIMPLE_DEV` 和本机级钥匙存储只给 `simple remote` 用：不经 `simple remote`、直接 SSH 上去跑测试，它的库和钥匙可能被当成残留删掉。另外，每次运行（任何命令）取得实例锁后，还删掉 7 天没有被任何运行用过的旧版 agent 脚本（`bin\agent-*.ps1`，每个版本的命令行装一份自己的；还在用旧版的 clone 下次会自动再拷一份）和一天以前没导入完的 bundle（`incoming\*.bundle`）。
-- **远端的服务端钥匙在本机级存储里**：经 SSH 密钥登录的会话用不了按用户加密的 Windows 存储（DPAPI），所以 `simple remote up` 让服务端把钥匙放在那台机器的本机级密钥存储里。**本机级的钥匙只有管理员能建、能删**，所以远端的 SSH 账户必须是那台机器的本机管理员。`simple remote down --reset` 和 `forget` 按 `up` 时的记录把它删掉。
+- **残留自动清理**：被断线结束的运行来不及让测试收尾，会在远端留下测试库（`.\SIMPLE_DEV` 上的 `Simple_test_<12 位十六进制>`）和本机级存储里的测试钥匙（`Simple-Server-test_<12 位十六进制>`、`Simple-Test-<32 位十六进制>`）。`build`、`test`、`scenario run`、`exec`、`up` 开跑之前，远端先看整机 4 个名额是不是都空着：都空着说明没有别的测试在跑，就占住全部名额，删掉名字恰好是上面这几种格式的库和钥匙，逐个打印删了什么，再放开名额照常排队；有名额被占就这次不清，留给下一次。只认这几种测试命名；worktree 实例自己的库 `Simple_<实例名>` 和钥匙 `Simple-Server-<实例名>` 一般不是这种格式，即使实例名恰好像测试实例（例如 `--instance test_0123456789ab`），只要远端有这个实例的检出目录 `wt\<实例名>`，它的库和钥匙也不删。清理出错只打印一行，不影响这次运行。所以那台机器的 `.\SIMPLE_DEV` 和本机级钥匙存储只给 `simple remote` 用：不经 `simple remote`、直接 SSH 上去跑测试，它的库和钥匙可能被当成残留删掉。另外，每次运行（任何命令）取得实例锁后，还删掉 7 天没有被任何运行用过的旧版 agent 脚本（`bin\agent-*.ps1`，每个版本的命令行装一份自己的；还在用旧版的 clone 下次会自动再拷一份）和一天以前没导入完的 bundle（`incoming\*.bundle`）。
+- **远端的服务端钥匙在本机级存储里**：经 SSH 密钥登录的会话用不了按用户加密的 Windows 存储（DPAPI），所以 `simple remote up` 让服务端把钥匙放在那台机器的本机级密钥存储里。**本机级的钥匙只有管理员能建、能删**，所以远端的 SSH 账户必须是那台机器的本机管理员。`simple remote down --reset` 和 `forget` 按 `up` 时的记录把它删掉；`simple remote scenario run` 的服务端也一样放在本机级存储里，`forget` 连场景用的实例 `<实例名>-scenario` 一起重置，删掉它的库和钥匙。
 
 为什么手写这一层：现成的同步工具（Mutagen、Syncthing 等）都是持续同步型的，说不出某一次运行看到的是哪个状态的树，"同步到一半就开跑"正是要避免的；`simple remote` 只是 git、ssh、scp 之上的一层薄胶水，"这次跑的是哪棵树"由提交号保证。
 
