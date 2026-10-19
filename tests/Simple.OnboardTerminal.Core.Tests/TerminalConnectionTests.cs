@@ -27,6 +27,7 @@ public sealed class TerminalConnectionTests
         Assert.Equal("vehicle-7", first.VehicleId);
         Assert.Equal(1UL, first.Seq);
         Assert.Equal(terminal.Connection.Version, first.TerminalVersion);
+        Assert.Equal(terminal.Key.Pin, Assert.Single(server.ClientPins));
 
         // A scan typed like a scanner reaches the next report as it was typed…
         Assert.Equal("LOT-0001", Assert.Single(terminal.Inputs.Type("LOT-0001\r\n")!).Text);
@@ -209,6 +210,41 @@ public sealed class TerminalConnectionTests
         Assert.All(server.Reports, r => Assert.False(r.HasIoReadAgeMs));
     }
 
+    [Fact]
+    public async Task ItPresentsItsOwnKeyOnEveryStreamAndKeepsItsRunIdAcrossReconnects()
+    {
+        await using var server = new FakeServer();
+        await server.StartAsync();
+        await using var terminal = new Terminal(server.Url, server.Pin);
+        await Until(() => server.Reports.Count >= 2);
+
+        await server.StopAsync();
+        await server.StartAsync();
+        await Until(() => server.ClientPins.Count >= 2 && terminal.Connection.Status.State == TerminalState.Connected, seconds: 30);
+
+        Assert.All(server.ClientPins, pin => Assert.Equal(terminal.Key.Pin, pin));
+        Assert.Matches("^[0-9a-f]{32}$", terminal.Connection.RunId);
+        Assert.All(server.Reports, r => Assert.Equal(terminal.Connection.RunId, r.RunId));
+    }
+
+    [Fact]
+    public async Task AKeyInTheTpmGetsThroughTheHandshakeToo()
+    {
+        var key = TerminalKey.OpenOrCreate(TestKeys.NewName(), TestKeyStore.IsMachine, tryTpm: true, out var tpmProblem);
+        if (!key.InTpm)
+        {
+            TestKeys.Delete(key);
+            Assert.Skip($"No TPM this account can use here: {tpmProblem}");
+        }
+
+        await using var server = new FakeServer();
+        await server.StartAsync();
+        await using var terminal = new Terminal(server.Url, server.Pin, key: key);
+
+        await Until(() => terminal.Connection.Status.State == TerminalState.Connected);
+        Assert.Equal(key.Pin, Assert.Single(server.ClientPins));
+    }
+
     private static async Task Until(Func<bool> condition, double seconds = 10)
     {
         var deadline = DateTime.UtcNow.AddSeconds(seconds);
@@ -219,22 +255,26 @@ public sealed class TerminalConnectionTests
         }
     }
 
-    /// <summary>A running terminal connection with its log kept in memory.</summary>
+    /// <summary>A running terminal connection with its own key (deleted afterwards) and its log kept in memory.</summary>
     private sealed class Terminal : IAsyncDisposable
     {
         private readonly CancellationTokenSource stop = new();
         private readonly ILoggerFactory loggers;
 
-        public Terminal(string url, string pin, TimeProvider? time = null, IPEndPoint? ioModule = null)
+        /// <param name="key">The terminal's key, deleted with the terminal; a new one in the software store when none is given.</param>
+        public Terminal(string url, string pin, TimeProvider? time = null, IPEndPoint? ioModule = null, TerminalKey? key = null)
         {
             loggers = LoggerFactory.Create(logging => logging.AddProvider(new ListLogger(Log)));
             Io = new IoModuleReader(ioModule, TimeProvider.System, loggers);
-            Connection = new TerminalConnection(new TerminalSettings("vehicle-7", url, pin), Inputs, time ?? TimeProvider.System, loggers, io: Io);
+            Key = key ?? TestKeys.Create();
+            Connection = new TerminalConnection(new TerminalSettings("vehicle-7", url, pin), Key.Certificate, Inputs, time ?? TimeProvider.System, loggers, io: Io);
             Reading = Io.RunAsync(stop.Token);
             Running = Connection.RunAsync(stop.Token);
         }
 
         public IoModuleReader Io { get; }
+
+        public TerminalKey Key { get; }
 
         public Task Reading { get; }
 
@@ -255,6 +295,7 @@ public sealed class TerminalConnectionTests
             await Reading;
             Connection.Dispose();
             Io.Dispose();
+            TestKeys.Delete(Key);
             loggers.Dispose();
             stop.Dispose();
         }

@@ -64,6 +64,7 @@ expected-verdict: holds                    # 可选，默认 holds
 
 initial:                                   # 初始状态，整段可省
   terminals: 1                             # 几台车有车载终端（各带一个 IO 模拟器），不能多于厂区的车辆数；默认 0
+  confirm-terminals: false                 # 终端起来后是否已经确认（ADR 0025）；默认 true，false 时各台停在"待确认"、等 confirm-terminal
   fake-riot:
     speedup: 10                            # 假 RIoT 的倍速（FakeRiot:Timing:Speedup），默认 1
     vehicles:                              # 开始前改假 RIoT 的车
@@ -138,6 +139,7 @@ expectations:                              # 至少一个
 | `fail-riot-creates` | `times`，可选 `order-made` | 假 RIoT 接下来 times 次建单回 00002（注入错误码） |
 | `scan` | `terminal`、`text` | 车旁的人在第 n 台终端扫码（像扫码枪一样以回车结尾） |
 | `press` | `terminal`、`button` | 车旁的人在第 n 台终端按键 |
+| `confirm-terminal` | `terminal` | 车旁的工程师核对第 n 台终端屏上的配对码和服务端待确认列表里的一致后，经接口确认它就是它自称的那台车（ADR 0025、0029） |
 | `fault-io-module` | `terminal`、`mode`（`none`、`no-response`、`disconnect`、`delay`），可选 `delay-ms` | 第 n 台终端的 IO 模块不应答、断连接或变慢；`none` 解除 |
 | `auto-respond` | `terminal`、`action`（`load`、`unload`）、`doors`，可选 `act-seconds`、`close-seconds`、`within-seconds` | 仓前的人：接下来打开的 doors 扇门，各放进或取出货物后关门（IO 模拟器的自动应答） |
 | `stop-process` | `process` | 停掉系统里的一个进程，名字和 `simple status` 里的一样（一台终端时叫 `terminal`，多台时叫 `terminal-1`……）；例如车载终端掉线 |
@@ -179,6 +181,7 @@ expectations:                              # 至少一个
 | --- | --- | --- |
 | `infrastructure-up` | 空系统起来后两台车载终端在线、RIoT 已连上、MES 可达 | holds |
 | `terminal-disconnect` | 车载终端掉线，服务端记下断线、状态变成未连接、报告过期 | holds |
+| `terminal-pairing` | 新车载终端进待确认、屏上和服务端是同一个配对码，上报不被采用；经接口确认后上报被采用 | holds |
 | `mes-source-fails-and-recovers` | MES 来源读取失败，服务端记下不可用，网关重试成功后记下恢复 | holds |
 | `io-module-unreadable` | IO 模块不应答，服务端记下读不到；解除后记下又读得到；起始有货的仓位光幕读 0 | holds |
 | `deliberately-wrong` | 期望故意写反，证明运行器真的会判"不成立" | does-not-hold |

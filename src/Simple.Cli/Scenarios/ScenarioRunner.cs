@@ -279,6 +279,7 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
             FakeRiotSpeedup: scenario.Initial.FakeRiotSpeedup,
             FakeMesSeedFile: seed,
             Cargo: scenario.Initial.Cargo,
+            ConfirmTerminals: scenario.Initial.ConfirmTerminals,
             Site: scenario.Site);
         var up = await system.UpAsync(instance, sqlServer, options, UpTimeout, cancellationToken);
         evidence.Write("up", new { up.ExitCode, up.Error, up.Result });
@@ -356,7 +357,8 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
                     // brings about can be recorded before it returns (a
                     // stopped terminal is seen gone while it is stopping).
                     var startedAt = DateTimeOffset.UtcNow;
-                    var (ok, detail) = await ExecuteAsync(system, instance, urls, run.Scenario.Initial.Terminals, step.Event.Action, cancellationToken);
+                    var (ok, detail) = await ExecuteAsync(
+                        system, instance, urls, store.ReadAdminPassword(instance), Site.PathOf(repository, run.Scenario.Site), run.Scenario.Initial.Terminals, step.Event.Action, cancellationToken);
                     if (ok)
                     {
                         step.State = "done";
@@ -462,7 +464,7 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
     }
 
     private static async Task<(bool Ok, string Detail)> ExecuteAsync(
-        LocalSystem system, string instance, IReadOnlyDictionary<string, Uri> urls, int terminals, ScenarioAction action, CancellationToken cancellationToken)
+        LocalSystem system, string instance, IReadOnlyDictionary<string, Uri> urls, string? adminPassword, string siteFile, int terminals, ScenarioAction action, CancellationToken cancellationToken)
     {
         var a = action.Arguments;
         try
@@ -485,6 +487,14 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
                     new JsonObject { ["text"] = (string)a["text"]! + "\r" },
                     cancellationToken),
                 "press" => await SendAsync(HttpMethod.Post, Url(urls, Process("terminal", a, terminals), "/test/press"), Camel(a, "terminal"), cancellationToken),
+                "confirm-terminal" => (true, await OnboardTerminalSettings.ConfirmAsync(
+                    Http,
+                    Url(urls, Components.Server.Name, "/"),
+                    Url(urls, Process("terminal", a, terminals), "/"),
+                    adminPassword ?? throw new InvalidOperationException($"instance {instance} has no administrator password"),
+                    OnboardTerminalSettings.VehicleId(siteFile, (int)a["terminal"]!),
+                    OnboardTerminalSettings.ConfirmWait,
+                    cancellationToken)),
                 "fault-io-module" => await SendAsync(HttpMethod.Put, Url(urls, Process("io-simulator", a, terminals), "/api/v1/modbus-fault"), Camel(a, "terminal"), cancellationToken),
                 "auto-respond" => await SendAsync(HttpMethod.Post, Url(urls, Process("io-simulator", a, terminals), "/api/v1/auto-responder"), Camel(a, "terminal"), cancellationToken),
                 "stop-process" => await system.StopProcessAsync(instance, (string)a["process"]!, cancellationToken) is { } stopped
@@ -493,7 +503,7 @@ public sealed class ScenarioRunner(string repository, InstanceStore store, TextW
                 _ => (false, $"no action {action.Kind}"),
             };
         }
-        catch (Exception e) when (e is HttpRequestException || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
+        catch (Exception e) when (e is HttpRequestException or InvalidOperationException || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
             return (false, e.Message);
         }

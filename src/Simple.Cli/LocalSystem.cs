@@ -126,6 +126,23 @@ public sealed partial class LocalSystem(
             return Outcome.Fail(ExitCodes.Usage, $"Site '{options.Site}' has no {Path.Combine("sites", options.Site, Scenarios.Site.FileName)} in {Repository}.");
         }
 
+        // Each local terminal is one of the site's vehicles (its id from the
+        // site file): the server confirms no terminal for another (ADR 0029).
+        try
+        {
+            var vehicles = Scenarios.Site.Read(siteFile).Vehicles.Count;
+            if (options.Terminals > vehicles)
+            {
+                return Outcome.Fail(
+                    ExitCodes.Usage,
+                    $"Site '{options.Site}' has {vehicles} vehicles, so up starts at most {vehicles} terminals, not {options.Terminals}: each local terminal is one of the site's vehicles.");
+            }
+        }
+        catch (Exception e) when (e is InvalidDataException or IOException)
+        {
+            return Outcome.Fail(ExitCodes.Usage, $"Site '{options.Site}': {e.Message}");
+        }
+
         // Kept after down, so down --reset finds the database where up made it
         // even when the caller's SIMPLE_SQLSERVER has changed since, and the
         // server key in the store it was made in.
@@ -246,6 +263,24 @@ public sealed partial class LocalSystem(
                     var stopped = await StopAllAsync(state, cancellationToken);
                     var stillHeld = await ForgetAsync(state, cancellationToken);
                     return NotReady(instance, failure.Value.Process, failure.Value.Reason, stopped, Kept(stillHeld, instance), failure.Value.ExitCode);
+                }
+
+                if (group.Key.AfterReady is { } afterReady)
+                {
+                    foreach (var (_, name, context) in group)
+                    {
+                        try
+                        {
+                            await afterReady(context, Http, cancellationToken);
+                        }
+                        catch (Exception e) when (e is IOException or HttpRequestException or JsonException or InvalidOperationException
+                            || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
+                        {
+                            var stopped = await StopAllAsync(state, cancellationToken);
+                            var stillHeld = await ForgetAsync(state, cancellationToken);
+                            return NotReady(instance, processes.Single(p => p.Name == name), e.Message, stopped, Kept(stillHeld, instance));
+                        }
+                    }
                 }
             }
         }
@@ -448,6 +483,28 @@ public sealed partial class LocalSystem(
             lines.Add(keyDeleted.Value
                 ? $"Deleted the server key {key} from the {string.Join(" and ", deleted)} key store."
                 : $"The server key {key} did not exist.");
+
+            // Its terminals' keys go too: with the database the server
+            // forgot them, and the next up gives each terminal a new one.
+            foreach (var (terminalKey, terminalStore) in OnboardTerminalSettings.KeysOf(Path.Combine(store.InstanceDirectory(instance), "processes")))
+            {
+                try
+                {
+                    if ((deleteServerKey ?? ServerKey.Delete)(terminalKey, terminalStore))
+                    {
+                        lines.Add($"Deleted the terminal key {terminalKey} from the {terminalStore} key store.");
+                    }
+                }
+                catch (System.Security.Cryptography.CryptographicException e)
+                {
+                    return Outcome.Fail(
+                        ExitCodes.DatabaseFailed,
+                        $"Could not delete the terminal key {terminalKey} from the {terminalStore} key store: {e.Message}"
+                        + (terminalStore == ServerKeyStore.Machine ? " Only an administrator can delete a key there." : string.Empty),
+                        new { Instance = instance, Stopped = stopped, DatabaseDropped = dropped, ServerKeyDeleted = keyDeleted },
+                        lines);
+                }
+            }
         }
 
         var result = new { Instance = instance, WasRunning = state is not null, Stopped = stopped, DatabaseDropped = dropped, ServerKeyDeleted = keyDeleted };
@@ -1053,11 +1110,46 @@ public sealed record InstanceReport(
     private static string? Text(JsonElement element, string name) =>
         Field(element, name) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
 
-    /// <summary>The onboard terminals as the server sees them, from its status.</summary>
+    /// <summary>The onboard terminals as the server sees them, from its status: the vehicles' and those waiting for confirmation.</summary>
     private IEnumerable<string> TerminalLines()
     {
-        if (Server is not { } server
-            || !server.TryGetProperty("onboardTerminals", out var terminals)
+        if (Server is not { } server)
+        {
+            yield break;
+        }
+
+        if (Field(server, "pendingOnboardTerminals") is { ValueKind: JsonValueKind.Array } pending && pending.GetArrayLength() > 0)
+        {
+            yield return "Onboard terminals waiting for confirmation (their reports are not used):";
+            foreach (var p in pending.EnumerateArray())
+            {
+                var notes = new List<string>();
+                if (Field(p, "inVehicleList") is { ValueKind: JsonValueKind.False })
+                {
+                    notes.Add("not in the vehicle list");
+                }
+                else if (Field(p, "inVehicleList") is { ValueKind: JsonValueKind.Null })
+                {
+                    notes.Add("vehicle list unreadable");
+                }
+
+                if (Field(p, "vehicleOnlineWithAnotherKey") is { ValueKind: JsonValueKind.True })
+                {
+                    notes.Add("the vehicle is online with another key");
+                }
+
+                if (Field(p, "cloneSuspected") is { ValueKind: JsonValueKind.True })
+                {
+                    notes.Add("SUSPECTED CLONE");
+                }
+
+                yield return $"  {Text(p, "vehicleId"),-12} {(Field(p, "connected") is { ValueKind: JsonValueKind.True } ? "connected" : "disconnected"),-12} "
+                    + $"pairing code {Text(p, "pairingCode")}, key {Text(p, "keyPin")?[..12]}…"
+                    + (notes.Count > 0 ? $" ({string.Join(", ", notes)})" : string.Empty);
+            }
+        }
+
+        if (!server.TryGetProperty("onboardTerminals", out var terminals)
             || terminals.ValueKind != JsonValueKind.Array
             || terminals.GetArrayLength() == 0)
         {

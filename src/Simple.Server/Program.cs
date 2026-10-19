@@ -97,6 +97,12 @@ builder.Services.AddHostedService<MesGatewayPoller>();
 builder.Services.AddRiotConnection();
 builder.Services.AddSingleton<OnboardEndpoint>();
 builder.Services.AddSingleton<OnboardTerminalRegistry>();
+builder.Services.AddScoped<IOnboardTerminalKeyStore, OnboardTerminalKeyStore>();
+// A terminal is confirmed only for a vehicle in the current site configuration's vehicle list (ADR 0029).
+builder.Services.AddSingleton<IVehicleList, SiteVehicleList>();
+// After the recorder, which migrates the database; before Kestrel, so the
+// first stream already finds the registered keys.
+builder.Services.AddHostedService<OnboardTerminalKeyLoader>();
 // No catch-all "unimplemented" endpoints: they would answer without login
 // and are not the terminal protocol (Access.OnboardTerminal).
 builder.Services.AddGrpc(options => options.IgnoreUnknownServices = true);
@@ -146,6 +152,7 @@ try
     app.MapLoginEndpoints();
     app.MapAccountEndpoints();
     app.MapStatusEndpoints();
+    app.MapOnboardTerminalEndpoints();
     app.MapEventEndpoints();
     app.MapSiteConfigurationEndpoints();
 

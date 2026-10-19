@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using Simple.Logging;
+using Simple.OnboardTerminal.Core;
 
 namespace Simple.OnboardTerminal.Headless.Tests;
 
@@ -64,18 +65,26 @@ public sealed class TestInputTests
     /// <summary>
     /// The terminal for vehicle-1, pointed at a server that is not there (it
     /// keeps retrying, which is enough here), started until its test input
-    /// answers. Disposing kills it and deletes its directory.
+    /// answers. Its key is named as the tests' keys are (Simple-Test- and 32
+    /// hex digits), in the key store the tests were told
+    /// (SIMPLE_TEST_SERVER_KEY_STORE). Disposing kills it and deletes its
+    /// directory and its key.
     /// </summary>
     private sealed class RunningTerminal : IAsyncDisposable
     {
+        private static readonly bool MachineKey =
+            string.Equals(Environment.GetEnvironmentVariable("SIMPLE_TEST_SERVER_KEY_STORE"), "Machine", StringComparison.OrdinalIgnoreCase);
+
         private readonly string directory;
+        private readonly string keyName;
         private readonly Process process;
         private readonly Task<string> output;
         private readonly Task<string> errors;
 
-        private RunningTerminal(string directory, Process process)
+        private RunningTerminal(string directory, string keyName, Process process)
         {
             this.directory = directory;
+            this.keyName = keyName;
             this.process = process;
             output = process.StandardOutput.ReadToEndAsync(Cancel);
             errors = process.StandardError.ReadToEndAsync(Cancel);
@@ -89,8 +98,11 @@ public sealed class TestInputTests
             var directory = Path.Combine(Path.GetTempPath(), $"simple-headless-test-{Guid.NewGuid():N}");
             Directory.CreateDirectory(directory);
             var config = Path.Combine(directory, "terminal.json");
+            var keyName = $"Simple-Test-{Guid.NewGuid():N}";
             await File.WriteAllTextAsync(
-                config, $$"""{"vehicleId": "vehicle-1", "server": "https://127.0.0.1:1", "serverCertificatePin": "{{new string('a', 64)}}"}""", Cancel);
+                config,
+                $$"""{"vehicleId": "vehicle-1", "server": "https://127.0.0.1:1", "serverCertificatePin": "{{new string('a', 64)}}", "keyName": "{{keyName}}", "keyStore": "{{(MachineKey ? "machine" : "user")}}", "keyProvider": "software"}""",
+                Cancel);
 
             var start = new ProcessStartInfo("dotnet")
             {
@@ -107,7 +119,7 @@ public sealed class TestInputTests
             };
             configure?.Invoke(start);
 
-            var terminal = new RunningTerminal(directory, Process.Start(start)!);
+            var terminal = new RunningTerminal(directory, keyName, Process.Start(start)!);
             try
             {
                 await terminal.WaitForTestInputAsync(input);
@@ -130,6 +142,11 @@ public sealed class TestInputTests
 
             await Task.WhenAll(output, errors);
             process.Dispose();
+            if (OperatingSystem.IsWindows())
+            {
+                TerminalKey.Delete(keyName, MachineKey);
+            }
+
             try
             {
                 Directory.Delete(directory, recursive: true);

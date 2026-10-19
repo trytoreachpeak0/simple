@@ -41,7 +41,8 @@ public sealed record TerminalStatus(TerminalState State, string ScreenText, ulon
 /// The terminal's one stream to its server (ADR 0024, 0025). It sends a
 /// report at once when the stream opens, when a desired state arrives and
 /// when the person at the vehicle does something, and otherwise once a
-/// second. The server is recognised by its certificate's pin only. When the
+/// second. The server is recognised by its certificate's pin only; the
+/// terminal presents a certificate made from its own key (ADR 0025). When the
 /// stream fails, the terminal reconnects through <see cref="ReconnectPolicy"/>.
 /// </summary>
 public sealed partial class TerminalConnection : IDisposable
@@ -68,10 +69,12 @@ public sealed partial class TerminalConnection : IDisposable
     private TerminalStatus status = new(TerminalState.Connecting, DisconnectedText, 0);
     private string? pinProblem;
 
+    /// <param name="certificate">The certificate made from the terminal's own key (<see cref="TerminalKey"/>), presented to the server on every stream (ADR 0025).</param>
     /// <param name="io">The IO module's reader, whose readings go into every report; without one, every report says the IO module cannot be read.</param>
-    public TerminalConnection(TerminalSettings settings, OnboardInputs inputs, TimeProvider time, ILoggerFactory loggers, string? version = null, IoModuleReader? io = null)
+    public TerminalConnection(TerminalSettings settings, X509Certificate2 certificate, OnboardInputs inputs, TimeProvider time, ILoggerFactory loggers, string? version = null, IoModuleReader? io = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(certificate);
         ArgumentNullException.ThrowIfNull(inputs);
         ArgumentNullException.ThrowIfNull(loggers);
         this.settings = settings;
@@ -104,7 +107,11 @@ public sealed partial class TerminalConnection : IDisposable
             PooledConnectionIdleTimeout = Timeout.InfiniteTimeSpan,
             SslOptions = new SslClientAuthenticationOptions
             {
-                RemoteCertificateValidationCallback = (_, certificate, _, _) => CheckPin(certificate),
+                RemoteCertificateValidationCallback = (_, presented, _, _) => CheckPin(presented),
+                // Always this one: the server asks for a certificate but names
+                // no issuer it would take, since the terminal's is self-signed.
+                ClientCertificates = [certificate],
+                LocalCertificateSelectionCallback = (_, _, _, _, _) => certificate,
             },
         };
         channel = GrpcChannel.ForAddress(settings.ServerUri, new GrpcChannelOptions
@@ -117,6 +124,13 @@ public sealed partial class TerminalConnection : IDisposable
     }
 
     public string Version { get; }
+
+    /// <summary>
+    /// Made once per run of the terminal program and sent in every report: a
+    /// reconnect keeps it, a restart changes it. The server tells two
+    /// computers with one key (a cloned disk) from one that reconnects by it (ADR 0025).
+    /// </summary>
+    public string RunId { get; } = Guid.NewGuid().ToString("N");
 
     public TerminalStatus Status
     {
@@ -254,6 +268,7 @@ public sealed partial class TerminalConnection : IDisposable
                 LastReceivedSeq = session.LastReceivedSeq,
                 TerminalVersion = Version,
                 VehicleId = settings.VehicleId,
+                RunId = RunId,
             };
             AddReading(report);
             report.Inputs.Add(inputs.ForReport(seq));

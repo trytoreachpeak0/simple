@@ -22,10 +22,12 @@ public sealed record RemoteSweep(string? SqlServer, ServerKeyStore KeyStore, str
 
     /// <summary>
     /// The key of a test instance's server, Simple-Server-test_ and 12 hex
-    /// digits, and the key of the onboard terminal tests' fake server,
-    /// Simple-Test- and a GUID's 32 hex digits.
+    /// digits; the key of a test instance's terminal, Simple-Terminal-test_,
+    /// 12 hex digits, a dash and its number; and the keys tests make
+    /// themselves (the onboard terminal tests' fake server, the test
+    /// terminals), Simple-Test- and a GUID's 32 hex digits.
     /// </summary>
-    public const string TestKeys = @"\ASimple-(Server-test_[0-9a-f]{12}|Test-[0-9a-f]{32})\z";
+    public const string TestKeys = @"\ASimple-(Server-test_[0-9a-f]{12}|Terminal-test_[0-9a-f]{12}-[0-9]+|Test-[0-9a-f]{32})\z";
 
     public static RemoteSweep ForTests(string? sqlServer, ServerKeyStore keyStore) => new(sqlServer, keyStore, TestDatabases, TestKeys);
 }

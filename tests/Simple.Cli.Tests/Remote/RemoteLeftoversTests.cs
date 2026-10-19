@@ -44,7 +44,9 @@ public sealed class RemoteLeftoversTests
 
         Assert.Matches(RemoteSweep.TestDatabases, SqlServerTarget.DatabaseName(instance));
         Assert.Matches(RemoteSweep.TestKeys, Components.ServerKeyName(instance));
-        // As the onboard terminal tests' FakeServer names its key.
+        Assert.Matches(RemoteSweep.TestKeys, Components.TerminalKeyName(instance, 1));
+        Assert.Matches(RemoteSweep.TestKeys, Components.TerminalKeyName(instance, 12));
+        // As the onboard terminal tests' FakeServer and test terminals name their keys.
         Assert.Matches(RemoteSweep.TestKeys, $"Simple-Test-{Guid.NewGuid():N}");
     }
 
@@ -52,6 +54,10 @@ public sealed class RemoteLeftoversTests
     [InlineData("Simple-Server-63-chores")]
     [InlineData("Simple-Server-main")]
     [InlineData("Simple-Server-test_0123456789ab-extra")]
+    [InlineData("Simple-Terminal-92-terminal-pairing-1")]
+    [InlineData("Simple-Terminal-test_0123456789ab-scenario-1")]
+    [InlineData("Simple-Terminal-test_0123456789ab-")]
+    [InlineData("Simple-OnboardTerminal")]
     [InlineData("Simple-Test-0123")]
     [InlineData("Simple-Other-0123456789abcdef0123456789abcdef")]
     [InlineData("simple-server-test_0123456789ab")]
@@ -111,6 +117,119 @@ public sealed class RemoteLeftoversTests
         }
     }
 
+    [Fact]
+    public async Task ALeftoverTestKeyInTheTpmIsClearedToo()
+    {
+        // The terminal tests may put a key in the TPM (TerminalKey); one a
+        // killed test left there is cleared like one in the software store.
+        await using var sandbox = await GitSandbox.CreateAsync(Cancel);
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        var machine = new DirectoryMachine(sandbox.RemoteRoot) { Sweep = Sweep(tag, sqlServer: null) };
+        var name = Key(tag, "a");
+        // Not named as the sweep's pattern says: in the TPM and in the software store alike, it stays.
+        var other = Key(tag, "c");
+        try
+        {
+            if (!TryCreateTpmKey(name, out var problem))
+            {
+                Assert.Skip($"No TPM this account can use here: {problem}");
+            }
+
+            Assert.True(TryCreateTpmKey(other, out problem), problem);
+            CreateKey(other);
+
+            var (exitCode, stderr) = await RunAsync(sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "exit 0");
+
+            Assert.True(exitCode == 0, $"exit code {exitCode}: {stderr}");
+            Assert.False(TpmKeyExists(name), $"{name} is still in the TPM: {stderr}");
+            Assert.Contains($"deleted key {name}", stderr, StringComparison.Ordinal);
+            Assert.True(TpmKeyExists(other), $"{other} was deleted from the TPM: {stderr}");
+            Assert.True(ServerKey.Exists(other, TestKeyStore.Store), $"{other} was deleted from the software store: {stderr}");
+        }
+        finally
+        {
+            DeleteTpmKey(name);
+            DeleteTpmKey(other);
+            ServerKey.Delete(other, TestKeyStore.Store);
+        }
+    }
+
+    [Fact]
+    public void CiLooksForTestKeysInTheTpmToo()
+    {
+        var ci = File.ReadAllText(Path.Combine(CliEnvironment.FindRepository(AppContext.BaseDirectory), ".github", "workflows", "ci.yml"));
+        var step = ci[ci.IndexOf("- name: No test keys left behind", StringComparison.Ordinal)..];
+
+        Assert.Contains("Microsoft Software Key Storage Provider", step, StringComparison.Ordinal);
+        Assert.Contains("Microsoft Platform Crypto Provider", step, StringComparison.Ordinal);
+        // A TPM that cannot be listed is said, not a red step.
+        Assert.Contains("::warning::The TPM's key store", step, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CiFailsOnATestKeyLeftInTheSoftwareStoreWhateverTheTpmHolds()
+    {
+        // The step "No test keys left behind" as ci.yml runs it, its pattern
+        // narrowed to one key of this test's own, so that it touches no other
+        // test's key. That key is left in the software store; the TPM (where
+        // it can be listed) holds none: the step must fail all the same.
+        if (Environment.GetEnvironmentVariable("SSH_CONNECTION") is { Length: > 0 })
+        {
+            Assert.Skip("The step looks at the user's key store, which an SSH key logon cannot write.");
+        }
+
+        var name = $"Simple-Test-{Guid.NewGuid():N}";
+        var ci = File.ReadAllText(Path.Combine(CliEnvironment.FindRepository(AppContext.BaseDirectory), ".github", "workflows", "ci.yml"));
+        var script = Regex.Replace(CiStep(ci, "No test keys left behind"), @"^\$tests = '[^']*'$", $"$tests = '\\A{name}\\z'", RegexOptions.Multiline);
+        Assert.Contains(name, script, StringComparison.Ordinal);
+        var file = Path.Combine(Directory.CreateTempSubdirectory("simple-ci-step-").FullName, "step.ps1");
+        await File.WriteAllTextAsync(file, script, Cancel);
+        using (CngKey.Create(CngAlgorithm.ECDsaP256, name, new CngKeyCreationParameters { Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider }))
+        {
+        }
+
+        try
+        {
+            var start = new System.Diagnostics.ProcessStartInfo("pwsh", ["-NoProfile", "-File", file]) { RedirectStandardOutput = true, RedirectStandardError = true };
+            using var step = System.Diagnostics.Process.Start(start)!;
+            var output = await step.StandardOutput.ReadToEndAsync(Cancel) + await step.StandardError.ReadToEndAsync(Cancel);
+            await step.WaitForExitAsync(Cancel);
+
+            Assert.True(step.ExitCode != 0, $"The step passed with a test key left behind: {output}");
+            Assert.Contains($"::error::Test keys left behind in Microsoft Software Key Storage Provider (now deleted): {name}", output, StringComparison.Ordinal);
+            Assert.False(ServerKey.Exists(name, ServerKeyStore.User), output);
+        }
+        finally
+        {
+            ServerKey.Delete(name, ServerKeyStore.User);
+        }
+    }
+
+    /// <summary>The script of a step of ci.yml (its <c>run: |</c> block), unindented.</summary>
+    private static string CiStep(string ci, string step)
+    {
+        var lines = ci[ci.IndexOf($"- name: {step}", StringComparison.Ordinal)..].Split('\n');
+        var body = new List<string>();
+        foreach (var line in lines.SkipWhile(l => !l.Trim().StartsWith("run: |", StringComparison.Ordinal)).Skip(1))
+        {
+            var text = line.TrimEnd('\r');
+            if (text.Trim().Length == 0)
+            {
+                body.Add(string.Empty);
+            }
+            else if (text.StartsWith("          ", StringComparison.Ordinal))
+            {
+                body.Add(text[10..]);
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return string.Join('\n', body);
+    }
+
     [Theory]
     [InlineData(0)]
     // A slot beyond those this client counts: a client of another version
@@ -157,19 +276,21 @@ public sealed class RemoteLeftoversTests
         var tag = Guid.NewGuid().ToString("N")[..8];
         var ownDatabase = SqlServerTarget.DatabaseName(sandbox.Instance);
         var ownKey = Components.ServerKeyName(sandbox.Instance);
+        var ownTerminalKey = Components.TerminalKeyName(sandbox.Instance, 1);
         var machine = new DirectoryMachine(sandbox.RemoteRoot)
         {
             Sweep = new(
                 SqlServer,
                 TestKeyStore.Store,
                 $@"\ASimple_({sandbox.Instance}|test_{tag}_a)\z",
-                $@"\ASimple-(Server-{sandbox.Instance}|Test-{tag}a{{24}})\z"),
+                $@"\ASimple-(Server-{sandbox.Instance}|Terminal-{sandbox.Instance}-[0-9]+|Test-{tag}a{{24}})\z"),
         };
         try
         {
             await CreateDatabaseAsync(ownDatabase);
             await CreateDatabaseAsync(Database(tag, "a"));
             CreateKey(ownKey);
+            CreateKey(ownTerminalKey);
             CreateKey(Key(tag, "a"));
 
             var (exitCode, stderr) = await RunAsync(sandbox, machine, "exec", "--", "pwsh", "-NoProfile", "-Command", "exit 0");
@@ -179,12 +300,14 @@ public sealed class RemoteLeftoversTests
             Assert.False(ServerKey.Exists(Key(tag, "a"), TestKeyStore.Store), $"The sweep did not run: {stderr}");
             Assert.True(await DatabaseExistsAsync(ownDatabase), $"The instance's database was dropped: {stderr}");
             Assert.True(ServerKey.Exists(ownKey, TestKeyStore.Store), $"The instance's key was deleted: {stderr}");
+            Assert.True(ServerKey.Exists(ownTerminalKey, TestKeyStore.Store), $"The instance's terminal key was deleted: {stderr}");
         }
         finally
         {
             await SqlServerTarget.DropDatabaseAsync(SqlServer, sandbox.Instance, CancellationToken.None);
             await SqlServerTarget.DropDatabaseAsync(SqlServer, Instance(tag, "a"), CancellationToken.None);
             ServerKey.Delete(ownKey, TestKeyStore.Store);
+            ServerKey.Delete(ownTerminalKey, TestKeyStore.Store);
             ServerKey.Delete(Key(tag, "a"), TestKeyStore.Store);
         }
     }
@@ -247,6 +370,51 @@ public sealed class RemoteLeftoversTests
             Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider,
             KeyCreationOptions = TestKeyStore.Store == ServerKeyStore.Machine ? CngKeyCreationOptions.MachineKey : CngKeyCreationOptions.None,
         });
+    }
+
+    private static readonly CngProvider Tpm = new("Microsoft Platform Crypto Provider");
+
+    private static CngKeyOpenOptions TpmOpen => TestKeyStore.Store == ServerKeyStore.Machine ? CngKeyOpenOptions.MachineKey : CngKeyOpenOptions.None;
+
+    /// <summary>A key in the TPM, as TerminalKey makes one there; false where no TPM can be used.</summary>
+    private static bool TryCreateTpmKey(string name, out string? problem)
+    {
+        try
+        {
+            using var key = CngKey.Create(CngAlgorithm.ECDsaP256, name, new CngKeyCreationParameters
+            {
+                Provider = Tpm,
+                KeyCreationOptions = TestKeyStore.Store == ServerKeyStore.Machine ? CngKeyCreationOptions.MachineKey : CngKeyCreationOptions.None,
+            });
+            problem = null;
+            return true;
+        }
+        catch (CryptographicException e)
+        {
+            problem = e.Message;
+            return false;
+        }
+    }
+
+    private static bool TpmKeyExists(string name)
+    {
+        try
+        {
+            return CngKey.Exists(name, Tpm, TpmOpen);
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+    }
+
+    private static void DeleteTpmKey(string name)
+    {
+        if (TpmKeyExists(name))
+        {
+            using var key = CngKey.Open(name, Tpm, TpmOpen);
+            key.Delete();
+        }
     }
 
     private static async Task CreateDatabaseAsync(string name)

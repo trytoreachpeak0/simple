@@ -48,6 +48,26 @@ if (problems.Count > 0)
     return await ProgramLog.RefuseToStartAsync("OnboardTerminal", arguments, null, $"The onboard terminal refuses to start ({configPath}):", problems);
 }
 
+// The terminal's own key (ADR 0025): created on the first start, opened by
+// name on every later one; the server knows the terminal by it.
+if (!OperatingSystem.IsWindows())
+{
+    return await ProgramLog.RefuseToStartAsync("OnboardTerminal", arguments, null, "The onboard terminal refuses to start: its key lives in the Windows key store (CNG).");
+}
+
+System.Security.Cryptography.X509Certificates.X509Certificate2 certificate;
+TerminalKeyInfo keyInfo;
+try
+{
+    var key = TerminalKey.OpenOrCreate(settings.EffectiveKeyName, settings.MachineKey, settings.TryTpm, out var tpmProblem);
+    certificate = key.Certificate;
+    keyInfo = new TerminalKeyInfo(key.Name, key.Provider, key.MachineKey, key.Created, key.Pin, tpmProblem);
+}
+catch (TerminalKeyException e)
+{
+    return await ProgramLog.RefuseToStartAsync("OnboardTerminal", arguments, null, $"The onboard terminal refuses to start: {e.Message}");
+}
+
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
 {
     Args = [],
@@ -70,8 +90,10 @@ builder.Services.AddSingleton(services => new IoModuleReader(
     settings.IoModuleEndpoint,
     services.GetRequiredService<TimeProvider>(),
     services.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddSingleton(keyInfo);
 builder.Services.AddSingleton(services => new TerminalConnection(
     settings,
+    certificate,
     services.GetRequiredService<OnboardInputs>(),
     services.GetRequiredService<TimeProvider>(),
     services.GetRequiredService<ILoggerFactory>(),

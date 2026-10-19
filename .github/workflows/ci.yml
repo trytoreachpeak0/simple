@@ -208,13 +208,18 @@ jobs:
       # that account is shared with the other runners there (see Record
       # machine load), so only keys in the tests' own naming are deleted, the
       # formats of RemoteSweep.TestKeys in src/Simple.Cli/Remote/RemoteSweep.cs:
-      # Simple-Server-test_ and 12 hex digits, Simple-Test- and 32 ($tests
+      # Simple-Server-test_ and 12 hex digits, Simple-Terminal-test_ and 12
+      # hex digits, a dash and a number, Simple-Test- and 32 ($tests
       # below; RemoteLeftoversTests checks the two are the same). Any other
       # Simple-* key is no test's leftover and may be another runner's: it is
       # left alone and only warned about, with how to delete it, since a
       # failure here would stay red until a person on the runner machine
       # deleted it. The machine store is not looked at: tests use it only
-      # under simple remote.
+      # under simple remote. Besides the software store, the TPM's provider
+      # (Microsoft Platform Crypto Provider) is looked at: the terminal tests
+      # put a key there where the machine has a TPM. A TPM that cannot be
+      # opened or listed (none, as on a VM, or access denied) is a warning
+      # that says why, not a failure; the software store must list.
       # .NET opens a key by name but cannot list keys, so the names come from
       # NCryptEnumKeys; failing to list fails the step.
       - name: No test keys left behind
@@ -242,10 +247,10 @@ jobs:
               [DllImport("ncrypt.dll")]
               private static extern int NCryptFreeObject(IntPtr handle);
 
-              public static string[] List()
+              public static string[] List(string providerName)
               {
                   IntPtr provider;
-                  int status = NCryptOpenStorageProvider(out provider, "Microsoft Software Key Storage Provider", 0);
+                  int status = NCryptOpenStorageProvider(out provider, providerName, 0);
                   if (status != 0) throw new Win32Exception(status);
                   var names = new List<string>();
                   IntPtr state = IntPtr.Zero;
@@ -271,27 +276,44 @@ jobs:
               }
           }
           '@
-          $tests = '\ASimple-(Server-test_[0-9a-f]{12}|Test-[0-9a-f]{32})\z'
-          $simple = @([UserKeyNames]::List() | Where-Object { $_ -like 'Simple-*' } | Sort-Object)
-          $left = @($simple | Where-Object { [regex]::IsMatch($_, $tests) })
-          $other = @($simple | Where-Object { -not [regex]::IsMatch($_, $tests) })
-          foreach ($name in $left) {
-            $key = [System.Security.Cryptography.CngKey]::Open($name, [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider)
-            $key.Delete()
-          }
-          if ($left) {
-            Write-Output "::error::Test keys left behind (now deleted): $($left -join ', ')"
-          }
-          if ($other) {
-            Write-Output "::warning::Simple-* keys not named like a test's, left alone: $($other -join ', '). They are in the user key store of the runner account, $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name), so only a process running as that account can delete one, for example a one-off scheduled task on this machine running pwsh as that account with the lines below in this step's log. Ask the product owner (through the coordinator) before touching the runner machine."
-            foreach ($name in $other) {
-              Write-Output "  [System.Security.Cryptography.CngKey]::Open('$name', [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider).Delete()"
+          $tests = '\ASimple-(Server-test_[0-9a-f]{12}|Terminal-test_[0-9a-f]{12}-[0-9]+|Test-[0-9a-f]{32})\z'
+          # Decided after every provider: a leftover in any of them fails the step.
+          $anyLeft = $false
+          $anyOther = $false
+          foreach ($provider in 'Microsoft Software Key Storage Provider', 'Microsoft Platform Crypto Provider') {
+            try {
+              $listed = @([UserKeyNames]::List($provider))
+            }
+            catch {
+              if ($provider -eq 'Microsoft Software Key Storage Provider') {
+                throw
+              }
+              Write-Output "::warning::The TPM's key store ($provider) could not be listed, so test keys left there are not seen: $($_.Exception.InnerException?.Message ?? $_.Exception.Message)"
+              continue
+            }
+            $simple = @($listed | Where-Object { $_ -like 'Simple-*' } | Sort-Object)
+            $left = @($simple | Where-Object { [regex]::IsMatch($_, $tests) })
+            $other = @($simple | Where-Object { -not [regex]::IsMatch($_, $tests) })
+            foreach ($name in $left) {
+              $key = [System.Security.Cryptography.CngKey]::Open($name, [System.Security.Cryptography.CngProvider]::new($provider))
+              $key.Delete()
+            }
+            if ($left) {
+              $anyLeft = $true
+              Write-Output "::error::Test keys left behind in $provider (now deleted): $($left -join ', ')"
+            }
+            if ($other) {
+              $anyOther = $true
+              Write-Output "::warning::Simple-* keys in $provider not named like a test's, left alone: $($other -join ', '). They are in the user key store of the runner account, $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name), so only a process running as that account can delete one, for example a one-off scheduled task on this machine running pwsh as that account with the lines below in this step's log. Ask the product owner (through the coordinator) before touching the runner machine."
+              foreach ($name in $other) {
+                Write-Output "  [System.Security.Cryptography.CngKey]::Open('$name', [System.Security.Cryptography.CngProvider]::new('$provider')).Delete()"
+              }
             }
           }
-          if ($left) {
+          if ($anyLeft) {
             exit 1
           }
-          Write-Output ($other ? 'No test keys left behind.' : 'No Simple-* keys left behind.')
+          Write-Output ($anyOther ? 'No test keys left behind.' : 'No Simple-* keys left behind.')
 
       # Tests and the local system give every program a log directory of its
       # own (a temp folder, or %LOCALAPPDATA%\simple through simple up), so a

@@ -15,11 +15,42 @@ public sealed class OnboardTerminalRegistryTests
     private static readonly DateTimeOffset Start = new(2026, 10, 17, 8, 0, 0, TimeSpan.Zero);
 
     private static OnboardReport Report(ulong seq, ulong acknowledging, string vehicle = "vehicle-1") =>
-        new() { Seq = seq, LastReceivedSeq = acknowledging, VehicleId = vehicle, TerminalVersion = "t" };
+        new() { Seq = seq, LastReceivedSeq = acknowledging, VehicleId = vehicle, TerminalVersion = "t", RunId = "run-1" };
 
-    /// <summary>A registry whose events go nowhere (they fail and are logged): for tests that only look at its state.</summary>
-    private static OnboardTerminalRegistry Registry(TimeProvider time) =>
-        new(time, new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), NullLogger<OnboardTerminalRegistry>.Instance);
+    /// <summary>The key the tests' terminal presents, registered for vehicle-1.</summary>
+    private const string Key = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+    /// <summary>
+    /// A registry with <see cref="Key"/> registered for vehicle-1, whose events
+    /// go nowhere (they fail and are logged): for tests that only look at its state.
+    /// </summary>
+    private static OnboardTerminalRegistry Registry(TimeProvider time)
+    {
+        var keys = new InMemoryTerminalKeys();
+        keys.Add("vehicle-1", Key);
+        var registry = new OnboardTerminalRegistry(
+            time,
+            new ServiceCollection().AddSingleton<IOnboardTerminalKeyStore>(keys).BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<OnboardTerminalRegistry>.Instance,
+            new TestVehicles());
+        registry.LoadAsync(TestContext.Current.CancellationToken).GetAwaiter().GetResult();
+        return registry;
+    }
+
+    /// <summary>A registry on <paramref name="server"/>'s database, with <see cref="Key"/> registered there for vehicle-1.</summary>
+    private static async Task<OnboardTerminalRegistry> RegistryAsync(TimeProvider time, ServerInstance server)
+    {
+        await using (var db = server.CreateDbContext())
+        {
+            db.OnboardTerminalKeys.Add(new OnboardTerminalKey { VehicleId = "vehicle-1", KeyPin = Key, ConfirmedAt = Start, ConfirmedBy = "test" });
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var registry = new OnboardTerminalRegistry(
+            time, server.Services.GetRequiredService<IServiceScopeFactory>(), NullLogger<OnboardTerminalRegistry>.Instance, new TestVehicles());
+        await registry.LoadAsync(TestContext.Current.CancellationToken);
+        return registry;
+    }
 
     [Theory]
     [InlineData(10.0, 10.0)]
@@ -31,7 +62,7 @@ public sealed class OnboardTerminalRegistryTests
         // ten-second bound decides.
         var time = new FakeTimeProvider(Start);
         using var registry = Registry(time);
-        using var link = registry.Open("test");
+        using var link = registry.Open("test", Key);
         registry.NextDesiredState(link);
         Assert.Null(registry.Receive(link, Report(1, acknowledging: 0)));
 
@@ -45,7 +76,7 @@ public sealed class OnboardTerminalRegistryTests
     public void AVehicleIdOverTheLimitEndsTheStream()
     {
         using var registry = Registry(new FakeTimeProvider(Start));
-        using var link = registry.Open("test");
+        using var link = registry.Open("test", Key);
 
         var refusal = registry.Receive(link, Report(1, 0, vehicle: new string('v', OnboardTerminalRegistry.MaxVehicleIdLength + 1)));
 
@@ -59,9 +90,8 @@ public sealed class OnboardTerminalRegistryTests
         var time = new FakeTimeProvider(Start);
         await using var server = new ServerInstance();
         using var _ = server.Start();
-        using var registry = new OnboardTerminalRegistry(
-            time, server.Services.GetRequiredService<IServiceScopeFactory>(), NullLogger<OnboardTerminalRegistry>.Instance);
-        using var link = registry.Open("test");
+        using var registry = await RegistryAsync(time, server);
+        using var link = registry.Open("test", Key);
 
         registry.NextDesiredState(link);
         var first = Report(1, acknowledging: 1);
@@ -96,7 +126,7 @@ public sealed class OnboardTerminalRegistryTests
     public void TheLatestReportsIoPointsAreListedByKindAndNumberAsRawValues()
     {
         using var registry = Registry(new FakeTimeProvider(Start));
-        using var link = registry.Open("test");
+        using var link = registry.Open("test", Key);
         var report = Report(1, 0);
         report.IoModuleReadable = true;
         report.IoReadAgeMs = 120;
@@ -122,7 +152,7 @@ public sealed class OnboardTerminalRegistryTests
     public void IoPointsTheServerCannotUseAreSkipped()
     {
         using var registry = Registry(new FakeTimeProvider(Start));
-        using var link = registry.Open("test");
+        using var link = registry.Open("test", Key);
         var report = Report(1, 0);
         report.IoPoints.Add(new IoPoint { Kind = IoPointKind.Unspecified, Number = 1 });
         report.IoPoints.Add(new IoPoint { Kind = IoPointKind.Input, Number = 0 });
@@ -147,9 +177,8 @@ public sealed class OnboardTerminalRegistryTests
         var time = new FakeTimeProvider(Start);
         await using var server = new ServerInstance();
         using var _ = server.Start();
-        using var registry = new OnboardTerminalRegistry(
-            time, server.Services.GetRequiredService<IServiceScopeFactory>(), NullLogger<OnboardTerminalRegistry>.Instance);
-        using var link = registry.Open("test");
+        using var registry = await RegistryAsync(time, server);
+        using var link = registry.Open("test", Key);
 
         // Unreadable from the first report, readable, readable, unreadable.
         foreach (var (seq, readable) in new[] { (1UL, false), (2UL, true), (3UL, true), (4UL, false) })

@@ -24,18 +24,22 @@ public sealed class OnboardTerminalTests
         var time = new FakeTimeProvider(Start);
         await using var server = new ServerInstance(kestrel: true, time: time);
         using var api = server.Start();
-        await using var terminal = await TestTerminal.ConnectAsync(api);
+        await using var terminal = await TestTerminal.ConnectConfirmedAsync(api);
 
-        var first = await terminal.ReceiveAsync();
-        Assert.Equal(1UL, first.Seq);
-        Assert.Equal(0UL, first.LastReceivedSeq);
-        Assert.Equal(OnboardTerminalRegistry.ConnectedScreenText, first.Screen.Text);
+        // Confirmed, its screen changes at once (ADR 0024), not a second later.
+        var confirmed = await terminal.ReceiveAsync();
+        while (confirmed.Screen.Text != OnboardTerminalRegistry.ConnectedScreenText)
+        {
+            confirmed = await terminal.ReceiveAsync();
+        }
+
         await terminal.ReportAsync();
 
         var status = await Api.UntilAsync(() => Api.StatusAsync(api), s => s.OnboardTerminals.Any(t => t.FreshReportAgeSeconds is not null));
         var shown = Assert.Single(status.OnboardTerminals);
         Assert.Equal("vehicle-1", shown.VehicleId);
         Assert.Equal("test-terminal-1", shown.TerminalVersion);
+        Assert.Equal(terminal.Key.Pin, shown.KeyPin);
         Assert.True(shown.Connected);
         Assert.False(shown.Stale);
         Assert.Equal(0, shown.FreshReportAgeSeconds);
@@ -48,6 +52,7 @@ public sealed class OnboardTerminalTests
         var connected = Assert.Single(await Api.UntilAsync(() => Api.EventsAsync(api, EventTypes.OnboardConnected), e => e.Count > 0));
         Assert.Equal("vehicle-1", connected.Text("vehicleId"));
         Assert.Equal("test-terminal-1", connected.Text("terminalVersion"));
+        Assert.Equal(terminal.Key.Pin, connected.Text("keyPin"));
     }
 
     [Fact]
@@ -56,8 +61,7 @@ public sealed class OnboardTerminalTests
         var time = new FakeTimeProvider(Start);
         await using var server = new ServerInstance(kestrel: true, time: time);
         using var api = server.Start();
-        await using var terminal = await TestTerminal.ConnectAsync(api);
-        await terminal.ReceiveAsync();
+        await using var terminal = await TestTerminal.ConnectConfirmedAsync(api);
         await terminal.ReportAsync();
         await Api.UntilAsync(() => Api.StatusAsync(api), s => s.OnboardTerminals.Any(t => t.FreshReportAgeSeconds is not null));
 
@@ -75,7 +79,7 @@ public sealed class OnboardTerminalTests
 
         // A report naming a state sent just now is fresh again.
         var latest = await terminal.ReceiveAsync();
-        while (latest.Seq < 2)
+        while (latest.Seq < 4)
         {
             latest = await terminal.ReceiveAsync();
         }
@@ -92,10 +96,9 @@ public sealed class OnboardTerminalTests
         var time = new FakeTimeProvider(Start);
         await using var server = new ServerInstance(kestrel: true, time: time);
         using var api = server.Start();
-        await using var terminal = await TestTerminal.ConnectAsync(api);
-        await terminal.ReceiveAsync();
+        await using var terminal = await TestTerminal.ConnectConfirmedAsync(api);
 
-        // Written before any state arrived: how old it is cannot be told.
+        // Naming no state: how old it is cannot be told.
         await terminal.ReportAsync(acknowledging: 0);
         var status = await Api.UntilAsync(() => Api.StatusAsync(api), s => s.OnboardTerminals.Count > 0);
         Assert.Null(Assert.Single(status.OnboardTerminals).FreshReportAgeSeconds);
@@ -115,8 +118,7 @@ public sealed class OnboardTerminalTests
     {
         await using var server = new ServerInstance(kestrel: true, time: new FakeTimeProvider(Start));
         using var api = server.Start();
-        await using var terminal = await TestTerminal.ConnectAsync(api);
-        await terminal.ReceiveAsync();
+        await using var terminal = await TestTerminal.ConnectConfirmedAsync(api);
 
         await terminal.ReportAsync(inputs: TestTerminal.Scan(1, "LOT-0001"));
         await terminal.ReportAsync(inputs: TestTerminal.Scan(1, "LOT-0001"));
@@ -135,8 +137,7 @@ public sealed class OnboardTerminalTests
     {
         await using var server = new ServerInstance(kestrel: true, time: new FakeTimeProvider(Start));
         using var api = server.Start();
-        await using var terminal = await TestTerminal.ConnectAsync(api);
-        await terminal.ReceiveAsync();
+        await using var terminal = await TestTerminal.ConnectConfirmedAsync(api);
         await terminal.ReportAsync();
         await Api.UntilAsync(() => Api.EventsAsync(api, EventTypes.OnboardConnected), e => e.Count > 0);
 
@@ -189,7 +190,8 @@ public sealed class OnboardTerminalTests
         var endpoint = await TestTerminal.EndpointAsync(api);
 
         // The API is not found on the terminal endpoint, which other machines may reach…
-        using var overTls = new HttpClient(TestTerminal.Handler(endpoint));
+        using var key = new TestTerminalKey();
+        using var overTls = new HttpClient(TestTerminal.Handler(endpoint, key.Certificate));
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(new Uri(endpoint.Url), "/api/v1/status")) { Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact };
         using var onTerminalEndpoint = await overTls.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.NotFound, onTerminalEndpoint.StatusCode);

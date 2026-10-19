@@ -13,7 +13,7 @@ public static class StatusEndpoints
 {
     public static void MapStatusEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/v1/status", (ServerInfo info, IOptions<ServerSettings> settings, OnboardTerminalRegistry terminals, OnboardEndpoint endpoint, ConsoleEndpoint console, MesGatewayMonitor mes, RiotConnectionMonitor riot, CurrentSiteVersion site) =>
+        app.MapGet("/api/v1/status", async (HttpContext http, ServerInfo info, IOptions<ServerSettings> settings, OnboardTerminalRegistry terminals, OnboardEndpoint endpoint, ConsoleEndpoint console, MesGatewayMonitor mes, RiotConnectionMonitor riot, CurrentSiteVersion site) =>
                 new StatusResponse(
                     info.Version,
                     info.StartedAt,
@@ -21,6 +21,8 @@ public static class StatusEndpoints
                     settings.Value.DatabaseName,
                     endpoint.Describe(),
                     OnboardTerminals: terminals.Snapshot(),
+                    // The pairing code only to those who may confirm (ADR 0034: a credential).
+                    PendingOnboardTerminals: await terminals.PendingAsync(withCodes: await http.MayAsync(Access.Engineer), http.RequestAborted),
                     Riot: riot.Status(),
                     MesGateway: mes.Status(),
                     ConsoleEndpoint: console.Describe(),
@@ -33,7 +35,8 @@ public static class StatusEndpoints
 }
 
 /// <param name="OnboardTerminalEndpoint">Where onboard terminals connect and the pin they check; null when the server has no terminal endpoint.</param>
-/// <param name="OnboardTerminals">Every onboard terminal that has reported since the server started.</param>
+/// <param name="OnboardTerminals">Every vehicle whose onboard terminal's reports the server has used since it started: its key is registered for the vehicle (ADR 0025).</param>
+/// <param name="PendingOnboardTerminals">Every onboard terminal key waiting for confirmation (ADR 0025, 0029); their reports are not used. The pairing codes only for a login that may confirm.</param>
 /// <param name="Riot">Whether the server reaches the fleet manager.</param>
 /// <param name="MesGateway">What the server last learned from the MES gateway.</param>
 /// <param name="ConsoleEndpoint">The console's HTTPS address and its certificate, with the expiry warning (ADR 0046); null without one.</param>
@@ -46,6 +49,7 @@ public sealed record StatusResponse(
     string Database,
     OnboardTerminalEndpointStatus? OnboardTerminalEndpoint,
     IReadOnlyList<OnboardTerminalStatus> OnboardTerminals,
+    IReadOnlyList<PendingOnboardTerminalStatus> PendingOnboardTerminals,
     RiotStatus Riot,
     MesGatewayStatus MesGateway,
     ConsoleEndpointStatus? ConsoleEndpoint = null,
@@ -56,7 +60,7 @@ public sealed record StatusResponse(
 /// <param name="CertificatePin">What terminals pin: the SHA-256 of the server certificate's public key, in hex.</param>
 public sealed record OnboardTerminalEndpointStatus(string Url, string CertificatePin);
 
-/// <param name="VehicleId">The vehicle the terminal reports it is on; not confirmed yet (pairing comes later).</param>
+/// <param name="VehicleId">The vehicle the terminal claims, for which its key is registered.</param>
 /// <param name="TerminalVersion">The terminal program's version, from its latest report.</param>
 /// <param name="Connected">Whether its stream is open now.</param>
 /// <param name="RemoteAddress">Where its open stream comes from.</param>
@@ -68,6 +72,7 @@ public sealed record OnboardTerminalEndpointStatus(string Url, string Certificat
 /// <param name="IoModuleReadable">Whether it reported that it can read its IO module.</param>
 /// <param name="ScreenText">The screen text of the latest desired state sent to it.</param>
 /// <param name="Io">The raw IO points of its latest report.</param>
+/// <param name="KeyPin">The pin of the key its reports were last used from.</param>
 public sealed record OnboardTerminalStatus(
     string VehicleId,
     string TerminalVersion,
@@ -77,7 +82,37 @@ public sealed record OnboardTerminalStatus(
     bool Stale,
     bool IoModuleReadable,
     string? ScreenText,
-    OnboardIoStatus Io);
+    OnboardIoStatus Io,
+    string KeyPin);
+
+/// <summary>A terminal key waiting for confirmation (ADR 0025, 0029): unknown to the server, or no longer registered for the vehicle it claims.</summary>
+/// <param name="KeyPin">The pin of the certificate the terminal presents: the SHA-256 of its public key, in hex.</param>
+/// <param name="VehicleId">The vehicle its newest stream claims; an engineer confirms it as this vehicle, never another.</param>
+/// <param name="PairingCode">The six digits its screen shows too; null for a login that may not confirm (ADR 0034 treats it as a credential).</param>
+/// <param name="Connected">Whether a stream of it is open now.</param>
+/// <param name="RemoteAddress">Where its open stream comes from.</param>
+/// <param name="TerminalVersion">The terminal program's version, from its latest report.</param>
+/// <param name="FirstSeenAt">When it started waiting, on the server's clock.</param>
+/// <param name="InVehicleList">Whether the vehicle it claims is in the vehicle list; only then can it be confirmed. Null when the vehicle list could not be read (its database is unreachable).</param>
+/// <param name="VehicleOnlineWithAnotherKey">The vehicle it claims is online now with its registered key: "this vehicle is online, on another computer".</param>
+/// <param name="RegisteredForVehicle">The vehicle the key is registered for, when that is another one than it claims now.</param>
+/// <param name="CloneSuspected">It waits because two computers sent fresh reports with this key at once (a cloned disk).</param>
+public sealed record PendingOnboardTerminalStatus(
+    string KeyPin,
+    string VehicleId,
+    string? PairingCode,
+    bool Connected,
+    string? RemoteAddress,
+    string TerminalVersion,
+    DateTimeOffset FirstSeenAt,
+    bool? InVehicleList,
+    bool VehicleOnlineWithAnotherKey,
+    string? RegisteredForVehicle,
+    bool CloneSuspected);
+
+/// <summary>A vehicle's registered terminal key (ADR 0025).</summary>
+/// <param name="ConfirmedBy">The account that confirmed it.</param>
+public sealed record OnboardTerminalKeyStatus(string VehicleId, string KeyPin, DateTimeOffset ConfirmedAt, string? ConfirmedBy);
 
 /// <summary>
 /// A terminal's IO module as its latest report gave it (ADR 0024): raw

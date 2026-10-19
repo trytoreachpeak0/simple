@@ -45,13 +45,54 @@ public static class EventTypes
     /// </summary>
     public const string OnboardServerKeyCreated = "onboard.server-key-created";
 
-    /// <summary>The first report arrived on a terminal's new stream.</summary>
+    /// <summary>
+    /// A vehicle's terminal is connected: the first report arrived on a stream
+    /// whose key is registered for the vehicle it claims, or the key of an
+    /// open stream was just confirmed. data.keyPin is the key.
+    /// </summary>
     public const string OnboardConnected = "onboard.connected";
 
-    /// <summary>A terminal's stream ended; data says why.</summary>
+    /// <summary>
+    /// A vehicle's terminal is gone: its stream ended, or the server stopped
+    /// using it because its key was revoked, another key was confirmed for
+    /// the vehicle or it looks cloned. data.reason says which.
+    /// </summary>
     public const string OnboardDisconnected = "onboard.disconnected";
 
-    /// <summary>A terminal's freshest report has become older than ten seconds (ADR 0009, 0024): its reports are stale.</summary>
+    /// <summary>
+    /// A terminal key started waiting for confirmation (ADR 0025, 0029):
+    /// data.vehicleId (the vehicle it claims), data.keyPin, data.inVehicleList,
+    /// data.vehicleOnlineWithAnotherKey, data.registeredForVehicle,
+    /// data.cloneSuspected; data.inVehicleList is null when the vehicle list
+    /// could not be read. Its reports are not used. The pairing code is not
+    /// recorded (a credential, ADR 0034); the status shows it while it waits.
+    /// </summary>
+    public const string OnboardPending = "onboard.pending";
+
+    /// <summary>
+    /// An engineer confirmed a terminal key for the vehicle it claims:
+    /// data.vehicleId, data.keyPin, data.replacedKeyPin (the vehicle's earlier
+    /// key, released), data.movedFromVehicle.
+    /// </summary>
+    public const string OnboardConfirmed = "onboard.confirmed";
+
+    /// <summary>An engineer revoked a vehicle's terminal key: data.vehicleId, data.keyPin.</summary>
+    public const string OnboardRevoked = "onboard.revoked";
+
+    /// <summary>
+    /// Two computers sent fresh reports with one registered key, alternately
+    /// (a cloned disk, ADR 0025): data.vehicleId, data.keyPin, data.runs. The
+    /// key's registration ended; neither computer's reports are used until an
+    /// engineer confirms the key again.
+    /// </summary>
+    public const string OnboardCloneSuspected = "onboard.clone-suspected";
+
+    /// <summary>
+    /// A vehicle's terminal's freshest report has become older than ten
+    /// seconds (ADR 0009, 0024), or the vehicle stopped using that terminal's
+    /// key (revoked, replaced, suspected clone; data.reason says which): its
+    /// reports are stale.
+    /// </summary>
     public const string OnboardStale = "onboard.stale";
 
     /// <summary>A fresh report arrived from a terminal whose reports were stale.</summary>
@@ -61,9 +102,8 @@ public static class EventTypes
     public const string OnboardRefused = "onboard.refused";
 
     /// <summary>
-    /// A terminal reports that it cannot read its IO module: in its first
-    /// report, or after it could. Recorded only, not acted on yet (ADR 0025:
-    /// no decision rests on onboard reports until terminals are paired).
+    /// A vehicle's terminal reports that it cannot read its IO module: in its
+    /// first report, or after it could. Recorded only, not acted on yet.
     /// </summary>
     public const string OnboardIoUnreadable = "onboard.io-unreadable";
 

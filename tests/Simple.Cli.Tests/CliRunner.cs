@@ -189,6 +189,26 @@ public sealed class CliRunner(CancellationToken cancellationToken) : IAsyncDispo
 
                 return Task.CompletedTask;
             });
+        }
+
+        // Every terminal key the instances' terminals were given (a scenario's
+        // instance included), named in their settings files under Home, before
+        // Home goes.
+        await TryAsync(failures, () =>
+        {
+            foreach (var processes in Directory.Exists(Path.Combine(Home, "instances")) ? Directory.EnumerateDirectories(Path.Combine(Home, "instances")) : [])
+            {
+                foreach (var (key, keyStore) in OnboardTerminalSettings.KeysOf(Path.Combine(processes, "processes")))
+                {
+                    ServerKey.Delete(key, keyStore);
+                }
+            }
+
+            return Task.CompletedTask;
+        });
+
+        foreach (var instance in instances)
+        {
             // Just killed: its files can stay held a moment longer (#60).
             await TryAsync(failures, () => DirectoryTree.DeleteAsync(InstanceStore.RunDirectory(Repository, instance), store.DeleteWait, CancellationToken.None));
         }

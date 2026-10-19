@@ -404,9 +404,10 @@ function Remove-OldFiles {
     }
 }
 
-# The names of the keys in one store of the Microsoft Software Key Storage
-# Provider: .NET opens a key by name but cannot list them.
-function Get-KeyNames([bool] $machine) {
+# The names of the keys in one store of a key storage provider (the software
+# one, or the TPM's): .NET opens a key by name but cannot list them. Failing
+# to open or list the provider throws.
+function Get-KeyNames([string] $provider, [bool] $machine) {
     if (-not ('SimpleRemoteKeyNames' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
@@ -428,10 +429,10 @@ public static class SimpleRemoteKeyNames
     [DllImport("ncrypt.dll")]
     private static extern int NCryptFreeObject(IntPtr handle);
 
-    public static string[] List(bool machine)
+    public static string[] List(string providerName, bool machine)
     {
         IntPtr provider;
-        int status = NCryptOpenStorageProvider(out provider, "Microsoft Software Key Storage Provider", 0);
+        int status = NCryptOpenStorageProvider(out provider, providerName, 0);
         if (status != 0) throw new Win32Exception(status);
         var names = new List<string>();
         IntPtr state = IntPtr.Zero;
@@ -459,7 +460,7 @@ public static class SimpleRemoteKeyNames
 '@
     }
 
-    [SimpleRemoteKeyNames]::List($machine)
+    [SimpleRemoteKeyNames]::List($provider, $machine)
 }
 
 # Whether $name, read with $pattern, names an instance that has a worktree here.
@@ -517,9 +518,31 @@ function Clear-Leftovers {
 
         $machine = $sweep.keyStore -eq 'machine'
         $options = $machine ? [Security.Cryptography.CngKeyOpenOptions]::MachineKey : [Security.Cryptography.CngKeyOpenOptions]::None
-        foreach ($name in Get-KeyNames $machine | Where-Object { [regex]::IsMatch($_, $sweep.keys) -and -not (Test-SetUp $_ '\ASimple-Server-(.+)\z') }) {
-            [Security.Cryptography.CngKey]::Open($name, [Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider, $options).Delete()
-            Say "deleted key $name, left behind by an earlier test run"
+        # The software store, and the TPM, where the terminal tests may put a
+        # key. A TPM that cannot be opened or listed (none, or access denied)
+        # is said, with why, and the sweep goes on; the software store must list.
+        foreach ($provider in 'Microsoft Software Key Storage Provider', 'Microsoft Platform Crypto Provider') {
+            try {
+                $listed = @(Get-KeyNames $provider $machine)
+            }
+            catch {
+                if ($provider -eq 'Microsoft Software Key Storage Provider') {
+                    throw
+                }
+
+                Say "warning: the TPM's key store ($provider) could not be listed, so test keys left there are not cleared: $($_.Exception.InnerException?.Message ?? $_.Exception.Message)"
+                continue
+            }
+
+            $names = $listed | Where-Object {
+                [regex]::IsMatch($_, $sweep.keys) -and
+                -not (Test-SetUp $_ '\ASimple-Server-(.+)\z') -and
+                -not (Test-SetUp $_ '\ASimple-Terminal-(.+)-[0-9]+\z')
+            }
+            foreach ($name in $names) {
+                [Security.Cryptography.CngKey]::Open($name, [Security.Cryptography.CngProvider]::new($provider), $options).Delete()
+                Say "deleted key $name, left behind by an earlier test run"
+            }
         }
     }
     catch {

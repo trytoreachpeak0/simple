@@ -92,6 +92,15 @@ public sealed class ServerApi : IAsyncDisposable
         return await http.SendAsync(request, cancellationToken);
     }
 
+    /// <summary>A changing request: the login cookie and the request header every changing request carries.</summary>
+    public async Task<HttpResponseMessage> PostJsonAsync(string pathAndQuery, object body, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(baseUri, pathAndQuery)) { Content = JsonContent.Create(body) };
+        request.Headers.Add("Cookie", $"{CookieName}={cookie}");
+        request.Headers.Add(RequestHeader, "1");
+        return await http.SendAsync(request, cancellationToken);
+    }
+
     public async Task<JsonElement> GetJsonAsync(string pathAndQuery, CancellationToken cancellationToken)
     {
         using var response = await GetAsync(pathAndQuery, cancellationToken);

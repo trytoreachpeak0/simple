@@ -179,7 +179,14 @@ commands do the same on the remote machine, where it keeps running until
 
 - `./simple status`: every process (running, ready, its URL, its program log
   directory after `log`, its console output file after `output`), then the
-  server's own view: MES gateway, RIoT, each onboard terminal and its IO.
+  server's own view: MES gateway, RIoT, each onboard terminal and its IO, and
+  any terminal waiting for confirmation with its pairing code.
+- Onboard terminals: each local terminal has a key of its own
+  (`Simple-Terminal-<instance>-<n>`, deleted by `down --reset`), and the
+  server uses its reports only once its key is confirmed (ADR 0025). `up`
+  confirms every terminal it starts, as an engineer at the vehicle would; a
+  scenario with `confirm-terminals: false` leaves them waiting and confirms
+  one with the `confirm-terminal` action (`scenarios/terminal-pairing.yaml`).
 - `./simple events --since 5m`: the server's event record, oldest first. This is
   the observation surface for what happened; the event types are in
   `src/Simple.Server/Events/EventRecord.cs`.
